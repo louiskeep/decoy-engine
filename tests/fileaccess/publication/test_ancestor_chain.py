@@ -72,7 +72,8 @@ def test_ancestor_created_by_other_attempt(
 
         def racing(path: Any, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
             if os.path.basename(os.fsdecode(path)) == "a" and not fired:
-                fired.append(out.begin("dir", "exclusive", label="publication"))
+                fired.append(None)  # set first: the other begin() comes back through here
+                fired[0] = out.begin("dir", "exclusive", label="publication")
             inner(path, mode, dir_fd=dir_fd)
 
         monkeypatch.setattr(os, "mkdir", racing)

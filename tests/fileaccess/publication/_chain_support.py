@@ -160,7 +160,7 @@ def stage_unit(txn: Any, rec: Recorder | None = None, leaf_parent: Path | None =
     sub = txn.create_dir("sub")
     os.close(sub.create_file("g"))
     if rec is not None and leaf_parent is not None:
-        (stage,) = leaf_parent.glob(STAGE_GLOB)
+        (stage,) = [p for p in leaf_parent.glob(STAGE_GLOB) if (p / UNIT_FILE).exists()]
         rec.mark(stage / UNIT_FILE)
 
 
