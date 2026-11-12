@@ -22,7 +22,7 @@ from unittest import mock
 
 import pyarrow as pa
 
-from decoy_engine.execution import _chunked_oracle
+from decoy_engine.execution import _chunked
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 from decoy_engine.execution._column_access import created_columns
@@ -127,10 +127,10 @@ def _below_gate_entry(entry: Callable[..., Any], module: ModuleType) -> Callable
 
 run_mask_chunked_below_gate = _below_gate_entry(run_mask_chunked, _chunked_entry)
 run_native_or_oracle_chunked_below_gate = _below_gate_entry(run_native_or_oracle_chunked, _dispatch)
-run_mask_pipeline_chunked_below_gate = _below_gate_entry(run_mask_pipeline_chunked, _chunked_oracle)
+run_mask_pipeline_chunked_below_gate = _below_gate_entry(run_mask_pipeline_chunked, _chunked)
 # A vault writer goes through the internal entries: the public ones refuse it (B-6 B0).
 _run_mask_chunked_below_gate = _below_gate_entry(_run_mask_chunked, _chunked_entry)
-_mask_pipeline_chunked_below_gate = _below_gate_entry(_mask_pipeline_chunked, _chunked_oracle)
+_mask_pipeline_chunked_below_gate = _below_gate_entry(_mask_pipeline_chunked, _chunked)
 
 
 @dataclass

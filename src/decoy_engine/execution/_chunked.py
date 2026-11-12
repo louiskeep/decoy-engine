@@ -440,12 +440,12 @@ def run_mask_pipeline_chunked(
     This route runs no post-scan, so a model post-scan config is refused first
     (`PostScanRouteError`).
     """
-    if vault_writer is not None:
-        raise vault_requires_resident_output()
     # Lazy: `_chunked_oracle` imports this module at load time.
     from . import _chunked_oracle
 
     refuse_unchecked_route(config, "chunked")
+    if vault_writer is not None:
+        raise vault_requires_resident_output()
     return _chunked_oracle._mask_pipeline_chunked(
         config,
         chunks,
