@@ -279,6 +279,7 @@ def test_dirty_tree_is_refused_before_any_write(tmp_path: Path, dirty: str) -> N
     with pytest.raises(sr.FragmentError, match="uncommitted") as info:
         sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
     assert dirty in str(info.value)
+    assert (f"rm -- {dirty}" in str(info.value)) == (dirty == "changelog.d/untracked.md")
     assert _tracked_state(r) == before
 
 
@@ -568,3 +569,4 @@ def test_at8_a_failure_while_applying_restores_every_owned_path(
         _stamp(r)
     monkeypatch.undo()
     assert r.git("status", "--porcelain", "--untracked-files=all") == ""
+
