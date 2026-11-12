@@ -79,6 +79,18 @@ undeclared table (3 entries), undeclared `source_schema` (pipeline), undeclared 
 auto-chunk lane. `test_chunked_requires_source_schema` passes on the stub because the keyword is
 already required there; on the E2c base it fails with `DID NOT RAISE` (the call succeeds).
 
+## Mutations (head 87e2430b, each reverted)
+
+| Mutation | Red test |
+|---|---|
+| drop the `checked_stream` call in `_oracle_preflight_admitted` | first-chunk and chunk-three cases (all entries), outside-`source_schema` case, both sentry walks |
+| move that call below `compile_plan` | first-chunk cases (all entries), both sentry walks |
+| give `source_schema` a default | `test_chunked_requires_source_schema` |
+| drop the `within` intersection | `test_pipeline_entry_refuses_a_chunk_column_outside_source_schema` |
+| `first.schema.names` instead of `arrow_columns` | `test_fixed_schema_capture_survives` |
+| drop the `source_schema` forward in `MaskPipelineChunkedAdapter.run` | `test_chunked_adapter_forwards_source_schema` |
+| wrap `chunks` in a generator before `_run_chunked` | `test_fixed_schema_capture_survives` |
+
 ## Test results
 
 See the report that came with the push: T1 selection and gates.sh result on the pushed head.
