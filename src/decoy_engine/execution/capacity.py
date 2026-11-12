@@ -294,6 +294,10 @@ def estimate_job_capacity(
 
     base_dir_path = Path(base_dir)
     config = _resolved_config_copy(config_dump, base_dir_path)
+    if config.get("subset") is not None:
+        return _not_applicable(
+            "subset", "this job has a subset: block; the capacity check does not price it."
+        )
 
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())

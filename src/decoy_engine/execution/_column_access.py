@@ -368,15 +368,21 @@ def column_access(entry: Mapping[str, Any], registry: Any) -> ColumnAccess:
         access = _WRITES_UNKNOWN if declare is None else declare(entry)
         # The when gate is not applied to composite nodes, but the declaration stays
         # conservative: the predicate's names count as read too.
-        if has_when(entry):
-            access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
-        return access
+        return _with_when(access, entry)
     declare = SURFACE_DECLARATIONS.get(f"scalar:{entry.get('strategy')}")
     # An undeclared strategy may write anything: fail closed.
     access = _WRITES_UNKNOWN if declare is None else declare(entry)
-    if has_when(entry):
-        access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
-    return access
+    return _with_when(access, entry)
+
+
+def _with_when(access: ColumnAccess, entry: Mapping[str, Any]) -> ColumnAccess:
+    """`access` plus the columns the entry's `when:` predicate reads. The gate leaves unmatched
+    rows untouched and never reads the entry's own target, so the predicate makes no claim about
+    who writes that target and `own_target` stays the entry's."""
+    if not has_when(entry):
+        return access
+    merged = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
+    return replace(merged, own_target=access.own_target)
 
 
 def created_columns(
@@ -385,19 +391,21 @@ def created_columns(
     """Columns the config creates on this table, given the columns the source has.
 
     A column entry counts only when its declaration says it creates its own target and every
-    column it reads is a source column, so a target that is read, or whose inputs are absent or
+    column it reads is a source column or a created derive target, so a target that is read, or whose inputs are absent or
     unreadable, is not created. A `derive` target counts the same way against the source
     columns its own expression reads.
     """
     have = frozenset(source_columns)
+    derived = _derive_created(table_entry, have)
+    readable = have | derived  # transforms run before the columns, so their targets are readable
     created: set[str] = set()
     for entry in table_entry.get("columns") or []:
         if not isinstance(entry, Mapping) or not isinstance(entry.get("name"), str):
             continue
         access = column_access(entry, registry)
-        if _creates_from(access, have):
+        if _creates_from(access, readable):
             created.add(entry["name"])
-    return frozenset(created) | _derive_created(table_entry, have)
+    return frozenset(created) | derived
 
 
 def _derive_created(table_entry: Mapping[str, Any], have: frozenset[str]) -> frozenset[str]:
@@ -405,8 +413,10 @@ def _derive_created(table_entry: Mapping[str, Any], have: frozenset[str]) -> fro
 
     The ops are walked in order, as `apply_transforms` applies them: a dropped column is no
     longer readable, a target already on the frame is refused at run time (so it is never a
-    created column), and a column an earlier derive made does not exist in the source to be
-    read. A target written twice must qualify on every write.
+    created column), and a target an earlier derive made is readable while it qualified and is
+    still on the frame. A target written twice must qualify on every write. The central
+    `surface:transforms` declaration cannot answer this: it merges the ops into one read and
+    write set, with no per-target verdict and no drop or shadow tracking.
     """
     frame = set(have)
     ok: dict[str, bool] = {}
@@ -418,7 +428,8 @@ def _derive_created(table_entry: Mapping[str, Any], have: frozenset[str]) -> fro
         elif op.get("op") == "derive" and isinstance(op.get("column"), str):
             target = op["column"]
             names = predicate_names(str(op.get("expression")))
-            good = names is not None and names <= frame & have and target not in frame
+            made = frozenset(t for t, g in ok.items() if g) & frame
+            good = names is not None and names <= (frame & have) | made and target not in frame
             ok[target] = ok.get(target, True) and good
             frame.add(target)
     return frozenset(t for t, good in ok.items() if good)

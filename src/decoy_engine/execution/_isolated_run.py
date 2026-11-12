@@ -77,7 +77,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess
-from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.execution._guards import prepare_declared_execution_sources
 from decoy_engine.execution._isolated_commit import (
     CommitError,
@@ -205,7 +204,6 @@ def run_pipeline_isolated(
         Sprint 1a-part-2 will consume.
 
     Raises:
-        PipelineValidationError: `config` sets `subset:` (raised before staging or spawn).
         FileAccessUnavailable: a strict policy is installed and the call would spawn a
             child, or names a `staging_dir` or `output_dir` path. Raised before any I/O.
         ValueError: a non-None `sink`/`source_loader`/`vault_writer`/
@@ -214,7 +212,6 @@ def run_pipeline_isolated(
             JSON-serializable. Always raised BEFORE any subprocess is
             spawned.
     """
-    refuse_unapplied_subset(config)
     _reject_unserializable_kwargs(run_pipeline_kwargs)
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
@@ -285,6 +282,13 @@ def _require_ambient_for_paths(*, spawns: bool, names_paths: bool) -> None:
 
 
 def _reject_unserializable_kwargs(kwargs: dict[str, Any]) -> None:
+    mode = kwargs.get("subset_request", "config")
+    if not (isinstance(mode, str) and mode in ("config", "skip")):
+        # Fixed text: a typed request never crosses the wire and is never echoed here.
+        raise ValueError(
+            "run_pipeline_isolated carries only 'config' or 'skip' for subset_request; "
+            "call run_pipeline in-process to pass a SubsetRequest."
+        )
     offenders = [name for name in _NOT_SERIALIZABLE_KWARGS if kwargs.get(name) is not None]
     if offenders:
         raise ValueError(

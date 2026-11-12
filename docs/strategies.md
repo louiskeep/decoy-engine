@@ -1340,7 +1340,11 @@ not run the capacity check. The floor is a lower bound, so a run that passes it 
 out of memory. It is skipped when the run has an explicit memory budget
 (the run then holds itself to that budget), when it streams eligible columns to a bounded sink,
 and when the ceiling cannot be read.
-`CAPACITY_REASON_CODES` in `decoy_engine.errors` lists every code that means the same verdict.
+`CAPACITY_REASON_CODES` in `decoy_engine.errors` lists every code that means the same verdict:
+the generation budget, the out-of-core memory, fan-in, Faker pool and reorder budgets, the pool
+cache budget and the isolated worker running out of memory. `CAPACITY_EXCLUSIONS` in the same
+module names each other memory or budget code with the reason it is not a capacity verdict. The
+full-frame OOM-risk refusals are in it: they are decided before any row is read.
 
 ### sequence
 

@@ -51,6 +51,7 @@ from decoy_engine.declared_casting._quarantine_protocol import (
     QuarantineRun,
     QuarantineSession,
 )
+from decoy_engine.declared_casting._stream import stage_typed_sources
 from decoy_engine.declared_casting._types import CastOutcome
 
 __all__ = [
@@ -94,6 +95,7 @@ __all__ = [
     "preflight_declared_casting",
     "profile_descriptors",
     "round_to_scale",
+    "stage_typed_sources",
     "validate_format_spec",
     "validate_sentinel_spec",
 ]
