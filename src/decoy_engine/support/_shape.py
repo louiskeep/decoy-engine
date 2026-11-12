@@ -2,8 +2,9 @@
 
 A bundle carries structure only: versions, limits, routes, timings, coded errors, topology and
 coded events. No field holds free text. Names become ordinal `Label`s from a `LabelAllocator`,
-versions are pattern-checked `Version`s, reasons are registry-checked `ReasonRef`s, and every
-other field is a closed enum, a bounded `int`, a `bool`, `None` or a tuple of those.
+versions are pattern-checked `Version`s, reasons are `decoy_engine.reasons.ReasonRef`s that the
+bundle types check against the registry at construction, and every other field is a closed enum,
+a bounded `int`, a `bool`, `None` or a tuple of those.
 
 Pattern: the `_V1Fields` exact-type check of `decoy_engine._progress_events` ("parse, don't
 validate": every holder re-checks exact types in `__post_init__`, so a `str` subclass, a `bool`
@@ -21,8 +22,8 @@ from dataclasses import dataclass, fields
 from enum import Enum
 
 from decoy_engine.execution.native._route_decline_codes import RouteDeclineCode
-from decoy_engine.profile._types import PIIClass
-from decoy_engine.reasons import Outcome, ReasonSpec, RetryClass, Severity, find
+from decoy_engine.profile import PIIClass
+from decoy_engine.reasons import Outcome, ReasonRef, RetryClass, Severity, find
 
 _LABEL_TOKEN = object()
 _LABEL = re.compile(r"(t[0-9]{1,4}(\.c[0-9]{1,4})?|n[0-9]{1,4})")
@@ -74,47 +75,6 @@ class Version(str):
         if type(value) is not str or not _VERSION.fullmatch(value):
             raise ValueError("not a version string")
         return super().__new__(cls, value)
-
-
-class ReasonRef:
-    """A registered reason identity `(namespace, code)`; no context, summary or count.
-
-    It holds the registry entry, so the pair it reports is registry text, never the caller's.
-    """
-
-    __slots__ = ("_spec",)
-    _spec: ReasonSpec
-
-    def __init__(self, namespace: object, code: object) -> None:
-        spec = find(namespace, code) if isinstance(namespace, str) else None
-        if spec is None:
-            raise ValueError("reason is not registered")
-        object.__setattr__(self, "_spec", spec)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        raise AttributeError("ReasonRef is immutable")
-
-    def __reduce__(self) -> tuple[type[ReasonRef], tuple[str, str]]:
-        return (ReasonRef, (self.namespace, self.code))
-
-    @property
-    def namespace(self) -> str:
-        return self._spec.namespace
-
-    @property
-    def code(self) -> str:
-        return self._spec.code
-
-    def __eq__(self, other: object) -> bool:
-        if type(other) is not ReasonRef:
-            return NotImplemented
-        return self._spec.identity == other._spec.identity
-
-    def __hash__(self) -> int:
-        return hash(self._spec.identity)
-
-    def __repr__(self) -> str:
-        return f"ReasonRef({self.namespace!r}, {self.code!r})"
 
 
 class BundleSchema(str, Enum):
@@ -264,6 +224,10 @@ def _check(owner: str, name: str, tp: object, value: object) -> None:
         raise TypeError(f"{owner}.{name} has a type a bundle may not carry")
     elif type(value) is not tp:
         raise TypeError(f"{owner}.{name} must be {getattr(tp, '__name__', tp)}")
+    elif tp is ReasonRef:
+        ns, code = getattr(value, "namespace", None), getattr(value, "code", None)
+        if type(ns) is not str or type(code) is not str or find(ns, code) is None:
+            raise ValueError(f"{owner}.{name} is not a registered reason")
     elif tp is int and isinstance(value, int):
         low, end = _RANGES[name]
         if not low <= value < end:

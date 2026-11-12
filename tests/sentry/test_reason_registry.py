@@ -152,12 +152,6 @@ ADAPTERS: dict[tuple[str, str], str] = {
         "exports the identity of a `ReasonRef` that `require_known` has just resolved against "
         "the registry (an unknown identity fails closed before this dict is built)"
     ),
-    ("profiling/scan_set.py", "WarningRefCore._known"): (
-        "builds a `reasons.ReasonRef` from the model's own namespace and code fields, and "
-        "`require_known` resolves it against the registry before the model is accepted (an "
-        "unknown identity fails closed); the scanner reaches this call by the bare class name, "
-        "which `support.ReasonRef` also carries"
-    ),
     ("safe_output/_event.py", "SafeEvent.to_dict"): (
         "exports the identity of a `ReasonRef` that `require_known` resolved against the "
         "registry when the event was validated (an unknown identity fails closed before this "
