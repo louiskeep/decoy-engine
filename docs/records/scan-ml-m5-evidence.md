@@ -3,7 +3,7 @@ Status: record
 # SCAN-ML M5: post-scan route guard
 
 Date: 2026-11-12. Branch: `feat/scanml-m5`, started from engine main `426e6d05`, merged with main
-`8f9fdfab` in `96bf249b` (see "Merge with main"). Plan: SCAN-ML
+`8f9fdfab` in `96bf249b` and with main `7fc12e7f` in `91a0e975` (see "Merge with main"). Plan: SCAN-ML
 (`plan/scan-ml` at `e0ae4204`, `docs/plans/2026-11-07-scan-ml.md`), section 4.5 (route guard),
 sections 4.8, 5, 6, 7 (AT-M5a), 11 to 14. Handoff: `handoffs/scan-ml-build`.
 
@@ -135,6 +135,15 @@ guard, subset check, transforms refusal, declaration gate, `_run_chunked`. AT-M5
 entry its `source_schema`; the guard fires before it is used. The secret-material census, re-derived
 with `scripts/secret_material_census.py --write`, equals main's.
 
+Second merge: `91a0e975` merges main `7fc12e7f` (#492 moves the classifier stack into the base
+install, #481 registers the FPE fallback codes at the minor this slice had claimed, #497 adds the
+canary scan entry) because main moved again before the push. Conflicts: `docs/reasons.md` and
+`tests/unit/test_reason_registry.py`, both sides kept. `scripts/dev/registry_renumber.py --main
+origin/main` then moved `route.post_scan_models_unsupported` to the next free minor, 1.25.0
+(`004cc7f6`; fixture now `reason-manifest-v1.25-scanml-m5.json`; `--check` reports the registry
+consistent). The merge left two of main's FPE test assertions under the M5 test; `6aa0547d` puts
+them back in the FPE test, and every other line main added in `8f9fdfab..7fc12e7f` is present.
+
 ## Red first
 
 Commit `dce80fa1` (tests only, no source stub) on `426e6d05`: 51 failed, 96 passed across
@@ -162,9 +171,8 @@ they now pass a sink (the pinned chunked-sink case) and expect the legacy lane's
 
 Each mutation applied once, its tests run, then reverted; no commit carries one. Command for each:
 `.venv/bin/python -m pytest -q -p no:randomly -n 2 tests/unit/execution/test_scanml_m5_route_guard.py
-tests/sentry/test_post_scan_route_guard.py`. Run first on `06bbf9e7` and again on the merged source
-head `96bf249b` (the later `8f91d3ea` changes one sentry file only). The counts were the same on
-both heads:
+tests/sentry/test_post_scan_route_guard.py`. Run on `06bbf9e7`, on the first merge head `96bf249b`,
+and on the final source head `6aa0547d`. The counts were the same on all three:
 
 - M-M5a, drop the guard from `run_sequential`: 4 failed (the two `run_sequential` refusal cases,
   `test_refusal_text_is_the_fixed_summary_with_no_chain[run_sequential]`, sentry
@@ -189,7 +197,7 @@ uv sync --frozen --extra dev
 GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy,sentry,layers,licenses,tests <183 paths>
 ```
 
-Final run: head `8f91d3ea`, baseline origin/main `8f9fdfab`, tree clean. The 183 paths: every
+Final run: head `6aa0547d`, baseline origin/main `7fc12e7f`, tree clean. The 183 paths: every
 `tests/**/test_*.py` that `git grep` finds for `run_sequential`, `run_fk_out_of_core`,
 `run_sequential_route`, `run_out_of_core_route`, `OutOfCoreAdapter`, `SequentialAdapter`,
 `run_mask_chunked`, `run_mask_pipeline_chunked`, `run_native_or_oracle_chunked`, `_chunked_entry`,
@@ -203,16 +211,17 @@ and `tests/unit/config/test_scan_ml_reasons.py`.
 | Step | Branch | Main |
 |---|---|---|
 | ruff, format, mypy | not run: `.venv/bin/ruff` and `mypy` are not in the `dev` extra (rc 127 on both) | same |
-| sentry | 5048 passed, 3 failed, 21 errors | 5018 passed, 3 failed, 21 errors |
+| sentry | 5065 passed, 3 failed, 21 errors | 5035 passed, 3 failed, 21 errors |
 | layers | 15 passed | skipped (passed on branch) |
 | licenses | 63 passed | skipped (passed on branch) |
-| tests | 14728 passed, 2 failed, 21 errors, 2717 skipped | 14657 passed, 2 failed, 21 errors, 2717 skipped |
+| tests | 14746 passed, 2 failed, 21 errors, 2717 skipped | 14675 passed, 2 failed, 21 errors, 2717 skipped |
 
 Failing ids, identical on branch and main (24 each, no branch-only id):
 `tests/sentry/parallel/test_serial_resources.py::test_the_required_serial_registry_is_marked` and the
 `tests/sentry/test_outbound_clients.py` set (no `google` package in this venv). No main failure
-passes on the branch. Collected count in the tests step: branch 17468 against main 17397 (+71, the
-new tests).
+passes on the branch. Collected count in the tests step: branch 17486 against main 17415 (+71, the
+new tests). The run on `8f91d3ea` against `8f9fdfab` had the same 24 failing ids on both sides and
+no branch-only id.
 
 Earlier runs on this branch: on `17562e7c` against `426e6d05` one branch-only id, the M1 tripwire
 `tests/unit/config/test_scan_ml_reasons.py::test_the_slice_adds_exactly_these_identities_and_no_later_slice_code`
@@ -229,7 +238,7 @@ uv sync --frozen --extra dev --extra lint
 GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy tests/unit/execution/test_scanml_m5_route_guard.py
 ```
 
-On `8f91d3ea`: ruff PASS, format PASS, mypy 4 errors on the branch and the same 4 on main (no
+On `6aa0547d`: ruff PASS, format PASS, mypy 4 errors on the branch and the same 4 on main (no
 branch-only error).
 
 Module sizes on the final head (census ceilings unchanged): `native/_chunked_entry.py` 684 of 689,
@@ -244,9 +253,10 @@ secret-material census, re-derived, equals main's.
 The `ner-gate` steps, in a separate venv (`UV_PROJECT_ENVIRONMENT=<venv-ner> uv sync --frozen
 --extra dev --extra ner`): the URL and SHA-256 from `NER_MODEL_WHEELS[("en_core_web_sm", "3.8.0")]`,
 `curl --fail` download, `sha256sum --check` OK, `uv pip install --no-deps <wheel>`. Then
-`DECOY_REQUIRE_NER=1 pytest -m ner -n 2`, on `8f91d3ea`: 38 passed, 14 skipped (the same on
-`a9642755`). Every skip is a module-level import skip for another optional dependency (google,
-paramiko, hvac, lightgbm, joblib, mimesis, the wheel builder, mutmut); no NER test skipped.
+`DECOY_REQUIRE_NER=1 pytest -m ner -n 2`, on `6aa0547d` (venv re-synced after #492): 39 passed,
+10 skipped. Every skip is a module-level import skip for another optional dependency (google,
+paramiko, hvac, mimesis, the wheel builder, mutmut); no NER test skipped. On `a9642755`, before
+#492, it was 38 passed and 14 skipped (lightgbm and joblib were not installed).
 
 ## TEST SCOPE
 
@@ -268,8 +278,8 @@ Full suite:  trigger public execution signatures plus reason registry, orchestra
 
 - The full suite (orchestrator) and the perf suite.
 - ruff and mypy in the exact `--extra dev` sync (not installed there); run with `--extra lint`.
-- Tests needing google, paramiko, hvac, lightgbm, joblib or mimesis (not installed).
-- The final gates run was on `8f91d3ea`; the record commit after it changes docs only, and
+- Tests needing google, paramiko, hvac or mimesis (not installed).
+- The final gates run was on `6aa0547d`; the record commit after it changes docs only, and
   `tests/sentry` was rerun on that head.
 - No mutation drops the declaration gate from the lane cores; that gate is #495's, and its own tests
   run through `run_pipeline` (in the selection above).
