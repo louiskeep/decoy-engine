@@ -26,7 +26,7 @@ from pydantic import (
 )
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
-from decoy_engine._value_free import Count
+from decoy_engine._value_free import Count, SharedRules
 from decoy_engine.run_result import SafeName, Sha256
 
 __all__ = ["EvidencePayload", "ExportLayout", "SampleRunPayload"]
@@ -97,7 +97,32 @@ class Strategy(_Model):
     strategy: Name
 
 
-class EvidencePayload(_Model):
+class _BindingRules(SharedRules):
+    """The pair rules of the project binding, run by the write model and the decoder's read model."""
+
+    @field_validator("path_base", mode="after", check_fields=False)
+    @classmethod
+    def _path_base_is_project(cls, value: Any) -> Any:
+        # Runs only when the key is present, so an explicit null or another base is refused here.
+        if value != "project":
+            raise PydanticCustomError("path_base_value", "path_base is project")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _binding_pair(cls, data: Any) -> Any:
+        if isinstance(data, Mapping) and ("path_base" in data) != ("project_manifest" in data):
+            missing = "project_manifest" if "path_base" in data else "path_base"
+            detail: InitErrorDetails = {
+                "type": PydanticCustomError("binding_pair", "path_base and project_manifest pair"),
+                "loc": (missing,),
+                "input": None,
+            }
+            raise ValidationError.from_exception_data(cls.__name__, [detail])
+        return data
+
+
+class EvidencePayload(_Model, _BindingRules):
     schema_version: Literal["cli-local-1"]
     producer: Literal["decoy-cli"]
     run_id: Name
@@ -118,27 +143,6 @@ class EvidencePayload(_Model):
     # Absent must stay absent for the manifest_hash, so these are never given a stored default.
     path_base: Literal["project"] | None = None
     project_manifest: RelPath | None = None
-
-    @field_validator("path_base", mode="after")
-    @classmethod
-    def _path_base_not_null(cls, value: str | None) -> str | None:
-        # Runs only when the key is present, so an explicit null is the one case left to refuse.
-        if value is None:
-            raise PydanticCustomError("path_base_null", "path_base is not null")
-        return value
-
-    @model_validator(mode="before")
-    @classmethod
-    def _binding_pair(cls, data: Any) -> Any:
-        if isinstance(data, Mapping) and ("path_base" in data) != ("project_manifest" in data):
-            missing = "project_manifest" if "path_base" in data else "path_base"
-            detail: InitErrorDetails = {
-                "type": PydanticCustomError("binding_pair", "path_base and project_manifest pair"),
-                "loc": (missing,),
-                "input": None,
-            }
-            raise ValidationError.from_exception_data(cls.__name__, [detail])
-        return data
 
 
 class ColumnRef(_Model):
