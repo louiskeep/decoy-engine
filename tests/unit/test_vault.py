@@ -524,8 +524,8 @@ class TestCryptoAbsent:
 
 
 # --------------------------------------------------------------------------
-# Vault key floor: no vault is written, opened or accepted under a key shorter
-# than `keyprovider.MIN_SECRET_BYTES` (the 32-byte mask root). Labels per cell:
+# Vault key floor: no vault is written, opened or accepted under a key that is
+# not the 32-byte mask root. Labels per cell:
 # FAIL-BEFORE (red on the engine before the floor) or CHARACTERIZATION (green
 # before and after); the red baseline is recorded in
 # docs/plans/evidence/2026-10-31-slice0-vault-red-baseline.txt.
@@ -582,18 +582,24 @@ class TestVaultKeyFloor:
             VaultWriter(b"\x05" * length)
         assert exc.value.code == "weak_mask_secret"
 
-    @pytest.mark.parametrize(
-        "length",
-        [
-            pytest.param(32, id="len32-CHARACTERIZATION"),
-            pytest.param(64, id="len64-CHARACTERIZATION"),
-        ],
-    )
-    def test_writer_accepts_a_root_length_key(self, length: int) -> None:
-        key = b"\x05" * length
+    def test_writer_accepts_a_root_length_key(self) -> None:
+        key = b"\x05" * 32
         writer = VaultWriter(key)
         assert type(writer._mask_key) is bytes
         assert writer._mask_key == key
+
+    @pytest.mark.parametrize("length", [33, 64])
+    def test_key_longer_than_the_root_is_refused_up_front(
+        self, tmp_path: Path, length: int
+    ) -> None:
+        # The key derivation takes no other strong length, so a longer key once built a writer
+        # that then failed at its first write; both ends now refuse it before any file work.
+        with pytest.raises(VaultError) as built:
+            VaultWriter(b"\x05" * length)
+        assert built.value.code == "weak_mask_secret"
+        with pytest.raises(VaultError) as loaded:
+            load_vault(tmp_path / "missing.vault", b"\x05" * length)
+        assert loaded.value.code == "weak_mask_secret"
 
     @pytest.mark.no_default_secret
     def test_vault_writer_for_config_refuses_seed_only_config_no_keyed_column_FAIL_BEFORE(

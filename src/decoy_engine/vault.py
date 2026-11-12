@@ -13,10 +13,10 @@ Security model. The vault is a re-identification database: anyone
 holding the vault file AND the run's mask key (the secret behind
 `mask_secret_ref` / a programmatic `key_provider`) can recover every
 vaulted source value. A vault is never keyed on the public job seed:
-every key that writes, opens or is matched against a vault must be at
-least `keyprovider.MIN_SECRET_BYTES` (the 32-byte mask root), checked at
-construction and again at every write, load and key-match, because an
-8-byte public seed gives a KDF nothing to amplify. Store the vault and
+every key that writes, opens or is matched against a vault must be the
+32-byte mask root, checked at construction and again at every write,
+load and key-match, because an 8-byte public seed gives a KDF nothing to
+amplify. Store the vault and
 the config separately, with the handling the source data itself would
 get; never ship a vault alongside its masked output. The encryption is
 Fernet from the `cryptography` package (AES-128-CBC + HMAC-SHA256,
@@ -91,7 +91,6 @@ from decoy_engine.fileaccess import (
 from decoy_engine.fileaccess.adapters import serial
 from decoy_engine.keyprovider import (
     KEY_REQUIRED_GUIDANCE,
-    MIN_SECRET_BYTES,
     KeyedStrategyRequiresSecret,
 )
 
@@ -149,9 +148,13 @@ class VaultError(DecoyError):
         super().__init__(f"[{code}] {message}")
 
 
+# Every provider's mask root is 32 bytes of HKDF output, and `derive` takes no other strong key
+# length, so a longer key would pass a minimum and then fail at the first write or load.
+_VAULT_KEY_BYTES = 32
+
 _WEAK_KEY_MESSAGE = (
-    f"the vault key must be bytes of at least {MIN_SECRET_BYTES} bytes (the mask root of a "
-    "secret); a vault is never keyed on the job seed. Build the writer with "
+    f"the vault key must be the {_VAULT_KEY_BYTES}-byte mask root of a secret, as bytes; a "
+    "vault is never keyed on the job seed. Build the writer with "
     "vault_writer_for_config(config, key_provider=...) or global_settings.mask_secret_ref."
 )
 
@@ -162,12 +165,12 @@ def _key_size(key: object) -> int:
 
 
 def _require_vault_key(size: int) -> None:
-    """Refuse with `weak_mask_secret` unless the vault key's size (`_key_size`) meets the floor.
+    """Refuse with `weak_mask_secret` unless the vault key's size (`_key_size`) is the mask root's.
 
-    The floor is `SecretKeyProvider`'s (`MIN_SECRET_BYTES`). Callers pass only the size, so the
-    key never becomes a local of this frame. The refusal text is fixed.
+    Callers pass only the size, so the key never becomes a local of this frame. The refusal text
+    is fixed.
     """
-    if size < MIN_SECRET_BYTES:
+    if size != _VAULT_KEY_BYTES:
         raise VaultError(code=reasons.runtime.WEAK_MASK_SECRET, message=_WEAK_KEY_MESSAGE)
 
 
@@ -472,8 +475,8 @@ def load_vault(
     Raises:
         VaultError: ``code='vault_crypto_not_installed'`` when the
             `cryptography` package is missing;
-            ``code='weak_mask_secret'`` when `mask_key` is not bytes of at
-            least `MIN_SECRET_BYTES` (checked before the file is read);
+            ``code='weak_mask_secret'`` when `mask_key` is not the 32-byte
+            mask root, as bytes (checked before the file is read);
             ``code='vault_unreadable'`` when the file is missing or not
             a vault; ``code='vault_format_unsupported'`` on a format
             version this engine does not consume;
