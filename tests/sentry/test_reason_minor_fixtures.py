@@ -114,7 +114,7 @@ def test_rejects_a_highest_fixture_minor_below_the_registry() -> None:
     assert "highest fixture minor 7.3 is not the registry minor" in problems
 
 
-# REG-RELEASE E2: a pending (`since` unreleased) identity is named by an exact `namespace/code`
+# A pending (`since` unreleased) identity is named by an exact `namespace/code`
 # code span in a changelog fragment; the claim rule and its extraction live in the policy module.
 from scripts.release import reason_manifest_policy as pol  # noqa: E402
 from scripts.release.stamp_release import is_fragment_name, parse_fragment  # noqa: E402

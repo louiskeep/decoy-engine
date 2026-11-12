@@ -30,7 +30,7 @@ SCHEMA_ROOTS = ("reason_schema_version", "event_schema_version")
 VERSION_LITERAL = re.compile(r"(?<![\w.])\d+\.\d+\.\d+(?!\w|\.\d)")
 _FIXTURE_NAME = re.compile(r"reason-manifest-v(\d+)\.(\d+)-([a-z0-9-]+)\.json")
 FIXTURE_GLOB = "reason-manifest-v*-*." + "json"  # built apart: a sentry scans for .json literals
-FIXTURE_FLOOR = "1.5.0"  # fixed: the last minor that shipped without a fixture (F31 #377)
+FIXTURE_FLOOR = "1.5.0"  # fixed: the last minor that shipped without a fixture
 
 UNRELEASED = "unreleased"  # decoy_engine.reasons.UNRELEASED: a `since` no release stamped yet
 LAST_PER_PR_MINOR = "1.24.0"  # the last minor the old per-PR process made; not a moving version

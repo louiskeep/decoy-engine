@@ -458,7 +458,7 @@ def test_guard_flags_qualified_uses_through_module_aliases(tmp_path: Path) -> No
     ]
 
 
-# REG-RELEASE E2: the four registry transitions and the pending-state decisions are made only by
+# The four registry transitions and the pending-state decisions are made only by
 # the policy module. A branch on a transition's pending sets outside it is a second decision point
 # even when it collects nothing (it may only pick a version).
 _DEPRECATION_BRANCH = (

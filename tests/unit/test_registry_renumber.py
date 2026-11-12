@@ -222,7 +222,7 @@ def slices(repo: Path, *slugs: str, version: str | None = None, merged: bool = T
     return m0
 
 
-# The pending-era --check (REG-RELEASE E2) refuses any numeric slice. A slice the numeric
+# The pending-era --check refuses any numeric slice. A slice the numeric
 # renumber left consistent fails with these keys only, so the older carrier checks still hold.
 PENDING_ERA = ("registry-version-bump ", "branch-added-fixture", "numeric-since ")
 
