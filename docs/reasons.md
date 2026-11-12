@@ -55,7 +55,7 @@ The same fixture also pins the two GEN-CLI additions (`warning.generation_fideli
 
 `reason-manifest-v1.24-fpe-fallbacks.json` pins the two FPE handler fallback codes (`runtime.fpe_unencryptable_value` and `runtime.fpe_checksum_unsupported`; `since` 1.24.0). The `fpe` strategy had emitted both since Task 5.2 when a low-level FPE error carried no more specific code, but neither was registered, so they surfaced as `decoy.unregistered_reason`. The checksum one's symbol is `FPE_CHECKSUM_UNSUPPORTED_STRATEGY`, because `FPE_CHECKSUM_UNSUPPORTED` already names the low-level `fpe.checksum_unsupported`.
 
-`reason-manifest-v1.26-config-explicit-e2b-r.json` pins the one CONFIG-EXPLICIT E2b-r addition (`config.source_file.declared_column_missing`, `since` 1.26.0: the config declares a column of a mask table that the source header or schema does not have). The message names the column and the count, never a value. It is raised from the same declaration boundary as the two E2a codes, before any data row is read.
+The one CONFIG-EXPLICIT E2b-r addition (`config.source_file.declared_column_missing`, pending: the config declares a column of a mask table that the source header or schema does not have). The message names the column and the count, never a value. It is raised from the same declaration boundary as the two E2a codes, before any data row is read.
 
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.
 
