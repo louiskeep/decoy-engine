@@ -12,14 +12,18 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import polars as pl
 import pyarrow as pa
 
 from decoy_engine._execution_error import lazy_source_changed
 from decoy_engine.plan._types import PlanRelationship
+from decoy_engine.subset._edges import linked_neighbours, reach
 from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetPlan
+
+if TYPE_CHECKING:
+    from decoy_engine.subset._sample import SampleSpec
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,7 @@ class SubsetRequest:
     policy: FanOutPolicy
     # Edges dropped before the request was built (a generate-kind end has no source to read).
     excluded_edges: tuple[str, ...] = ()
+    sample: SampleSpec | None = None
 
     def fingerprint(self) -> str:
         """SHA-256 over the canonical dump: the subset half of a run's identity. It holds no
@@ -39,10 +44,12 @@ class SubsetRequest:
 
 @dataclass(frozen=True)
 class SubsetScope:
-    """`tables` are reachable from a seed; `whole` were supplied and no seed reaches them."""
+    """`tables` are reachable from a seed; `whole` were supplied and no seed reaches them. A sample
+    has no `whole`: `head` holds its edgeless tables, read as their first rows."""
 
     tables: frozenset[str]
     whole: frozenset[str]
+    head: frozenset[str] = frozenset()
 
 
 class MaterializationCheck:
@@ -100,16 +107,15 @@ def scope_for(request: SubsetRequest, table_names: Iterable[str]) -> SubsetScope
     it does not. Reach ignores `edge_directions`: a table whose only edge is `upward` is still
     narrowed (to no rows), as standalone `plan_subset` reports it, never passed whole."""
     supplied = frozenset(table_names)
-    neighbours: dict[str, set[str]] = {}
-    for rel in request.relationships:
-        for child in rel.children:
-            neighbours.setdefault(rel.parent.table, set()).add(child.table)
-            neighbours.setdefault(child.table, set()).add(rel.parent.table)
-    reached = {seed.table for seed in request.seeds}
-    frontier = list(reached)
-    while frontier:
-        for nxt in neighbours.get(frontier.pop(), ()):
-            if nxt not in reached:
-                reached.add(nxt)
-                frontier.append(nxt)
-    return SubsetScope(tables=supplied & reached, whole=supplied - reached)
+    neighbours = linked_neighbours(request.relationships)
+    reached = reach((seed.table for seed in request.seeds), neighbours)
+    if request.sample is None:
+        return SubsetScope(tables=supplied & reached, whole=supplied - reached)
+    # A sample never passes a table whole: what no seed closes over is read head-first, and a
+    # head table with an edge would skip the closure that keeps its links whole.
+    head_seeded = {s.table for s in request.seeds if s.mode == "head" and s.table not in neighbours}
+    tables = supplied & (reached - head_seeded)
+    head = supplied - tables
+    if head & neighbours.keys():
+        raise ValueError("a sample head table has a declared edge")
+    return SubsetScope(tables=tables, whole=frozenset(), head=head)
