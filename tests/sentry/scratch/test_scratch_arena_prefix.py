@@ -81,7 +81,6 @@ def prefix_findings(src: Path) -> list[str]:
     """Spellings of the arena's names outside `_scratch.py`: a `decoy-arena` literal (any
     `prefix=` value included), `ARENA_PREFIX` read or looked up, or a name constant imported
     from the arena module (`_MARKER` and `_MAGIC` are common private names elsewhere)."""
-    return []  # neutered control (red commit only): no rule
     out: list[str] = []
     for rel, _name, tree, _pkg in _modules(src):
         if rel == ARENA:
@@ -105,7 +104,6 @@ def prefix_findings(src: Path) -> list[str]:
 
 def choke_point_findings(src: Path) -> list[str]:
     """Creations outside the two choke points, and a private entry point's restorer changed."""
-    return []  # neutered control (red commit only): no rule
     out = [
         f"{s.module}:{s.line} {s.function}: {s.sink}"
         for s in scan_tree(src)[0]
