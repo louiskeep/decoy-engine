@@ -10,7 +10,11 @@ from decoy_engine.run_result._model import Delivery, TableDelivery, TableResult
 
 @dataclass(frozen=True)
 class CollectedFacts:
-    pass
+    started: Any = frozenset()
+    finished: Any = field(default_factory=dict)
+    errored: Any = frozenset()
+    rate_rows: Any = field(default_factory=dict)
+    aggregate_error: bool = False
 
 
 @dataclass(frozen=True)
