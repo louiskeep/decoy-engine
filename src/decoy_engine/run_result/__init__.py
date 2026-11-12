@@ -1,6 +1,7 @@
 """The ``decoy-run-result/v1`` run record: model (write and read) and the status derivation.
 
-Public names are re-exported from ``decoy_engine``. The value-free leaf types (``Token``,
+The run-record names are re-exported from ``decoy_engine``; the projection names
+(``project_tables`` and its fact types) are public here only. The value-free leaf types (``Token``,
 ``SafeName`` and the rest) are exported here for the sibling ``records`` package, which shares
 them; they are not part of the top-level API. The per-table projection lives in
 ``_project.py``; the builder and collector arrive in later slices of the same package.
