@@ -301,11 +301,16 @@ class TestWindowedDatePlanCheck:
         }
         self._check(cfg)  # no raise
 
-    def test_missing_anchor_column_raises(self) -> None:
+    def test_missing_anchor_of_a_generate_column_is_the_strict_checks_refusal(self) -> None:
+        """A generate column's anchor is resolved and checked once, by the generate-input
+        check; this check keeps the mask-kind anchor and the distribution rule."""
+        from decoy_engine import run_config_only_checks
+
         cfg = {
             "tables": [
                 {
                     "name": "t",
+                    "row_count": 3,
                     "generate_columns": [
                         {
                             "name": "end",
@@ -317,8 +322,12 @@ class TestWindowedDatePlanCheck:
                 }
             ]
         }
-        with pytest.raises(PlanCompileError, match="nonexistent_date"):
-            self._check(cfg)
+        self._check(cfg)  # no raise: not this check's rule
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "generate_column_forward_reference"
+        assert exc.value.path == "tables.t.generate_columns.end.anchor"
+        assert "nonexistent_date" not in str(exc.value)
 
     def test_mask_column_bad_anchor_raises(self) -> None:
         """Plan check also covers mask-mode columns with strategy: windowed_date."""
@@ -490,3 +499,164 @@ class TestWindowedDateGeneratePath:
             assert s <= e <= s + pd.Timedelta(days=30), (
                 f"end {e} not in [{s}, {s + pd.Timedelta(days=30)}]"
             )
+
+
+class TestWindowedDateCodedFailures:
+    """Every anchor failure is one of three registered `runtime` codes, raised at the source.
+
+    The message is the code's fixed summary: no row position, no type name, no cell value. The
+    anchor range and the produced date's range are checked at both ends.
+    """
+
+    INVALID = "windowed_date_anchor_invalid"
+    ANCHOR_RANGE = "windowed_date_anchor_out_of_range"
+    OFFSET_RANGE = "windowed_date_offset_out_of_range"
+
+    @staticmethod
+    def _apply(anchor, min_days: int = 0, max_days: int = 0, rows_before: int = 2):
+        import pandas as pd
+
+        from decoy_engine.transforms.windowed_date import WindowedDateConfig, apply_windowed_date
+
+        cfg = WindowedDateConfig.from_dict(
+            {"anchor": "a", "min_days": min_days, "max_days": max_days}
+        )
+        cells = ["2020-02-02"] * rows_before + [anchor]
+        return apply_windowed_date(
+            cfg, pd.DataFrame({"a": pd.Series(cells, dtype=object)}), b"\x07" * 8, "n"
+        )
+
+    def _refused(self, anchor, code: str, **window: int) -> None:
+        from decoy_engine import reasons
+        from decoy_engine.transforms.windowed_date import WindowedDateError
+
+        with pytest.raises(WindowedDateError) as exc:
+            self._apply(anchor, **window)
+        err = exc.value
+        assert err.code == code
+        assert isinstance(err.code, reasons.ReasonCode) and err.code.namespace == "runtime"
+        assert str(err) == f"[{code}] {reasons.get('runtime', code).summary}"
+        assert err.__cause__ is None and err.__context__ is None
+        assert not any(ch.isdigit() for ch in str(err))
+
+    @pytest.mark.parametrize(
+        "anchor",
+        [
+            "now",
+            "today",
+            "2024-1-1",
+            "20240101",
+            "Jan 1 2024",
+            "2024-01-01T00:00:00Z",
+            "2024-01-01T00:00:00+02:00",
+            "2024-02-30",
+            "2024-13-01",
+            "2024-01-01T25:00",
+            "2024-01-01 10:61:00",
+            "0000-01-01",
+            "",
+            "NaT",
+            20240101,
+            1.5,
+            b"2024-01-01",
+            True,
+        ],
+    )
+    def test_grammar_calendar_and_type_failures_are_anchor_invalid(self, anchor) -> None:
+        self._refused(anchor, self.INVALID)
+
+    def test_a_timezone_aware_typed_anchor_is_anchor_invalid(self) -> None:
+        import datetime as dt
+
+        import pandas as pd
+
+        self._refused(pd.Timestamp("2024-01-01", tz="UTC"), self.INVALID)
+        self._refused(dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc), self.INVALID)
+
+    @pytest.mark.parametrize(
+        "anchor",
+        [
+            "1699-12-31",
+            "1699-12-31T23:59:59.999999999",
+            "2201-01-01",
+            "2201-01-01T00:00:00",
+            "0001-01-01",
+            "9999-12-31",
+        ],
+    )
+    def test_a_string_anchor_outside_the_supported_range_is_out_of_range(self, anchor) -> None:
+        self._refused(anchor, self.ANCHOR_RANGE)
+
+    def test_a_typed_anchor_outside_the_supported_range_is_out_of_range(self) -> None:
+        import datetime as dt
+
+        import pandas as pd
+
+        from decoy_engine.transforms.windowed_date import SUPPORTED_MAX, SUPPORTED_MIN
+
+        one_ns = pd.Timedelta(1, unit="ns")
+        for anchor in (
+            SUPPORTED_MIN - one_ns,
+            SUPPORTED_MAX + one_ns,
+            dt.date(1699, 12, 31),
+            dt.date(2201, 1, 1),
+            dt.datetime(2201, 1, 1),
+            dt.date(1, 1, 1),
+            dt.datetime(9999, 12, 31),
+        ):
+            self._refused(anchor, self.ANCHOR_RANGE)
+
+    def test_both_ends_of_the_supported_range_are_accepted(self) -> None:
+        assert self._apply("1700-01-01")[-1] == "1700-01-01"
+        assert self._apply("2200-12-31T23:59:59.999999999")[-1] == "2200-12-31"
+
+    @pytest.mark.parametrize(
+        ("anchor", "days"),
+        [
+            ("2200-12-31", 1),
+            ("2200-12-01", 31),
+            ("1700-01-01", -1),
+            ("1700-01-31", -31),
+            ("2000-01-01", 10**12),
+            ("2000-01-01", -(10**12)),
+        ],
+    )
+    def test_an_offset_that_crosses_either_end_is_offset_out_of_range(
+        self, anchor: str, days: int
+    ) -> None:
+        self._refused(anchor, self.OFFSET_RANGE, min_days=days, max_days=days)
+
+    def test_an_offset_that_lands_on_either_end_is_accepted(self) -> None:
+        assert self._apply("2200-12-30", 1, 1)[-1] == "2200-12-31"
+        assert self._apply("1700-01-02", -1, -1)[-1] == "1700-01-01"
+
+    def test_the_message_has_no_row_position_type_name_or_value(self) -> None:
+        from decoy_engine.transforms.windowed_date import WindowedDateError
+
+        secret = "SECRET-9931"
+        for anchor in (secret, 99319931, b"SECRET-9931", "3131-01-01"):
+            with pytest.raises(WindowedDateError) as exc:
+                self._apply(anchor, rows_before=7)
+            text = str(exc.value)
+            assert "9931" not in text and "3131" not in text and secret not in text
+            assert "row" not in text and " 7" not in text
+            for name in ("int", "bytes", "str", "Timestamp"):
+                assert name not in text.split()
+
+    def test_the_three_classes_do_not_share_a_code(self) -> None:
+        from decoy_engine import reasons
+
+        summaries = {
+            reasons.get("runtime", code).summary
+            for code in (self.INVALID, self.ANCHOR_RANGE, self.OFFSET_RANGE)
+        }
+        assert len(summaries) == 3
+
+    def test_the_reason_adapter_reports_the_code_itself(self) -> None:
+        from decoy_engine.reason_adapter import reason_from_exception
+        from decoy_engine.transforms.windowed_date import WindowedDateError
+
+        with pytest.raises(WindowedDateError) as exc:
+            self._apply("now")
+        record = reason_from_exception(exc.value)
+        assert (record.namespace, record.code) == ("runtime", self.INVALID)

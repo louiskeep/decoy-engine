@@ -1,9 +1,10 @@
-"""GEN-REL config-time checks for per-parent bounds (AT-2, AT-2b, AT-3, AT-4, AT-6f) and for
-self-reference trees (AT-7, AT-9).
+"""GEN-REL config-time checks for per-parent bounds (AT-2, AT-2b, AT-3, AT-4, AT-6f), for
+self-reference trees (AT-7, AT-9) and for the parent lookup of an anchored date (AT-11).
 
 Every refusal is a registered `config` code raised through `PipelineConfig`, in a fixed order:
 `min > max`, then fitted with a bound, then nulls with a bound, then the row-count ceiling. A
-self-reference reports its key first, then an option it cannot honor, then `root_count`.
+self-reference reports its key first, then an option it cannot honor, then `root_count`. A
+`windowed_date` with `anchor_via` needs a foreign key that reaches exactly one parent row.
 """
 
 from __future__ import annotations
@@ -433,3 +434,168 @@ def test_the_one_self_reference_predicate_reads_the_table_name_and_the_column() 
     assert not config_api.is_self_reference("", {**column, "reference_table": ""})
     assert not config_api.is_self_reference("employees", {**column, "type": "categorical"})
     assert not config_api.is_self_reference("employees", {**column, "reference_table": None})
+
+
+# ---- AT-11: the parent lookup behind `anchor_via` ----------------------------------------------
+
+LOOKUP_KEY = "generate_parent_lookup_key_not_unique"
+LOOKUP_SELF = "generate_parent_lookup_self_reference"
+BORN = {"name": "born", "type": "categorical", "categories": ["2001-02-03"]}
+VIA_LOC = [("tables", 1, "generate_columns", 1, "anchor_via")]
+
+
+def _visit(via: Any = "pid", **extra: Any) -> dict[str, Any]:
+    return {
+        "name": "visit",
+        "type": "windowed_date",
+        "anchor": "born",
+        "anchor_via": via,
+        "max_days": 30,
+        **extra,
+    }
+
+
+def _anchored(
+    key: dict[str, Any] | None = None, fk: dict[str, Any] | None = None, **extra: Any
+) -> list[dict[str, Any]]:
+    return [
+        table("parents", 4, [key or ID, BORN]),
+        table("kids", 12, [fk or ref("pid", "parents"), _visit(**extra)]),
+    ]
+
+
+def test_at11_an_anchored_date_over_a_sequence_key_validates() -> None:
+    assert validate(_anchored())
+    assert validate(_anchored(key={**ID, "null_probability": 0}))
+    assert validate(_anchored(fk=ref("pid", "parents", null_probability=0.3)))
+    assert validate(_anchored(null_probability=0.2, min_days=-5, distribution="late"))
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        {"name": "id", "type": "categorical", "categories": ["a", "b", "c"]},
+        {"name": "id", "type": "sequence", "start": 1, "null_probability": 0.2},
+        {"name": "id", "type": "faker", "faker_type": "uuid4"},
+        {"name": "id", "type": "faker", "faker_type": "uuid4", "unique": True},
+    ],
+    ids=["categorical", "nullable-sequence", "faker", "unique-faker"],
+)
+def test_at11_a_parent_key_that_is_not_a_non_null_sequence_is_refused(key: dict[str, Any]) -> None:
+    codes, locs = _refused(_anchored(key=key))
+    assert codes == [LOOKUP_KEY]
+    assert locs == VIA_LOC
+
+
+def test_at11_a_lookup_through_a_self_reference_is_refused() -> None:
+    tables = [
+        table("parents", 4, [ID, BORN]),
+        table("kids", 12, [ID, ref("boss", "kids"), {**_visit("boss"), "anchor": "id"}]),
+    ]
+    codes, locs = _refused(tables)
+    assert codes == [LOOKUP_SELF]
+    assert locs == [("tables", 1, "generate_columns", 2, "anchor_via")]
+
+
+def test_at11_a_lookup_through_a_column_that_is_not_a_reference_is_refused() -> None:
+    tables = _anchored(fk={"name": "pid", "type": "sequence", "start": 1})
+    codes, locs = _refused(tables)
+    assert codes == [LOOKUP_KEY]
+    assert locs == VIA_LOC
+
+
+def test_at11_a_missing_or_later_lookup_column_is_left_to_the_plan_check() -> None:
+    """Which column exists and in what order is the generate-input check's rule alone."""
+    assert validate(_anchored(via="ghost"))
+    late = _anchored()
+    late[1]["generate_columns"].reverse()
+    assert validate(late)
+
+
+@pytest.mark.parametrize("via", [5, True, ["pid"], None])
+def test_at11_anchor_via_must_be_a_string(via: Any) -> None:
+    codes, locs = _refused(_anchored(via=via))
+    assert codes == [OPTION_TYPE]
+    assert locs == VIA_LOC
+
+
+def test_at11_anchor_via_belongs_to_windowed_date_only() -> None:
+    tables = _anchored()
+    tables[1]["generate_columns"][1] = {
+        "name": "visit",
+        "type": "group_key",
+        "group_by": "pid",
+        "anchor_via": "pid",
+    }
+    codes, locs = _refused(tables)
+    assert codes == [OPTION_UNKNOWN]
+    assert locs == VIA_LOC
+
+
+def test_at11_each_anchored_column_is_reported() -> None:
+    tables = _anchored(key={"name": "id", "type": "categorical", "categories": ["a", "b"]})
+    tables[1]["generate_columns"].append({**_visit(), "name": "recheck"})
+    codes, locs = _refused(tables)
+    assert codes == [LOOKUP_KEY, LOOKUP_KEY]
+    assert [loc[3] for loc in locs] == [1, 2]
+
+
+def test_at11_a_date_without_anchor_via_is_not_judged() -> None:
+    tables = [
+        table("parents", 4, [{"name": "id", "type": "categorical", "categories": ["a", "b"]}]),
+        table(
+            "kids",
+            12,
+            [
+                ref("pid", "parents"),
+                BORN,
+                {"name": "visit", "type": "windowed_date", "anchor": "born", "max_days": 30},
+            ],
+        ),
+    ]
+    assert validate(tables)
+    assert config_api.parent_lookup_problems(tables) == []
+
+
+def test_at15_parent_lookup_problems_are_locations_and_codes_only() -> None:
+    marker = "MARKER-SECRET-VALUE"
+    tables = _anchored(key={"name": "id", "type": "categorical", "categories": [marker, "7919"]})
+    problems = config_api.parent_lookup_problems(tables)
+    assert problems == [(VIA_LOC[0], LOOKUP_KEY)]
+    assert marker not in repr(problems) and "79" not in repr(problems)
+    with pytest.raises(ValidationError) as exc:
+        validate(tables)
+    (error,) = exc.value.errors()
+    assert error["msg"] == reasons.get("config", LOOKUP_KEY).summary
+    assert error["input"] is None and marker not in str(exc.value)
+    assert exc.value.__cause__ is None and exc.value.__context__ is None
+
+
+def test_the_one_parent_key_predicate_returns_the_callers_code() -> None:
+    """Per-parent aggregates and `inherit` call the same rule with their own reason code."""
+    parent = [ID, BORN, {"name": "tag", "type": "sequence", "start": 1, "null_probability": 0.5}]
+    assert config_api.parent_key_problem(parent, "id", "callers_code") is None
+    assert config_api.parent_key_problem(parent, "born", "callers_code") == "callers_code"
+    assert config_api.parent_key_problem(parent, "tag", "another_code") == "another_code"
+    assert config_api.parent_key_problem(parent, "ghost", "callers_code") == "callers_code"
+    assert config_api.parent_key_problem([], "id", "callers_code") == "callers_code"
+    assert config_api.parent_key_problem(parent, None, "callers_code") == "callers_code"
+
+
+def test_the_self_reference_key_rule_is_the_same_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One rule for "a key that is distinct and never null": the tree's key goes through it too."""
+    from decoy_engine.config import _generate_relational as relational
+
+    asked: list[Any] = []
+    real = relational.parent_key_problem
+
+    def spy(columns: Any, key: Any, code: str) -> Any:
+        asked.append(key)
+        return real(columns, key, code)
+
+    monkeypatch.setattr(relational, "parent_key_problem", spy)
+    assert validate([table("employees", 10, [ID, ref("manager_id", "employees")])])
+    assert validate(_anchored())
+    assert asked == ["id", "id"]

@@ -208,3 +208,113 @@ def test_resolved_locale_and_clock_are_part_of_the_envelope() -> None:
 def test_envelope_names_the_engine_minor_version() -> None:
     cfg = prepared_config(fx.cfg_sequence())
     assert rep.build_envelope(cfg).engine_minor == rep.engine_minor_version()
+
+
+# ---- inputs in another table: the resolved edge is the dependency (GEN-REL AT-11b) -------------
+
+FRESH = {"determinism": "fresh"}
+
+
+def _anchored(
+    parent_birth: dict[str, Any] | None = None,
+    child_birth: dict[str, Any] | None = None,
+    pid: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    birth = {"name": "birth", "type": "categorical", "categories": ["1990-01-10", "1991-02-11"]}
+    kids = [
+        {"name": "cid", "type": "sequence", "start": 1},
+        {
+            "name": "pid",
+            "type": "reference",
+            "reference_table": "parents",
+            "reference_column": "id",
+            **(pid or {}),
+        },
+        {**birth, **(child_birth or {})},
+        {
+            "name": "visit",
+            "type": "windowed_date",
+            "anchor": "birth",
+            "anchor_via": "pid",
+            "max_days": 30,
+        },
+    ]
+    parents = [{"name": "id", "type": "sequence", "start": 1}, {**birth, **(parent_birth or {})}]
+    return fx.config([fx.table("parents", 4, parents), fx.table("kids", 8, kids)])
+
+
+def test_a_date_anchored_to_a_parent_column_that_is_not_reproducible_is_excluded() -> None:
+    assert _excl(_anchored(parent_birth=FRESH)) == {
+        ("parents", "birth"): rep.REASON_FRESH,
+        ("kids", "visit"): rep.REASON_DEPENDS,
+    }
+
+
+def test_a_same_named_child_column_is_not_the_anchored_dates_input() -> None:
+    """`kids.birth` is fresh, but the date reads `parents.birth`, which is not."""
+    assert _excl(_anchored(child_birth=FRESH)) == {("kids", "birth"): rep.REASON_FRESH}
+
+
+def test_a_date_whose_lookup_key_is_not_reproducible_is_excluded() -> None:
+    assert _excl(_anchored(pid=FRESH)) == {
+        ("kids", "pid"): rep.REASON_FRESH,
+        ("kids", "visit"): rep.REASON_DEPENDS,
+    }
+
+
+def test_an_anchored_date_over_reproducible_inputs_is_not_excluded() -> None:
+    assert _excl(_anchored()) == {}
+
+
+def test_configs_without_a_cross_table_input_keep_the_old_report_edge_for_edge() -> None:
+    """One reader per input option, each reading the fresh column `f` and nothing else."""
+    readers = [
+        {"name": "formula", "type": "formula", "formula": "f", "references": ["f"]},
+        {"name": "derived", "type": "derived", "expression": 'concat(f, "-x")'},
+        {"name": "aggregate", "type": "derived_aggregate", "op": "count", "column": "f"},
+        {"name": "by_group", "type": "grouped_series", "group_by": "f", "order_by": "k"},
+        {"name": "by_order", "type": "grouped_series", "group_by": "k", "order_by": "f"},
+        {"name": "anchored", "type": "windowed_date", "anchor": "f", "max_days": 3},
+        {"name": "keyed", "type": "group_key", "group_by": "f"},
+        {"name": "chained", "type": "derived", "expression": "keyed"},
+    ]
+    clean = [
+        {"name": "c_derived", "type": "derived", "expression": "k * 2"},
+        {"name": "c_series", "type": "grouped_series", "group_by": "k", "order_by": "k"},
+        {"name": "c_key", "type": "group_key", "group_by": "k"},
+        {"name": "c_formula", "type": "formula", "formula": "k", "references": ["k"]},
+    ]
+    cols = [
+        {"name": "k", "type": "sequence", "start": 1},
+        {"name": "f", "type": "categorical", "categories": ["2020-01-01"], **FRESH},
+        *readers,
+        *clean,
+    ]
+    child = [
+        {"name": "fk", "type": "reference", "reference_table": "t", "reference_column": "f"},
+        {"name": "ok", "type": "reference", "reference_table": "t", "reference_column": "k"},
+    ]
+    config = {"tables": [fx.table("t", 6, cols), fx.table("u", 6, child)]}
+    assert rep.reproducibility_exclusions(config) == {
+        ("t", "f"): rep.REASON_FRESH,
+        **{("t", r["name"]): rep.REASON_DEPENDS for r in readers},
+        ("u", "fk"): rep.REASON_DEPENDS,
+    }
+
+
+def test_the_report_takes_its_inputs_from_the_one_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine import config as config_api
+
+    seen: list[tuple[str, str]] = []
+    real = config_api.iter_generate_input_refs
+
+    def spy(table: Any, column: Any) -> Any:
+        seen.append((table["name"], column["name"]))
+        return real(table, column)
+
+    monkeypatch.setattr(config_api, "iter_generate_input_refs", spy)
+    _excl(_anchored())
+    assert len(seen) == len(set(seen)) == 6
+    assert not hasattr(rep, "_SIBLING_KEYS") and not hasattr(rep, "_sibling_inputs")

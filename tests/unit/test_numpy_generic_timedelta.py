@@ -28,12 +28,13 @@ def _generic_unit_is_an_error():
     ("offset", "expected"), [(0, "2020-01-01"), (3, "2020-01-04"), (-400, "2018-11-27")]
 )
 def test_windowed_date_shift_uses_a_specific_timedelta_unit(offset: int, expected: str) -> None:
-    assert _shift_and_format(pd.Timestamp("2020-01-01"), offset, 0) == expected
+    assert _shift_and_format(pd.Timestamp("2020-01-01"), offset) == expected
 
 
 def test_windowed_date_shift_still_reports_an_out_of_range_result() -> None:
-    with pytest.raises(WindowedDateError):
-        _shift_and_format(pd.Timestamp("2020-01-01"), 10**9, 0)
+    with pytest.raises(WindowedDateError) as exc:
+        _shift_and_format(pd.Timestamp("2020-01-01"), 10**9)
+    assert exc.value.code == "windowed_date_offset_out_of_range"
 
 
 @pytest.mark.parametrize("bucket", ["week", "month", "quarter"])

@@ -384,9 +384,11 @@ REF_KEYS = {
         "grouped_series_missing_order_by_ref",
         "order_by",
     ),
+    # The anchor of a generate column is resolved and checked by the generate-input check alone,
+    # so a missing one and a later one are the same refusal.
     "windowed_date.anchor": (
         lambda r: {"name": "x", "type": "windowed_date", "anchor": r, "max_days": 3},
-        "windowed_date_missing_anchor_ref",
+        "generate_column_forward_reference",
         "anchor",
     ),
     "group_key.group_by": (
@@ -410,6 +412,119 @@ def test_reference_key_earlier_accepted_later_and_missing_refused(name: str) -> 
         cfg([seq("o"), build("p"), seq("p")]), "generate_column_forward_reference", p("x", key)
     )
     assert_refused(cfg([seq("o"), build("ghost")]), missing_code, p("x", key))
+
+
+# ---- inputs that live in another table ---------------------------------------------------------
+
+FORWARD = "generate_column_forward_reference"
+
+
+def _family(kids: list[dict[str, Any]], parents: list[dict[str, Any]] | None = None) -> dict:
+    """Table `t` (the child under test) and its parent `p`."""
+    config = cfg(kids)
+    config["tables"].insert(
+        0,
+        {
+            "name": "p",
+            "row_count": 3,
+            "generate_columns": parents
+            or [seq("id"), {"name": "born", "type": "categorical", "categories": ["2001-02-03"]}],
+        },
+    )
+    return config
+
+
+def _fk(name: str = "pid") -> dict[str, Any]:
+    return {"name": name, "type": "reference", "reference_table": "p", "reference_column": "id"}
+
+
+def _anchored(anchor: str = "born", via: str = "pid", **extra: Any) -> dict[str, Any]:
+    return {
+        "name": "x",
+        "type": "windowed_date",
+        "anchor": anchor,
+        "anchor_via": via,
+        "max_days": 3,
+        **extra,
+    }
+
+
+def test_cross_table_anchor_is_accepted_with_no_same_named_child_column() -> None:
+    """`anchor` names a column of the table `anchor_via` points at, not a sibling."""
+    assert_accepted(_family([_fk(), _anchored()]))
+
+
+def test_cross_table_anchor_is_accepted_whatever_a_same_named_child_column_does() -> None:
+    later = {"name": "born", "type": "sequence", "start": 1}
+    assert_accepted(_family([_fk(), _anchored(), later]))
+    assert_accepted(_family([later, _fk(), _anchored()]))
+
+
+def test_cross_table_anchor_missing_from_the_parent_is_refused() -> None:
+    assert_refused(_family([_fk(), _anchored("ghost")]), FORWARD, p("x", "anchor"))
+
+
+def test_cross_table_anchor_is_not_satisfied_by_a_same_named_child_column() -> None:
+    """The parent has no `nick`; an earlier child column of that name must not stand in."""
+    nick = {"name": "nick", "type": "categorical", "categories": ["2001-02-03"]}
+    assert_refused(_family([nick, _fk(), _anchored("nick")]), FORWARD, p("x", "anchor"))
+
+
+def test_cross_table_anchor_may_be_declared_anywhere_in_the_parent() -> None:
+    """Order inside the parent does not matter: the whole parent table is finished first."""
+    parents = [{"name": "born", "type": "categorical", "categories": ["2001-02-03"]}, seq("id")]
+    assert_accepted(_family([_fk(), _anchored()], parents))
+
+
+def test_anchor_via_must_name_an_earlier_column_of_the_same_table() -> None:
+    assert_refused(_family([_anchored(), _fk()]), FORWARD, p("x", "anchor_via"))
+    assert_refused(_family([_fk(), _anchored(via="ghost")]), FORWARD, p("x", "anchor_via"))
+    # `id` is the parent's key, not a column of this table.
+    assert_refused(_family([_fk(), _anchored(via="id")]), FORWARD, p("x", "anchor_via"))
+
+
+def test_anchor_via_that_is_not_a_reference_leads_to_no_table() -> None:
+    """An earlier column that references nothing cannot carry the anchor to a parent."""
+    plain = {"name": "pid", "type": "sequence", "start": 1}
+    born = {"name": "born", "type": "categorical", "categories": ["2001-02-03"]}
+    assert_refused(_family([plain, _anchored()]), FORWARD, p("x", "anchor"))
+    assert_refused(_family([plain, born, _anchored()]), FORWARD, p("x", "anchor"))
+
+
+def test_anchor_without_anchor_via_keeps_the_same_table_rule() -> None:
+    own = {"name": "born", "type": "categorical", "categories": ["2001-02-03"]}
+    same_table = {"name": "x", "type": "windowed_date", "anchor": "born", "max_days": 3}
+    assert_accepted(_family([_fk(), own, same_table]))
+    # The parent's `born` is not a sibling: without `anchor_via` nothing reaches it.
+    assert_refused(_family([_fk(), same_table]), FORWARD, p("x", "anchor"))
+    assert_refused(_family([_fk(), same_table, own]), FORWARD, p("x", "anchor"))
+
+
+def test_cross_table_refusals_quote_no_name_from_the_config() -> None:
+    config = _family([_fk(), _anchored("canary_7731_col")])
+    for site in _sites():
+        exc = refusal(config, site)
+        assert (exc.code, exc.path) == (FORWARD, p("x", "anchor"))
+        assert "canary_7731_col" not in str(exc) and exc.__context__ is None
+
+
+def test_the_generate_input_check_walks_the_one_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every edge the check judges comes from `config.iter_generate_input_refs`."""
+    from decoy_engine import config as config_api
+    from decoy_engine.plan.checks import _generate_columns as checks
+
+    seen: list[tuple[str, str]] = []
+    real = config_api.iter_generate_input_refs
+
+    def spy(table: Any, column: Any) -> Any:
+        seen.append((table["name"], column["name"]))
+        return real(table, column)
+
+    monkeypatch.setattr(config_api, "iter_generate_input_refs", spy)
+    checks.check_generate_columns(_family([_fk(), _anchored()]))
+    assert seen == [("p", "id"), ("p", "born"), ("t", "pid"), ("t", "x")]
+    assert not hasattr(checks, "_referenced")
+    assert not hasattr(checks, "_check_forward_references")
 
 
 def _conditioned_snapshot(tmp_path: Any) -> str:

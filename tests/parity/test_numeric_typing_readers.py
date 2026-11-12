@@ -279,3 +279,77 @@ def test_falsey_affix_values_still_format_the_sequence(
         else:
             assert pa.types.is_string(t["id"].type)
             assert t["id"].to_pylist() == want
+
+
+# ---- a reader is where its resolved input says it is, in any table ----------------------------
+
+
+def _anchored(parent_birth: dict[str, Any], child_extra: list[dict[str, Any]]) -> dict[str, Any]:
+    kids = [
+        {"name": "pid", "type": "reference", "reference_table": "people", "reference_column": "id"},
+        *child_extra,
+        {
+            "name": "visit",
+            "type": "windowed_date",
+            "anchor": "born",
+            "anchor_via": "pid",
+            "max_days": 9,
+        },
+    ]
+    return config([table("people", 6, [SEQ, parent_birth]), table("visits", 6, kids)])
+
+
+NUMERIC_BORN = {"name": "born", "type": "sequence", "start": 100}
+DATE_BORN = {"name": "born", "type": "categorical", "categories": ["2001-02-03"]}
+
+
+def test_a_cross_table_anchor_is_a_reader_of_the_parent_column_only() -> None:
+    plan = numeric_plan(_anchored(NUMERIC_BORN, [NUMERIC_BORN]))
+    assert ("people", "born") not in plan, "the anchor needs the parent column as date text"
+    assert plan[("visits", "born")] == pa.int64(), "nothing reads the child's own column"
+
+
+def test_a_same_table_anchor_is_still_a_reader_of_its_sibling() -> None:
+    raw = _anchored(DATE_BORN, [NUMERIC_BORN])
+    del raw["tables"][1]["generate_columns"][-1]["anchor_via"]
+    assert ("visits", "born") not in numeric_plan(raw)
+
+
+def test_the_lookup_key_of_an_anchored_date_stays_numeric() -> None:
+    plan = numeric_plan(_anchored(DATE_BORN, []))
+    assert plan[("people", "id")] == pa.int64()
+    out = run_generate_tables(_anchored(DATE_BORN, [NUMERIC_BORN]))
+    assert out["people"].schema.field("id").type == pa.int64()
+    assert out["visits"].schema.field("pid").type == pa.int64()
+    assert out["visits"].schema.field("born").type == pa.int64()
+    assert out["visits"]["visit"].null_count == 0
+
+
+def test_a_reader_of_the_lookup_key_in_its_own_table_still_decides() -> None:
+    """`anchor_via` is numeric-safe, but another reader of the same child column is not."""
+    grouped = {"name": "g", "type": "group_key", "group_by": "pid"}
+    plan = numeric_plan(_anchored(DATE_BORN, [grouped]))
+    assert ("people", "id") not in plan
+
+
+def test_numeric_typing_takes_every_reader_from_the_one_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine import config as config_api
+
+    seen: list[tuple[str, str]] = []
+    real = config_api.iter_generate_input_refs
+
+    def spy(table_: Any, column: Any) -> Any:
+        seen.append((table_["name"], column["name"]))
+        return real(table_, column)
+
+    monkeypatch.setattr(config_api, "iter_generate_input_refs", spy)
+    numeric_plan(_anchored(DATE_BORN, [NUMERIC_BORN]))
+    assert set(seen) == {
+        ("people", "id"),
+        ("people", "born"),
+        ("visits", "pid"),
+        ("visits", "born"),
+        ("visits", "visit"),
+    }

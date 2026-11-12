@@ -16,6 +16,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine import reasons
 from decoy_engine.generation._admission import classify_plan
 from decoy_engine.generation._reproducibility import reproducibility_exclusions
 from decoy_engine.generation.synthesize import _generate_tables_from_config
@@ -238,6 +239,10 @@ BAD_ANCHORS = [
 ]
 
 
+# The two bad anchors that are well-formed dates outside the supported range.
+OUT_OF_RANGE_ANCHORS = {"1650-01-01", "2300-01-01"}
+
+
 @pytest.mark.parametrize("bad", BAD_ANCHORS)
 def test_bad_anchor_raises_on_core_and_legacy(bad: str) -> None:
     cfg = _cfg(6, _anchor_values(["2020-01-01", bad]), _win())
@@ -246,10 +251,19 @@ def test_bad_anchor_raises_on_core_and_legacy(bad: str) -> None:
     cfg = _cfg(6, _anchor_values([bad]), _win())
     prepared = prepared_config(cfg)
     assert classify_plan(prepared).eligible
-    with pytest.raises(WindowedDateError):
+    want = (
+        "windowed_date_anchor_out_of_range"
+        if bad in OUT_OF_RANGE_ANCHORS
+        else "windowed_date_anchor_invalid"
+    )
+    with pytest.raises(WindowedDateError) as core:
         run_resident(cfg)
-    with pytest.raises(WindowedDateError):
+    with pytest.raises(WindowedDateError) as legacy:
         _generate_tables_from_config(prepared, None, None)
+    for exc in (core.value, legacy.value):
+        assert exc.code == want
+        assert str(exc) == f"[{want}] {reasons.get('runtime', want).summary}"
+        assert exc.__cause__ is None and exc.__context__ is None
 
 
 def test_error_message_does_not_echo_the_value() -> None:
@@ -262,7 +276,8 @@ def test_error_message_does_not_echo_the_value() -> None:
             "windowed_date/x",
         )
     assert secret not in str(exc.value)
-    assert "row 0" in str(exc.value)
+    assert "row" not in str(exc.value)
+    assert exc.value.code == "windowed_date_anchor_invalid"
 
 
 @pytest.mark.parametrize(
@@ -278,10 +293,13 @@ def test_window_overflow_and_out_of_range_result_raise(
     anchor: str, min_days: int, max_days: int
 ) -> None:
     cfg = _cfg(4, _anchor_values([anchor]), _win(min_days=min_days, max_days=max_days))
-    with pytest.raises(WindowedDateError):
+    with pytest.raises(WindowedDateError) as core:
         run_resident(cfg)
-    with pytest.raises(WindowedDateError):
+    with pytest.raises(WindowedDateError) as legacy:
         _generate_tables_from_config(prepared_config(cfg), None, None)
+    for exc in (core.value, legacy.value):
+        assert exc.code == reasons.runtime.WINDOWED_DATE_OFFSET_OUT_OF_RANGE
+        assert exc.__cause__ is None and exc.__context__ is None
 
 
 def test_supported_range_boundaries_are_inclusive() -> None:

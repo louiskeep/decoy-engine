@@ -4,6 +4,11 @@ Covers the relationship gate, the byte-identity near neighbors (AT-1), the empty
 on the resident, streamed, whole-table and pinned routes (AT-6), fitted precedence (AT-6f), the
 weights refusal (AT-13), the registry cells (AT-14) and value-free refusals (AT-15), and the
 self-reference cells of the same three: byte identity beside a tree, the pinned twins, messages.
+
+The parent-anchored date (`windowed_date` with `anchor_via`) has its cells at the end: the date
+follows the parent row's anchor and never a same-named child column (AT-11), the streaming core,
+the windowed read and pinned mode do not serve it (AT-10), its failures are five distinct coded
+refusals (AT-11c, AT-14, AT-15) and the dates follow the seed (AT-16).
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import random
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +39,17 @@ from decoy_engine.generation.pool import GenerationError, QualityWarning
 from decoy_engine.generation.statistical import StatisticalSpecError, fanout_spec_from_snapshot
 from decoy_engine.generators.derivation import with_table
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
+from decoy_engine.transforms.windowed_date import WindowedDateError
 from tests.unit.generation.relational._support import (
     CID,
+    PARENT_ID,
     POLICIES,
     REF,
     ROUTES,
+    SECOND_SEED,
+    anchored,
+    anchored_dates,
+    dates_outside_parent_window,
     digest,
     family,
     is_safe,
@@ -592,3 +604,418 @@ def test_at1_a_tree_beside_a_family_leaves_the_familys_bytes_alone(tmp_path: Pat
     out = run_route("resident", config, tmp_path)
     assert digest(out["kids"]) == EXPECTED_DIGESTS["resident"]["unbounded_random"]
     assert out["employees"].column("manager_id").null_count == 1
+
+
+# ---- parent-anchored dates: `windowed_date` with `anchor_via` ----------------------------------
+
+DATE_CODES = (
+    ("config", "generate_parent_lookup_key_not_unique", "PipelineValidationError"),
+    ("config", "generate_parent_lookup_self_reference", "PipelineValidationError"),
+    ("runtime", "parent_lookup_key_missing", "GenerationError"),
+    ("runtime", "parent_lookup_key_not_unique", "GenerationError"),
+    ("runtime", "windowed_date_anchor_invalid", "WindowedDateError"),
+    ("runtime", "windowed_date_anchor_out_of_range", "WindowedDateError"),
+    ("runtime", "windowed_date_offset_out_of_range", "WindowedDateError"),
+    ("runtime", "windowed_date_parent_anchor_null", "WindowedDateError"),
+)
+
+
+def _anchored_out(tmp_path: Path, **kw: Any) -> dict[str, pa.Table]:
+    return run_route("resident", anchored(**kw), tmp_path)
+
+
+def _one_parent(birth: dict[str, Any], **date_options: Any) -> dict[str, Any]:
+    """Every child points at the single parent, whose `birth` is the column under test."""
+    return anchored(8, parent_rows=1, parent_cols=[PARENT_ID, birth], **date_options)
+
+
+def _birth(value: str) -> dict[str, Any]:
+    return {"name": "birth", "type": "categorical", "categories": [value]}
+
+
+def test_at11_the_date_follows_the_parent_row_not_the_same_named_child_column(
+    tmp_path: Path,
+) -> None:
+    out = _anchored_out(tmp_path)
+    dates = anchored_dates(out)
+    assert len(dates) == 64 and all(d is not None for d in dates)
+    assert dates_outside_parent_window(out) == []
+    assert out["parents"].column("birth").to_pylist() == [
+        "1990-01-10",
+        "1990-01-11",
+        "1990-01-12",
+        "1990-01-13",
+    ]
+    assert len(set(out["kids"].column("pid").to_pylist())) == 4
+
+
+def test_at11_the_unrelated_child_column_keeps_its_numeric_arrow_type(tmp_path: Path) -> None:
+    """`kids.birth` is not the anchor, so nothing reads it as date text."""
+    out = _anchored_out(tmp_path)
+    assert out["kids"].schema.field("birth").type == pa.int64()
+    assert out["kids"].column("birth").to_pylist() == list(range(1000, 1064))
+    assert out["kids"].schema.field("visit").type == pa.string()
+    assert out["parents"].schema.field("id").type == pa.int64()
+    assert out["kids"].schema.field("pid").type == pa.int64()
+
+
+def test_at11_a_child_with_no_same_named_column_is_anchored_the_same_way(tmp_path: Path) -> None:
+    config = anchored()
+    kids = config["tables"][1]["generate_columns"]
+    del kids[2]
+    out = run_route("resident", config, tmp_path)
+    assert dates_outside_parent_window(out) == []
+    assert all(d is not None for d in anchored_dates(out))
+
+
+def test_at11_a_null_foreign_key_gives_a_null_date(tmp_path: Path) -> None:
+    out = _anchored_out(tmp_path, pid={"null_probability": 0.4})
+    pids = out["kids"].column("pid").to_pylist()
+    dates = anchored_dates(out)
+    assert 0 < pids.count(None) < 64
+    assert [d is None for d in dates] == [p is None for p in pids]
+    assert dates_outside_parent_window(out) == []
+
+
+def test_at11_the_same_seed_gives_the_same_dates_and_another_seed_others(tmp_path: Path) -> None:
+    first = _anchored_out(tmp_path / "a")
+    again = _anchored_out(tmp_path / "b")
+    other = _anchored_out(tmp_path / "c", seed=SECOND_SEED)
+    for out in (first, again, other):
+        assert sum(d is not None for d in anchored_dates(out)) >= 32, "no dates to compare"
+        assert dates_outside_parent_window(out) == []
+    assert digest(first["kids"]) == digest(again["kids"])
+    assert anchored_dates(first) == anchored_dates(again)
+    assert anchored_dates(first) != anchored_dates(other)
+
+
+def test_at16_the_offsets_follow_the_seed_not_only_the_parents(tmp_path: Path) -> None:
+    """With one parent every anchor is equal, so a changed date is a changed draw."""
+    first = run_route("resident", anchored(parent_rows=1), tmp_path / "a")
+    other = run_route("resident", anchored(parent_rows=1, seed=SECOND_SEED), tmp_path / "b")
+    for out in (first, other):
+        assert dates_outside_parent_window(out) == []
+        assert len(set(anchored_dates(out))) > 8, "one date for every row is not a draw"
+    changed = [a != b for a, b in zip(anchored_dates(first), anchored_dates(other), strict=True)]
+    assert sum(changed) >= 32
+
+
+def test_at16_the_dates_do_not_read_module_global_random(tmp_path: Path) -> None:
+    import numpy as np
+
+    random.seed(5)
+    np.random.seed(5)
+    before = random.getstate()
+    first = _anchored_out(tmp_path / "a")
+    assert random.getstate() == before
+    random.seed(99)
+    np.random.seed(99)
+    again = _anchored_out(tmp_path / "b")
+    assert anchored_dates(first) == anchored_dates(again)
+
+
+def test_at16_two_anchored_columns_draw_their_own_offsets(tmp_path: Path) -> None:
+    config = anchored(parent_rows=1)
+    kids = config["tables"][1]["generate_columns"]
+    kids.append({**kids[3], "name": "recheck"})
+    out = run_route("resident", config, tmp_path)
+    assert anchored_dates(out) != out["kids"].column("recheck").to_pylist()
+
+
+def test_at11_the_parents_table_is_generated_before_the_child(tmp_path: Path) -> None:
+    from decoy_engine.generation.synthesize import generation_order
+
+    config = anchored()
+    config["tables"].reverse()
+    assert generation_order(_prepared(config)) == (("parents", ()), ("kids", ("parents",)))
+    assert dates_outside_parent_window(run_route("resident", config, tmp_path)) == []
+
+
+def test_at11_a_typed_parent_anchor_is_read_with_its_type(tmp_path: Path) -> None:
+    """A parent date emitted as `date32` anchors the same window as its text."""
+    birth = {**_birth("1990-01-10"), "output_type": "date"}
+    out = run_route("resident", _one_parent(birth), tmp_path)
+    assert out["parents"].schema.field("birth").type == pa.date32()
+    assert dates_outside_parent_window(out) == []
+    assert all(d is not None for d in anchored_dates(out))
+
+
+# ---- routes that do not serve an anchored date -------------------------------------------------
+
+
+def test_at11_streaming_admission_declines_the_column_and_the_run_stays_resident(
+    tmp_path: Path,
+) -> None:
+    config = anchored()
+    verdict = classify_plan(_prepared(config))
+    assert not verdict.eligible
+    assert verdict.reason() == "kids.visit:windowed_date_anchor_via"
+    declined = {(c.table, c.column): c.reason for c in verdict.declines}
+    assert declined == {("kids", "visit"): "windowed_date_anchor_via"}
+    assert dates_outside_parent_window(run_route("resident", config, tmp_path)) == []
+
+
+def test_at11_streaming_declines_even_when_the_same_named_child_column_is_a_date() -> None:
+    """A same-table date named like the anchor would be a servable anchor by itself."""
+    config = anchored()
+    config["tables"][1]["generate_columns"][2] = _birth("2020-06-01")
+    same_table = copy.deepcopy(config)
+    del same_table["tables"][1]["generate_columns"][3]["anchor_via"]
+    assert classify_plan(_prepared(same_table)).eligible
+    assert classify_plan(_prepared(config)).reason() == "kids.visit:windowed_date_anchor_via"
+
+
+def test_at11_a_windowed_read_does_not_serve_the_anchored_table() -> None:
+    from decoy_engine.generation._window_admission import classify_window_table
+
+    verdict = classify_window_table(_prepared(anchored()), "kids", statistical_specs={})
+    assert not verdict.is_class_a
+
+
+def test_at10_pinned_compile_refuses_an_anchored_date() -> None:
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(copy.deepcopy(anchored()), REF)
+    assert exc.value.code == reasons.plan.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    assert exc.value.code.namespace == "plan"
+    assert is_safe(exc.value)
+    assert str(exc.value) == (
+        f"[{PINNED_UNSUPPORTED}] {_summary('plan', PINNED_UNSUPPORTED)}"
+        " Table 'kids', column 'visit'."
+    )
+
+
+def _hand_built_anchored_plan() -> tuple[PinnedPlan, PinnedPlan]:
+    """A compiled same-table date plan, and the same plan with `anchor_via` written in after."""
+    config = anchored()
+    kids = config["tables"][1]["generate_columns"]
+    kids[2] = _birth("2020-06-01")
+    del kids[3]["anchor_via"]
+    plan = compile_pinned_plan(copy.deepcopy(config), REF)
+    stored = plan.to_dict()
+    table_ = next(t for t in stored["tables"] if t["name"] == "kids")
+    entry = next(c for c in table_["columns"] if c["name"] == "visit")
+    column = json.loads(entry["config_json"])
+    column["anchor_via"] = "pid"
+    entry["config_json"] = json.dumps(column, sort_keys=True)
+    return plan, PinnedPlan.from_dict(stored)
+
+
+def test_at10_the_hand_built_date_plan_is_otherwise_executable() -> None:
+    plan, _ = _hand_built_anchored_plan()
+    out = execute_pinned(plan, 7)
+    assert out["kids"].column("visit").null_count == 0
+
+
+def test_at10_pinned_execute_refuses_an_anchored_date_before_any_draw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.generation import synthesize
+
+    def no_draw(*args: Any, **kw: Any) -> list[Any]:
+        raise AssertionError("a column was drawn before the refusal")
+
+    monkeypatch.setattr(synthesize, "_generate_column", no_draw)
+    _, tampered = _hand_built_anchored_plan()
+    with pytest.raises(GenerationError) as exc:
+        execute_pinned(tampered, 7)
+    assert exc.value.code == reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    assert exc.value.code.namespace == "runtime"
+    assert is_safe(exc.value)
+    assert str(exc.value) == (
+        f"[{PINNED_UNSUPPORTED}] {_summary('runtime', PINNED_UNSUPPORTED)}"
+        " Table 'kids', column 'visit'."
+    )
+
+
+# ---- AT-11c: the date failures through a run ---------------------------------------------------
+
+
+def _date_refusal(config: dict[str, Any], tmp_path: Path) -> WindowedDateError:
+    with pytest.raises(WindowedDateError) as exc:
+        run_route("resident", config, tmp_path)
+    assert is_safe(exc.value)
+    assert exc.value.code.namespace == "runtime"
+    return exc.value
+
+
+def test_at11c_a_present_parent_with_a_null_anchor_is_refused_not_nulled(tmp_path: Path) -> None:
+    birth = {**_birth(f"{SENTINEL}"), "null_probability": 1}
+    exc = _date_refusal(_one_parent(birth), tmp_path)
+    assert exc.code == reasons.runtime.WINDOWED_DATE_PARENT_ANCHOR_NULL
+    assert str(exc) == (
+        "[windowed_date_parent_anchor_null] "
+        f"{_summary('runtime', 'windowed_date_parent_anchor_null')} Table 'kids', column 'visit'."
+    )
+
+
+def test_at11c_a_null_anchor_under_a_null_foreign_key_is_not_refused(tmp_path: Path) -> None:
+    """Only a row that reaches its parent can find the parent's anchor null."""
+    birth = {**_birth("1990-01-10"), "null_probability": 1}
+    config = _one_parent(birth)
+    config["tables"][1]["generate_columns"][1]["null_probability"] = 1
+    assert anchored_dates(run_route("resident", config, tmp_path)) == [None] * 8
+
+
+@pytest.mark.parametrize("value", ["1699-12-31", "2201-01-01"], ids=["below", "above"])
+def test_at11c_a_parent_anchor_outside_the_supported_range_is_refused(
+    value: str, tmp_path: Path
+) -> None:
+    exc = _date_refusal(_one_parent(_birth(value), min_days=0, max_days=0), tmp_path)
+    assert exc.code == reasons.runtime.WINDOWED_DATE_ANCHOR_OUT_OF_RANGE
+    assert str(exc) == (
+        "[windowed_date_anchor_out_of_range] "
+        f"{_summary('runtime', 'windowed_date_anchor_out_of_range')}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "days"), [("1700-01-01", -1), ("2200-12-31", 1)], ids=["minimum", "maximum"]
+)
+def test_at11c_an_offset_that_crosses_the_supported_range_is_refused(
+    value: str, days: int, tmp_path: Path
+) -> None:
+    exc = _date_refusal(_one_parent(_birth(value), min_days=days, max_days=days), tmp_path)
+    assert exc.code == reasons.runtime.WINDOWED_DATE_OFFSET_OUT_OF_RANGE
+
+
+@pytest.mark.parametrize("value", ["1700-01-01", "2200-12-31"], ids=["minimum", "maximum"])
+def test_at11c_a_parent_anchor_on_either_end_of_the_range_is_accepted(
+    value: str, tmp_path: Path
+) -> None:
+    config = _one_parent(_birth(value), min_days=0, max_days=0)
+    assert anchored_dates(run_route("resident", config, tmp_path)) == [value] * 8
+
+
+@pytest.mark.parametrize(
+    "birth",
+    [
+        _birth(f"{SENTINEL}-7919"),
+        _birth("2024-02-30"),
+        {"name": "birth", "type": "sequence", "start": 7919},
+        {"name": "birth", "type": "categorical", "categories": [True]},
+    ],
+    ids=["grammar", "calendar", "number", "bool"],
+)
+def test_at11c_a_parent_anchor_that_is_not_a_date_is_refused(
+    birth: dict[str, Any], tmp_path: Path
+) -> None:
+    exc = _date_refusal(_one_parent(birth), tmp_path)
+    assert exc.code == reasons.runtime.WINDOWED_DATE_ANCHOR_INVALID
+    assert SENTINEL not in str(exc) and "79" not in str(exc)
+
+
+def test_at11c_the_five_date_failures_are_five_codes() -> None:
+    codes = {code for namespace, code, _ in DATE_CODES if namespace == "runtime"}
+    assert {
+        "parent_lookup_key_missing",
+        "windowed_date_parent_anchor_null",
+        "windowed_date_anchor_out_of_range",
+        "windowed_date_offset_out_of_range",
+        "windowed_date_anchor_invalid",
+    } <= codes
+    assert len({_summary("runtime", code) for code in codes}) == len(codes)
+
+
+def _direct_date(pools: dict[str, pa.Table], pid: list[Any]) -> list[Any]:
+    """The generator called the way the table loop calls it, over hand-made parents."""
+    from decoy_engine.generation._grouped_windowed_generators import _windowed_date_generate
+
+    config = anchored(len(pid))
+    kids = config["tables"][1]["generate_columns"]
+    return _windowed_date_generate(
+        with_table(kids[3], "kids"), len(pid), 7, {"pid": pid}, pools, kids
+    )
+
+
+def test_at11c_a_foreign_key_with_no_parent_is_the_lookups_refusal() -> None:
+    pools = {"parents": pa.table({"id": [1, 2], "birth": ["1990-01-10", "1990-01-11"]})}
+    assert _direct_date(pools, [1, 2, None])[2] is None
+    with pytest.raises(GenerationError) as exc:
+        _direct_date(pools, [1, 7919])
+    assert exc.value.code == reasons.runtime.PARENT_LOOKUP_KEY_MISSING
+    assert is_safe(exc.value)
+    assert str(exc.value) == (
+        f"[parent_lookup_key_missing] {_summary('runtime', 'parent_lookup_key_missing')}"
+        " Table 'kids', column 'pid'."
+    )
+
+
+def test_at11c_a_repeated_parent_key_is_the_lookups_refusal() -> None:
+    pools = {"parents": pa.table({"id": [1, 1], "birth": ["1990-01-10", "1990-01-11"]})}
+    with pytest.raises(GenerationError) as exc:
+        _direct_date(pools, [1])
+    assert exc.value.code == reasons.runtime.PARENT_LOOKUP_KEY_NOT_UNIQUE
+    assert is_safe(exc.value)
+
+
+# ---- AT-14 and AT-15 for the date codes --------------------------------------------------------
+
+
+@pytest.mark.parametrize(("namespace", "code", "owner"), DATE_CODES)
+def test_at14_date_codes_are_registered_unreleased_in_the_right_catalog(
+    namespace: str, code: str, owner: str
+) -> None:
+    spec = reasons.get(namespace, code)
+    assert spec.since == reasons.UNRELEASED
+    assert spec.owner == owner and spec.kind is reasons.Kind.FAILURE
+    phases = {rule.phase for rule in spec.rules}
+    if namespace == "config":
+        assert phases == {reasons.Phase.CONFIGURATION}
+    else:
+        assert reasons.Phase.GENERATE in phases and reasons.Phase.COMPILE not in phases
+    assert not any(ch.isdigit() for ch in spec.summary)
+
+
+def test_at14_a_windowed_date_error_is_a_classified_family() -> None:
+    from decoy_engine.reason_adapter import reason_from_exception, registered_families
+
+    assert WindowedDateError in registered_families()
+    error = WindowedDateError(reasons.runtime.WINDOWED_DATE_OFFSET_OUT_OF_RANGE)
+    record = reason_from_exception(error, phase=reasons.Phase.GENERATE)
+    assert (record.namespace, record.code) == ("runtime", "windowed_date_offset_out_of_range")
+
+
+def test_at14_the_twin_lookup_codes_differ_by_namespace() -> None:
+    config_code = reasons.config.GENERATE_PARENT_LOOKUP_KEY_NOT_UNIQUE
+    runtime_code = reasons.runtime.PARENT_LOOKUP_KEY_NOT_UNIQUE
+    assert (config_code.namespace, runtime_code.namespace) == ("config", "runtime")
+    assert config_code != runtime_code
+
+
+def test_at15_validate_refusals_of_an_anchored_date_carry_the_fixed_summary_and_no_input() -> None:
+    bad_key = anchored()
+    bad_key["tables"][0]["generate_columns"][0] = {
+        "name": "id",
+        "type": "categorical",
+        "categories": [f"{SENTINEL}a", f"{SENTINEL}b"],
+    }
+    self_ref = anchored()
+    self_ref["tables"][1]["generate_columns"][1] = ref("pid", "kids", "cid")
+    for config, code in (
+        (bad_key, "generate_parent_lookup_key_not_unique"),
+        (self_ref, "generate_parent_lookup_self_reference"),
+    ):
+        with pytest.raises(ValidationError) as exc:
+            PipelineConfig.model_validate(config)
+        (error,) = exc.value.errors()
+        assert error["type"] == code
+        assert error["loc"] == ("tables", 1, "generate_columns", 3, "anchor_via")
+        assert error["msg"] == _summary("config", code)
+        assert error["input"] is None
+        assert SENTINEL not in str(exc.value) and is_safe(exc.value)
+
+
+def test_at1_an_anchored_date_beside_a_family_leaves_the_familys_bytes_alone(
+    tmp_path: Path,
+) -> None:
+    """The resolved-edge walk and the lookup must not move a table that uses neither."""
+    config = family(5, 40)
+    extra = anchored()["tables"]
+    extra[0]["name"], extra[1]["name"] = "owners", "pets"
+    extra[1]["generate_columns"][1] = ref("pid", "owners")
+    config["tables"] += extra
+    for name in ("owners", "pets"):
+        config["targets"][name] = {"type": "file", "format": "csv", "path": "o.csv"}
+    out = run_route("resident", config, tmp_path)
+    assert digest(out["kids"]) == EXPECTED_DIGESTS["resident"]["unbounded_random"]
+    assert out["pets"].column("visit").null_count == 0
