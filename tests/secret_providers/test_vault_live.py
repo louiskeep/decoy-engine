@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
 from decoy_engine import run_mask_pipeline_chunked  # noqa: E402
 from decoy_engine.keyprovider import MaskSecretError  # noqa: E402
 from decoy_engine.secret_providers.vault import VaultKV2Provider  # noqa: E402
+from tests._declared_schema import declared_schema  # noqa: E402
 from tests.secret_providers._helpers import (  # noqa: E402
     ENGINE_VERSION,
     TouchedSource,
@@ -60,7 +61,15 @@ def run(vault_pair, registry, mask_ref, tmp_path):
     registry.register(VaultKV2Provider(vault_pair[1]))
     source = TouchedSource()
     cfg = keyed_config(tmp_path, mask_secret_ref=mask_ref)
-    out = list(run_mask_pipeline_chunked(cfg, source, table="t", engine_version=ENGINE_VERSION))
+    out = list(
+        run_mask_pipeline_chunked(
+            cfg,
+            source,
+            table="t",
+            source_schema=declared_schema(cfg, "t"),
+            engine_version=ENGINE_VERSION,
+        )
+    )
     return out, source
 
 
@@ -84,7 +93,15 @@ def test_denied_missing_and_malformed_fail_before_any_read(
     source = TouchedSource()
     cfg = keyed_config(tmp_path, mask_secret_ref=mask_ref)
     with pytest.raises(MaskSecretError) as info:
-        list(run_mask_pipeline_chunked(cfg, source, table="t", engine_version=ENGINE_VERSION))
+        list(
+            run_mask_pipeline_chunked(
+                cfg,
+                source,
+                table="t",
+                source_schema=declared_schema(cfg, "t"),
+                engine_version=ENGINE_VERSION,
+            )
+        )
     assert info.value.code == code and source.touched == 0
 
 
@@ -100,7 +117,11 @@ def test_deleted_and_destroyed_versions_are_unavailable_and_no_write_privilege(
         with pytest.raises(MaskSecretError) as info:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, TouchedSource(), table="t", engine_version=ENGINE_VERSION
+                    cfg,
+                    TouchedSource(),
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version=ENGINE_VERSION,
                 )
             )
         assert info.value.code == "secret_version_unavailable"

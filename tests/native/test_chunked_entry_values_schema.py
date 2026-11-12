@@ -20,7 +20,8 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.plan._errors import PlanCompileError
-from tests._declared_schema import declare_rest
+from tests._declared_schema import declare_rest, declared_schema
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._chunked_entry_support import (
     COMPANION_PRESENT,
     ENGINE_VERSION,
@@ -50,6 +51,7 @@ def _oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
             config,
             list(chunks),
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )
@@ -72,10 +74,14 @@ def _entry(
     config: dict[str, Any],
     chunks: list[pa.Table],
     evidence: list[NativeRouteEvidence] | None = None,
+    *,
+    below_gate: bool = False,
 ) -> list[pa.Table]:
+    """Run the public entry. `below_gate` is for a test whose subject is an unconfigured column."""
+    entry = run_mask_chunked_below_gate if below_gate else run_mask_chunked
     owned: list[NativeRouteEvidence] = evidence if evidence is not None else []
     out = list(
-        run_mask_chunked(
+        entry(
             config,
             list(chunks),
             table=TABLE,
@@ -481,7 +487,7 @@ def test_unconfigured_passthrough_column_is_the_source_column(policy: str) -> No
     config = make_config([redact("s")], global_settings={"unconfigured_column_policy": policy})
     evidence: list[NativeRouteEvidence] = []
     if policy == "error":
-        gen = run_mask_chunked(
+        gen = run_mask_chunked_below_gate(
             config,
             split(src, 2),
             table=TABLE,
@@ -495,7 +501,7 @@ def test_unconfigured_passthrough_column_is_the_source_column(policy: str) -> No
         assert evidence[0].native_admitted is False
         assert "uncovered_columns" in (evidence[0].reroute_reason or "")
         return
-    out = _entry(config, split(src, 2), evidence)
+    out = _entry(config, split(src, 2), evidence, below_gate=True)
     assert evidence[0].native_admitted is True
     assert evidence[0].reroute_reason is None
     assert column_values(out, "extra") == [2**53 + 1, None, 5, 6]

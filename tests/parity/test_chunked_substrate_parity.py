@@ -19,6 +19,7 @@ from decoy_engine import run_mask_pipeline_chunked
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
 from decoy_engine.plan import PlanCompileError
+from tests._declared_schema import declared_schema
 
 _ENGINE_VERSION = "chunked-substrate-parity-test"
 
@@ -121,6 +122,7 @@ def _chunked(cfg: dict, df: pd.DataFrame, chunk_size: int, adapter=None) -> pa.T
                 cfg,
                 _chunks(df, chunk_size),
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
                 adapter=adapter,
             )
@@ -152,6 +154,7 @@ class TestChunkedSubstrateParity:
                     cfg,
                     [],
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                 )
             )
