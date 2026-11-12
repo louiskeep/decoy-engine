@@ -23,6 +23,7 @@ from decoy_engine.verification.postmask import (
     SCHEMA_VERSION,
     TableBatches,
     check_keys,
+    fk_preservation,
     from_table,
     post_scan_verdict,
     run_post_mask,
@@ -318,7 +319,19 @@ def test_a_non_whole_float_key_of_any_float_dtype_stays_a_mismatch(dtype: str) -
 
 
 @pytest.mark.parametrize("dtype", FLOATS)
-def test_an_all_null_float_key_of_any_float_dtype_has_nothing_to_check(dtype: str) -> None:
+def test_an_all_null_float_key_of_any_float_dtype_stays_a_float_mismatch(
+    dtype: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No non-null value is no evidence of an integer column, so the key scan sees the float.
+    seen: list[pa.DataType] = []
+
+    def spy(name: str, table: pa.Table) -> TableBatches:
+        if name == "c":
+            seen.append(table.schema.field("pid").type)
+        return from_table(name, table)
+
+    monkeypatch.setattr(fk_preservation, "from_table", spy)
     data = frames(p={"id": [1, 2]}, c={"pid": floats([None, None], dtype)})
     (f,) = fk(data, data)
-    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("info", 0, 0)
+    assert seen and all(pa.types.is_floating(t) for t in seen)
+    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("warning", 0, 0)
