@@ -554,6 +554,7 @@ dependencies = [
     { name = "faker" },
     { name = "jsonpath-ng" },
     { name = "lark" },
+    { name = "lightgbm" },
     { name = "numexpr" },
     { name = "opendp" },
     { name = "packaging" },
@@ -564,6 +565,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-stdnum" },
     { name = "pyyaml" },
+    { name = "scikit-learn" },
     { name = "simpleeval" },
 ]
 
@@ -609,10 +611,6 @@ lint = [
 mimesis = [
     { name = "mimesis" },
 ]
-ml = [
-    { name = "lightgbm" },
-    { name = "scikit-learn" },
-]
 mutation = [
     { name = "mutmut" },
     { name = "pytest-cov" },
@@ -648,7 +646,7 @@ requires-dist = [
     { name = "import-linter", marker = "extra == 'layers'", specifier = "==2.15" },
     { name = "jsonpath-ng", specifier = ">=1.6" },
     { name = "lark", specifier = ">=1.1" },
-    { name = "lightgbm", marker = "extra == 'ml'", specifier = "==4.6.0" },
+    { name = "lightgbm", specifier = "==4.6.0" },
     { name = "linkify-it-py", marker = "extra == 'docs'", specifier = ">=2" },
     { name = "mimesis", marker = "extra == 'mimesis'", specifier = ">=19.0,<20" },
     { name = "moto", extras = ["s3"], marker = "extra == 'dev'", specifier = ">=5.0" },
@@ -673,7 +671,7 @@ requires-dist = [
     { name = "python-stdnum", specifier = ">=2.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'lint'", specifier = "==0.15.22" },
-    { name = "scikit-learn", marker = "extra == 'ml'", specifier = "==1.7.2" },
+    { name = "scikit-learn", specifier = "==1.7.2" },
     { name = "simpleeval", specifier = ">=0.9.13" },
     { name = "spacy", marker = "extra == 'ner'", specifier = ">=3.7,<4" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=7,<9" },
@@ -681,7 +679,7 @@ requires-dist = [
     { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = ">=0.5" },
     { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=0.9" },
 ]
-provides-extras = ["dev", "mutation", "layers", "xdist", "lint", "mimesis", "ner", "vault", "hashicorp-vault", "docs", "cloud", "gcs", "sftp", "geo", "ml", "perf"]
+provides-extras = ["dev", "mutation", "layers", "xdist", "lint", "mimesis", "ner", "vault", "hashicorp-vault", "docs", "cloud", "gcs", "sftp", "geo", "perf"]
 
 [[package]]
 name = "deprecated"

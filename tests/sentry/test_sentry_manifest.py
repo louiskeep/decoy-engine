@@ -43,6 +43,7 @@ SENTRIES = (
     "tests/sentry/test_locator_hygiene.py",
     "tests/sentry/test_log_interpolation.py",
     "tests/sentry/test_methodology_citations.py",
+    "tests/sentry/test_ml_base_install.py",
     "tests/sentry/test_module_size.py",
     "tests/sentry/test_mypy_override_targets.py",
     "tests/sentry/test_numeric_reader_registry.py",
