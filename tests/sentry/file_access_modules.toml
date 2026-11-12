@@ -57,7 +57,9 @@ ambient_guards = [
 # F25 plan 4.1. Both keys are exact, both ways: an unlisted module fails, and so does a listed
 # module with no such call. Each producer slice adds its modules when they start calling.
 # Modules that release a scratch arena path (`ScratchArena.local_path`, the one path release).
-scratch_path_release = []
+scratch_path_release = [
+  "decoy_engine/execution/out_of_core/_runner.py",
+]
 # Modules that call `scratch_native`; in each, every DuckDB connection or result call must go
 # through it (no bare `conn.execute(...)`, bound-method or `getattr` call).
 scratch_native = []

@@ -277,7 +277,7 @@ def _run_small(**kwargs: Any) -> None:
 
 
 def _ooc_dirs(base: Path) -> list[str]:
-    return [p.name for p in base.iterdir() if p.name.startswith("decoy-ooc-")]
+    return [p.name for p in base.iterdir() if p.name.startswith("decoy-arena-")]
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -287,7 +287,7 @@ def test_runner_removes_its_engine_made_root(
     sys_tmp = tmp_path / "systmp"
     sys_tmp.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(sys_tmp))
-    roots = _spy(monkeypatch, _scratch, "protected_scratch_dir")
+    roots = _spy(monkeypatch, fileaccess.ScratchArena, "open")
     if fail:
 
         def boom(*_: Any, **__: Any) -> None:
@@ -299,7 +299,7 @@ def test_runner_removes_its_engine_made_root(
             _run_small()
     else:
         _run_small()
-    assert len(roots) == 1
+    assert [c[1] for c in roots] == [{"under": None}]
     assert _ooc_dirs(sys_tmp) == []
 
 

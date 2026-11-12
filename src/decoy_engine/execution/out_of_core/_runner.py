@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Mapping
-from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -84,7 +83,7 @@ from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (  # noqa: F401 -- one resolver
     _code_set_records_and_evidence_for_table,
 )
-from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.fileaccess import FileAccess, ScratchArena, entry_point
 from decoy_engine.progress import get_active_channel
 
 if TYPE_CHECKING:
@@ -125,6 +124,7 @@ def run_fk_out_of_core(
     file_access: FileAccess | None = None,
     cast_run: Any = None,
     _staged: bool = False,
+    _arena: ScratchArena | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -208,10 +208,17 @@ def run_fk_out_of_core(
         job_seed=plan.seed_envelope.job_seed,
         max_pool_bytes=min(budget_bytes, _faker_pool_cap) if budget_bytes else _faker_pool_cap,
     )
-    # Entered only after the pool exists, so nothing that can fail sits between the root being
-    # made and the `try` whose `finally` removes it.
-    owned_root = ExitStack()  # removes an engine-made root; a caller-named one is left alone
-    root = scratch_root(temp_dir, owned_root)
+    # Opened only after the pool exists, so nothing that can fail sits between the arena being
+    # made and the `try` whose `finally` reclaims it. A handed arena is its opener's to reclaim.
+    owned: ScratchArena | None = None
+    if _arena is not None:
+        root = Path(_arena.local_path())
+    elif _staged and temp_dir is not None:
+        # run_staged's issued root, still handed as a path: the one root its budget covers.
+        root = scratch_root(temp_dir)
+    else:
+        owned = ScratchArena.open(under=temp_dir)
+        root = Path(owned.local_path())
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
@@ -318,15 +325,13 @@ def run_fk_out_of_core(
     finally:
         # The relation/join staging subtrees hold (source_key, masked_key) pairs
         # on disk and the staged subtree holds output values (which can include
-        # preserved raw orphan keys); a caller-supplied temp_dir is NOT torn
-        # down (no owned_root to close), so without this those keys sit at
-        # rest after a successful run. Only the parts the runner itself created
-        # get wiped here; the rest of a caller-owned root is the caller's
-        # responsibility.
+        # preserved raw orphan keys), so they go as soon as the run ends, even
+        # inside a handed arena whose opener reclaims it later.
         shutil.rmtree(root / "relations", ignore_errors=True)
         shutil.rmtree(root / "joins", ignore_errors=True)
         shutil.rmtree(root / "staged", ignore_errors=True)
-        owned_root.close()
+        if owned is not None:
+            owned.reclaim()  # a failure reports RETAINED; the run's own outcome stands
         # Release the run's faker pools (in-memory numpy arrays) and reset the
         # reservation ledger; nothing survives the run.
         faker_pool.close()
