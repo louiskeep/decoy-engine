@@ -143,9 +143,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/internal/faker_setup.py": 688,
     # FF1 span path and sub-floor policy (synthetic values split to _text_mask_synthetic.py).
     "src/decoy_engine/transforms/text_mask.py": 670,
-    # F25 S1b: the file-access sink scan plus the scratch connection and reader flow, which reuses
-    # its resolver and walker; split the flow into its own module if either grows again.
-    "tests/sentry/fa/scan.py": 700,
     # scripts/: pre-existing one-off tooling, recorded when the sentry started scanning scripts/.
     # Legacy (> MAX) entries may only shrink; split each into sibling modules when next touched.
     "scripts/audit/probe.py": 775,
