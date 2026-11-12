@@ -61,6 +61,7 @@ SENTRIES = (
     "tests/sentry/test_private_files.py",
     "tests/sentry/test_proof_manifest.py",
     "tests/sentry/test_public_import_boundary.py",
+    "tests/sentry/test_qa_checklist_reasons.py",
     "tests/sentry/test_ratchet_check.py",
     "tests/sentry/test_reason_baseline_frozen.py",
     "tests/sentry/test_reason_minor_fixtures.py",
