@@ -151,10 +151,6 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("quality/report.py", "_collect_warnings"): (
         "diagnostic check names are registry symbols in `verification`"
     ),
-    ("phase.py", "_reason_wire"): (
-        "exports the identity of a `ReasonRef` that `require_known` has just resolved against "
-        "the registry (an unknown identity fails closed before this dict is built)"
-    ),
     ("safe_output/_event.py", "SafeEvent.to_dict"): (
         "exports the identity of a `ReasonRef` that `require_known` resolved against the "
         "registry when the event was validated (an unknown identity fails closed before this "
