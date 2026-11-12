@@ -176,7 +176,7 @@ class _LocalStageDir:
             try:
                 return create_private_child_at(parent, component)
             finally:
-                os.close(parent)
+                _close(parent)
         return os.open(self._dir / component, _CREATE, 0o666)
 
     def open_file(self, component: str) -> int:
@@ -311,7 +311,7 @@ def _sync_up(directory: Path, strict_levels: int) -> None:
         try:
             _call(os.fsync, fd)
         finally:
-            os.close(fd)
+            _close(fd)
         above = os.path.dirname(current)
         if above == current:
             return
@@ -466,7 +466,7 @@ class LocalOutputTxn(_LocalStageDir):
         try:
             _durable._sync_tree(stage_fd)
         finally:
-            os.close(stage_fd)
+            _close(stage_fd)
         _call(os.replace, stage, self._target)
         self._stage = None
         self._finished = True
@@ -543,7 +543,7 @@ class LocalOutputDir:
         try:
             _durable._sync_leaf_at(parent_fd, self._target.name)
         finally:
-            os.close(parent_fd)
+            _close(parent_fd)
         _sync_up(self._target.parent, 1)
 
 
