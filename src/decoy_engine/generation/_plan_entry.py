@@ -26,6 +26,7 @@ import pyarrow as pa
 
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._streamed import GenerationResult, run_generation
+from decoy_engine.generation.kinds import LookupList
 from decoy_engine.generation.statistical import (
     FanoutSpec,
     fanout_spec_from_snapshot,
@@ -33,6 +34,8 @@ from decoy_engine.generation.statistical import (
 )
 from decoy_engine.plan._generation import column_pins_snapshot
 from decoy_engine.plan._types import unfreeze_json
+from decoy_engine.plan.checks import ReadLookup, lookup_columns
+from decoy_engine.plan.checks._lookup_tables import checked_lookup
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -69,6 +72,15 @@ class _PreparedPlan:
 
     config: dict[str, Any]
     legacy_kwargs: dict[str, Any]
+    generation: GenerationPlan
+
+    def run_kwargs(self) -> dict[str, Any]:
+        """`legacy_kwargs` plus the lookup lists a run draws from.
+
+        Decoded here and not in `_prepare_generation`: a code set loads its corpus, and the
+        classifiers that share the prepare step never run a draw.
+        """
+        return {**self.legacy_kwargs, "lookup_lists": _decode_lookups(self.config, self.generation)}
 
 
 def _prepare(plan: Any, caller: str) -> _PreparedPlan:
@@ -134,6 +146,7 @@ def _prepare_generation(generation: GenerationPlan | None, caller: str) -> _Prep
             "snapshot_artifacts": snapshot_artifacts,
             "reference_fanouts": reference_fanouts,
         },
+        generation,
     )
 
 
@@ -159,6 +172,24 @@ def _decode_fanouts(
                 artifacts[i], source, digest=generation.snapshots[i].sha256
             )
     return out
+
+
+def _decode_lookups(
+    config: dict[str, Any], generation: GenerationPlan
+) -> dict[tuple[str, str], LookupList]:
+    """Parse each `lookup` column's list from the plan's pinned bytes (or its shipped code set).
+
+    Runs the plan-load checker, so a hand-built plan whose pins do not cover or satisfy a lookup
+    column is refused (`lookup_not_pinned`, `lookup_*`) rather than read from disk.
+    """
+    pins = {
+        s.source_path: ReadLookup(s.source_path, s.sha256, base64.b64decode(s.payload_b64))
+        for s in generation.lookups
+    }
+    return {
+        (table, str(col["name"])): checked_lookup(table, col, pins, {})[0]
+        for table, col in lookup_columns(config)
+    }
 
 
 def _prepare_pinned(generation_plan: Any, caller: str) -> _PreparedPlan:
@@ -244,7 +275,7 @@ def generate_tables(
         instance_default_locale=instance_default_locale,
         budget_bytes=budget_bytes,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
         on_warning=on_warning,
     )
     assert result.tables is not None  # noqa: S101 -- sink=None can only run resident
@@ -284,7 +315,7 @@ def generate_tables_streamed(
         budget_bytes=budget_bytes,
         batch_rows=batch_rows,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
         on_warning=on_warning,
     )
 
@@ -316,7 +347,7 @@ def generate_tables_from_generation_plan(
         instance_default_locale=instance_default_locale,
         budget_bytes=budget_bytes,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
         on_warning=on_warning,
     )
     assert result.tables is not None  # noqa: S101 -- sink=None can only run resident
@@ -345,6 +376,6 @@ def generate_tables_streamed_from_generation_plan(
         budget_bytes=budget_bytes,
         batch_rows=batch_rows,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
         on_warning=on_warning,
     )

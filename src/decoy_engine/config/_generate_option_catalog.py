@@ -45,6 +45,8 @@ class GenerateTypeOptions:
     required_when: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
     # The subset of `required` that is checked at plan compile, not at config parse.
     required_at_plan: tuple[str, ...] = ()
+    # Keys of which exactly one is given, e.g. ("file", "codeset") on `lookup`. Empty otherwise.
+    one_of: tuple[str, ...] = ()
 
 
 # The one type that takes `pooled`; `GenerateColumnConfig` refuses it elsewhere.
@@ -77,6 +79,8 @@ def _closed_branch(type_: str, spec: TypeOptions, shared: list[str]) -> dict[str
         "required": [*spec.required, *spec.plan_required],
         "additionalProperties": False,
     }
+    if spec.one_of:
+        then["oneOf"] = [{"required": [k]} for k in spec.one_of]
     nested: list[dict[str, Any]] = []
     for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items():
         for value, keys in by_value.items():
@@ -113,6 +117,7 @@ def generate_option_catalog() -> Mapping[str, GenerateTypeOptions]:
                 for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items()
             },
             required_at_plan=spec.plan_required,
+            one_of=spec.one_of,
         )
         for type_, spec in GENERATE_OPTIONS.items()
     }
