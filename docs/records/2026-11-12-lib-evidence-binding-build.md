@@ -33,3 +33,21 @@ CLI #200 writes `path_base: "project"` and `project_manifest` into the evidence 
 ## Chosen
 
 The pairing refusal names the missing key's field path, since the pair has no single culprit. The model-level check raises a `ValidationError` with a custom error so the location is a field path and no value is echoed.
+
+## Fix round 1
+
+Finding: the public decoder accepted a sealed evidence record with only one binding key, `path_base: null` or `path_base: "cwd"`. `derive_read` built the read model from fields only, so the write model's validators were dropped and the `Literal` became a tolerant `Token`.
+
+Fix: `_value_free.SharedRules` is a marker base for a validators-only class. `derive_read` builds the read model on `(base, *rules)`, where `rules` are the `SharedRules` classes in the write model's MRO. It fails closed with `TypeError` when the write model holds a validator no rules class has, or a rules class declares a field. `EvidencePayload` inherits `_BindingRules`, which holds the pair rule and a field rule that accepts only `"project"`. `CODEMAP.md`, the compatibility contract and the changelog fragment name the reader-side refusal.
+
+Red first: commit `438952c4` (tests plus a `SharedRules` stub so the import resolves) on top of `d6c1508f`: 12 failed, 28 passed (4 decode, 4 read-model, 4 deriver tests failed on assertions).
+
+Green: `tests/unit/records`, `tests/unit/run_result`, `tests/unit/test_value_free_rules.py`, `tests/sentry/test_module_size.py`, `tests/sentry/test_public_import_boundary.py`; `gates.sh --steps layers` 15 passed; ruff check and format, mypy on `_value_free.py` and `records`: clean.
+
+Mutations on the final source head:
+
+| Mutation | Red tests |
+|---|---|
+| drop `*rules` from the read bases | 4 decode, 4 read-model, `test_both_validators_run_on_the_read_model`, `test_a_nested_write_models_rules_reach_its_nested_read_model` |
+| drop the fail-closed checks | `test_a_validator_straight_on_a_write_model_is_refused`, `test_a_rules_class_with_a_field_is_refused` |
+| field rule accepts any non-null string | decode and read-model `other_path_base` |
