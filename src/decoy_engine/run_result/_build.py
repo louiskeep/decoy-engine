@@ -39,6 +39,7 @@ _MODES = tuple(m for m in get_args(ExecutionMode) if m != "other")
 _MAX_CODES = 64
 _MAX_WARNINGS = 256
 _Key = tuple[str, str | None, str | None]
+_ROUTE_MODE: dict[str, ExecutionMode | None] = {}
 
 
 class RunFacts(ExecutionFacts, Protocol):
@@ -49,6 +50,16 @@ class RunFacts(ExecutionFacts, Protocol):
 
     @property
     def warnings(self) -> Sequence[Any]: ...
+
+
+class RouteView(Protocol):
+    """The route as a caller fact: ``decoy_engine.route_summary(quality_metrics)`` fits."""
+
+    @property
+    def route(self) -> str: ...
+
+    @property
+    def reason_code(self) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -164,6 +175,7 @@ def build_run_result(
     blocking_failed: bool,
     native: NativeRoute | None,
     chunked: bool,
+    route: RouteView | None,
     links: Links,
     started_at: str,
     finished_at: str,
