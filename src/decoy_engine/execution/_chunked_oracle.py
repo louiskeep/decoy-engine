@@ -203,8 +203,8 @@ def _oracle_preflight_admitted(
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
     if first is not None:
-        # Duplicate field names first: every check below looks fields up by name. The
-        # per-chunk refusal is the innermost wrapper, so it runs before every later wrap.
+        # Duplicate field names first: every check below looks fields up by name. On later
+        # chunks the declaration check (innermost wrap) runs before the duplicate-name refusal.
         _guards.refuse_duplicate_field_names(table, first.schema.names)
         # Every column must be declared (CONFIG-EXPLICIT E2d): the first chunk now, each later
         # chunk lazily before it masks. Nothing is profiled, compiled or masked before this.

@@ -137,18 +137,25 @@ def declaration_findings(
                 )
             )
         elif item.columns is not None and kinds.get(item.table) == "mask":
-            declared = frozenset(declared_columns(config, item.table))
+            in_config = frozenset(declared_columns(config, item.table))
+            declared = in_config
             if item.within is not None:
                 declared &= frozenset(item.within)
             missing = [(i, c) for i, c in enumerate(item.columns, 1) if c not in declared]
             if missing:
+                # A column the config lists but `source_schema` leaves out needs the schema
+                # fixed, not another config entry.
+                fix = (
+                    "add it to source_schema"
+                    if missing[0][1] in in_config
+                    else "list every column of the table, even as passthrough"
+                )
                 columns.append(
                     DeclarationFinding(
                         "column",
                         item.table,
                         f"column {missing[0][0]} of {len(item.columns)} "
-                        f"({len(missing)} undeclared); list every column of the table, "
-                        "even as passthrough",
+                        f"({len(missing)} undeclared); {fix}",
                         tuple(c for _, c in missing),
                     )
                 )
