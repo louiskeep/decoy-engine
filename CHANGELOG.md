@@ -103,6 +103,20 @@ change. `_CERTIFIED_STACKS` gains one 3.10.20 row for the new lock profile and k
 Operators who route S3 or GCS through an HTTPS proxy: urllib3 2.8 takes proxy TLS settings only from
 `proxy_ssl_context`, and destination client certificates no longer apply to a forwarding proxy.
 
+### Added (V2-3.2: anonymity metrics, 2026-11-07)
+
+V2 track, library-only, not wired into config, validators or the CLI; not merged per owner instruction.
+`decoy_engine.quality.anonymity` measures syntactic privacy models over named quasi-identifiers of a
+pandas DataFrame or pyarrow Table: `measure_k_anonymity` (class sizes, size distribution, ARX prosecutor
+risk; Sweeney 2002), `measure_l_diversity` (distinct, entropy, recursive (c, l); Machanavajjhala et al.
+2007) and `measure_t_closeness_equal` / `measure_t_closeness_ordered` (Earth Mover's Distance with equal
+or ordered ground distance; Li, Li and Venkatasubramanian 2007). Reports are frozen and value-free.
+Null quasi-identifiers are their own value; null sensitive values are excluded, and t-closeness reports
+an undetermined target while a class has no non-null sensitive value. Arrow columns convert
+losslessly (dictionary entries that are null or NaN become null cells); float NaN counts as null.
+Object-column values are keyed by type family (`1`, `1.0`, `True` differ) for quasi-identifiers and
+for t-closeness, and by plain equality for l-diversity. Plan: `docs/plans/2026-11-07-v2-3.2-anonymity-metrics.md`.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,

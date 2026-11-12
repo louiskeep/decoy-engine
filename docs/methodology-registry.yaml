@@ -233,6 +233,18 @@ modules:
     pattern: full-domain generalization lattice
     source: Samarati 2001; LeFevre, DeWitt and Ramakrishnan 2005 (Incognito); Kohlmayer et al. 2012 (Flash)
 
+  - path: src/decoy_engine/quality/anonymity/_k_anonymity.py
+    pattern: k-anonymity (Sweeney 2002) with ARX prosecutor risk
+    source: Sweeney, k-anonymity, IJUFKS 10(5) 2002; ARX Data Anonymization Tool risk model (Apache-2.0)
+
+  - path: src/decoy_engine/quality/anonymity/_l_diversity.py
+    pattern: l-diversity (Machanavajjhala et al. 2007)
+    source: Machanavajjhala, Kifer, Gehrke, Venkitasubramaniam, l-Diversity, ACM TKDD 1(1) 2007; ARX
+
+  - path: src/decoy_engine/quality/anonymity/_t_closeness.py
+    pattern: t-closeness EMD (Li, Li and Venkatasubramanian 2007)
+    source: Li, Li, Venkatasubramanian, t-Closeness, ICDE 2007 (equal and ordered ground distance); ARX
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break
