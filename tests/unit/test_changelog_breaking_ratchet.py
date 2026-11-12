@@ -42,7 +42,7 @@ TRIAGED: dict[tuple[str, str], str] = {
         "Breaking: a vault opens and writes only under the 32-byte mask root"
     ),
     ("0.23.0", "A bound iterator (`bind_iterator`) now runs every step, incl"): (
-        "bug fix in error type for misuse of a bound iterator; no valid caller changes"
+        "Breaking: a bound iterator runs in a private context copied when it was bound"
     ),
     ("0.23.0", "A generate column can say how its values are printed with `o"): (
         "new opt-in key: the refusals apply only to a column that sets `output_type`"
@@ -72,7 +72,7 @@ TRIAGED: dict[tuple[str, str], str] = {
         "new optional key pair; the reader refuses only a half pair, which no earlier writer produced"
     ),
     ("0.23.0", "The shared staging writer now raises `out_of_core_temp_disk_"): (
-        "Breaking: the capacity reason-code set widens; this is the staging-writer case of it"
+        "Breaking: a full scratch disk during staging raises a code in CAPACITY_EXCLUSIONS"
     ),
     ("0.23.0", "What a caller has to do: build a vault writer from an admitt"): (
         "Breaking: a vault opens and writes only under the 32-byte mask root"
@@ -120,7 +120,7 @@ TRIAGED: dict[tuple[str, str], str] = {
         "new capability: a config with a `subset:` block used to be refused and now runs"
     ),
     ("0.23.0", "`runtime/out_of_core_reorder_disk_budget_too_small` is a new"): (
-        "new reason code for a case that already raised; it replaces a code in the capacity set (see Breaking)"
+        "Breaking: the reorder disk case raises the new code, in CAPACITY_EXCLUSIONS"
     ),
     ("0.23.0", "`scikit-learn==1.7.2` and `lightgbm==4.6.0` moved from the `"): (
         "Breaking: the `ml` extra is removed; the match says a missing library does not raise"

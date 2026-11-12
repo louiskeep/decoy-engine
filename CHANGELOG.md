@@ -18,7 +18,10 @@ minimum engine version it was tested against via its
 - S3 and GCS connector errors carry fixed text and a `kind`, and `S3Config.region` has no default.
 - `PLAN_VERSION` is 4 (was 3). A plan this engine writes carries `plan_version: 4`, and an older engine does not check the version at load: it loads the plan and fails when a run reaches a `lookup` column. This engine still loads version 2 and 3 plans. A plan with no `lookup` column differs from its version-3 form only by the version line.
 - a column the config declares for a mask table but the source lacks is now refused before any row is read; remove the entry or fix the name.
-- `decoy_engine.errors.CAPACITY_REASON_CODES` gains `out_of_core_faker_pool_budget_exceeded`, `out_of_core_reorder_budget_too_small`, `pool_exceeds_cache_budget` and `isolated_worker_out_of_memory`; a caller that treats the set as capacity now sees these four as capacity too.
+- `decoy_engine.errors.CAPACITY_REASON_CODES` gains `out_of_core_faker_pool_budget_exceeded`, `out_of_core_reorder_budget_too_small`, `pool_exceeds_cache_budget`, `isolated_worker_out_of_memory` and `process_out_of_memory`; a caller that treats the set as capacity now sees these five as capacity too. A bare `MemoryError` now maps to `decoy/process_out_of_memory` (retry class `environment_repair`) instead of `decoy/unexpected_error`.
+- a reorder edge whose disk ledger exceeds the disk budget now raises `runtime/out_of_core_reorder_disk_budget_too_small` instead of `runtime/out_of_core_reorder_budget_too_small`; the new code is in `CAPACITY_EXCLUSIONS`, so that case is no longer a capacity verdict. A memory ceiling too small for the sorter keeps the old code.
+- a full scratch disk (`ENOSPC` or `EDQUOT`) during declared-casting staging now raises `ExecutionError` with `runtime/out_of_core_temp_disk_exceeded` instead of a raw `OSError`; that code is in `CAPACITY_EXCLUSIONS` (disk, not memory), not in the capacity set.
+- a bound iterator (`bind_iterator`) runs in a private context copied when it was bound: `ContextVar` values the consumer sets after binding no longer reach the iterator, and values the iterator sets no longer reach the consumer.
 - a generated relationship parent whose key is not provably unique is now refused at validate and run; set `unique: true` on the key column or use a `sequence`.
 - the `ml` extra is removed; scikit-learn and lightgbm are now base dependencies, so drop `[ml]` from installs.
 - `run_mask_pipeline_chunked` requires the keyword `source_schema`, and the three chunked entries refuse an undeclared table or column before masking.
@@ -170,7 +173,7 @@ schema and before any data row is read. It covers every route the E2c and E2d ga
 
 ### Fixed (staging writer capacity errors, SUB-RUN E2, 2026-11-12)
 
-The shared staging writer now raises `out_of_core_temp_disk_exceeded` only when a scratch write fails with `ENOSPC` or `EDQUOT`, so a full scratch disk during declared-casting staging gives the capacity code too. Source read errors and other scratch errors keep their own types, and the writer closes the source batch producer itself when staging fails.
+The shared staging writer now raises `out_of_core_temp_disk_exceeded` only when a scratch write fails with `ENOSPC` or `EDQUOT`, so a full scratch disk during declared-casting staging gives that code too; it is in `CAPACITY_EXCLUSIONS`, not the capacity set. Source read errors and other scratch errors keep their own types, and the writer closes the source batch producer itself when staging fails.
 
 ### Added (subset inside a pipeline run, SUB-RUN E2, 2026-11-12)
 
