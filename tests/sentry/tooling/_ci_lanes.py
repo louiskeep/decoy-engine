@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 import yaml
 
 from tests.sentry.ci_scan._shell_tokens import base, commands
+from tests.sentry.parallel._resources import parse_marker_expr
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -249,12 +250,12 @@ def marker_findings(tree: Tree) -> list[str]:
 
 def _agreement_findings(gates: str, gate_lanes: list[Lane]) -> list[str]:
     """M5: gates.sh and the hosted full suite select the same tests."""
-    pins = [ln for ln in gates.splitlines() if ln.startswith("PYTEST_ARGS=")]
-    m = re.fullmatch(r"PYTEST_ARGS=\(-m '([^']+)'\)", pins[0]) if len(pins) == 1 else None
-    if m is None:
-        return ["M5 gates.sh has no single PYTEST_ARGS=(-m '<expr>') line"]
+    try:
+        pinned = parse_marker_expr(gates)
+    except ValueError as e:
+        return [f"M5 {e}"]
     if len(gate_lanes) != 1 or " ".join((gate_lanes[0].expr or "").split()) != " ".join(
-        m.group(1).split()
+        pinned.split()
     ):
         return ["M5 gates.sh PYTEST_ARGS and the ci.yml regression-gate -m expression differ"]
     return []

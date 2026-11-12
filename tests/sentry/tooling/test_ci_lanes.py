@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.sentry.parallel._resources import parse_marker_expr
 from tests.sentry.tooling import _ci_lanes as lanes
 
 TREE = lanes.load()
@@ -353,7 +354,6 @@ def test_gates_expression_must_equal_the_hosted_one() -> None:
 
 
 def test_gates_excludes_the_harness_that_its_own_lane_owns() -> None:
-    expr = re.search(r"^PYTEST_ARGS=\(-m '([^']+)'\)", TREE.gates, re.M)
-    assert expr
-    assert not lanes.selects(expr.group(1), frozenset({"determinism_harness"}))
+    expr = parse_marker_expr(TREE.gates)
+    assert not lanes.selects(expr, frozenset({"determinism_harness"}))
     assert "determinism" in TREE.required["merge"][0]["jobs"]

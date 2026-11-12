@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.sentry.parallel._resources import parse_marker_expr
+
 ROOT = Path(__file__).resolve().parents[2]
 GATES = ROOT / "scripts" / "dev" / "gates.sh"
 
@@ -111,9 +113,7 @@ def gates_sentry_paths(text: str | None = None) -> list[str]:
 
 
 def gates_marker_expr() -> str:
-    m = re.search(r"^PYTEST_ARGS=\(-m '([^']*)'", GATES.read_text(encoding="utf-8"), re.MULTILINE)
-    assert m, "gates.sh PYTEST_ARGS has no -m expression"
-    return m.group(1)
+    return parse_marker_expr(GATES.read_text(encoding="utf-8"))
 
 
 def gates_layer_test(text: str) -> str:
