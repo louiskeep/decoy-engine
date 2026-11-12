@@ -128,3 +128,42 @@ class TestSubsetBlockIsSplitOff:
         want = validate_plan(plain, _profile(), decoy_engine_version=_VERSION)
         assert want.plan is not None
         assert result.plan.pipeline_config_hash == want.plan.pipeline_config_hash
+
+
+_BAD_SEEDS = [
+    {"table": "t", "mode": "sample", "key_columns": [], "count": 1},
+    {"table": "t", "mode": "sample", "key_columns": ["id"], "fraction": 3.0},
+    {"table": "t", "mode": "sample", "key_columns": ["id"], "fraction": 0.5, "count": 2},
+    {"table": "t", "mode": "sample", "key_columns": ["id"]},
+    {"table": "t", "mode": "keys", "key_columns": ["id"], "keys": []},
+]
+
+
+@pytest.mark.parametrize("seed", _BAD_SEEDS)
+def test_a_malformed_seed_is_refused_by_config_validation_before_the_split(
+    seed: dict[str, object],
+) -> None:
+    """The split's `SeedSpec` raises `ValueError` on each of these, so the only way to reach it
+    is past `PipelineConfig` validation, which refuses the same shapes."""
+    from decoy_engine.config import PipelineConfig
+    from decoy_engine.subset._types import SeedSpec
+
+    raw = {
+        "version": 2,
+        "sources": {"t": {"type": "file", "format": "parquet", "path": "/x.parquet"}},
+        "tables": [{"name": "t", "columns": [{"name": "id", "strategy": "passthrough"}]}],
+        "targets": {"t": {"type": "file", "format": "parquet", "path": "/y.parquet"}},
+        "subset": {"seeds": [seed]},
+    }
+    with pytest.raises(Exception) as info:
+        PipelineConfig.model_validate(raw)
+    assert "subset" in str(info.value).lower() or "seed" in str(info.value).lower()
+    with pytest.raises(ValueError):
+        SeedSpec(
+            table="t",
+            mode=seed["mode"],  # type: ignore[arg-type]
+            key_columns=tuple(seed.get("key_columns", ())),  # type: ignore[call-overload]
+            fraction=seed.get("fraction"),  # type: ignore[arg-type]
+            count=seed.get("count"),  # type: ignore[arg-type]
+            keys=tuple(seed.get("keys", ())),  # type: ignore[call-overload]
+        )
