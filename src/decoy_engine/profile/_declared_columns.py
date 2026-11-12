@@ -99,6 +99,8 @@ class DeclarationInput:
     table: str
     columns: tuple[str, ...] | None
     origin: str
+    # A chunk's columns must also be among these (the `source_schema` a chunked caller gave).
+    within: tuple[str, ...] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -135,16 +137,25 @@ def declaration_findings(
                 )
             )
         elif item.columns is not None and kinds.get(item.table) == "mask":
-            declared = frozenset(declared_columns(config, item.table))
+            in_config = frozenset(declared_columns(config, item.table))
+            declared = in_config
+            if item.within is not None:
+                declared &= frozenset(item.within)
             missing = [(i, c) for i, c in enumerate(item.columns, 1) if c not in declared]
             if missing:
+                # A column the config lists but `source_schema` leaves out needs the schema
+                # fixed, not another config entry.
+                fix = (
+                    "add it to source_schema"
+                    if missing[0][1] in in_config
+                    else "list every column of the table, even as passthrough"
+                )
                 columns.append(
                     DeclarationFinding(
                         "column",
                         item.table,
                         f"column {missing[0][0]} of {len(item.columns)} "
-                        f"({len(missing)} undeclared); list every column of the table, "
-                        "even as passthrough",
+                        f"({len(missing)} undeclared); {fix}",
                         tuple(c for _, c in missing),
                     )
                 )
@@ -248,13 +259,20 @@ class PreparedDeclaredSources:
         self._config = config
         self._config_id = id(config)
         self.inputs = inputs
+        # `for_chunks` with a schema: the columns a chunk of that table may carry.
+        self._chunk_columns = {
+            i.table: i.columns for i in inputs if i.origin == "chunk" and i.columns is not None
+        }
 
     def matches(self, config: Mapping[str, Any]) -> bool:
         """True when `config` is the object this capability was prepared for."""
         return id(config) == self._config_id
 
     def check_names(self, table: str, names: Iterable[str]) -> None:
-        check_columns_declared(self._config, [DeclarationInput(table, tuple(names), "check")])
+        within = self._chunk_columns.get(table)
+        check_columns_declared(
+            self._config, [DeclarationInput(table, tuple(names), "check", within)]
+        )
 
     def checked_chunks(
         self, table: str, first_names: Iterable[str], chunk_iter: Iterable[Any]
@@ -263,6 +281,11 @@ class PreparedDeclaredSources:
         are checked now."""
         self.check_names(table, first_names)
         return (self._checked_chunk(table, chunk) for chunk in chunk_iter)
+
+    def checked_stream(self, table: str, first: pa.Table, rest: Iterable[Any]) -> Iterator[Any]:
+        """`checked_chunks` for a stream whose first chunk is already pulled: its names come
+        from the chunk's own schema, so a stored pandas index is never an undeclared column."""
+        return self.checked_chunks(table, arrow_columns(first.schema), rest)
 
     def _checked_chunk(self, table: str, chunk: Any) -> Any:
         self.check_names(table, arrow_columns(chunk.schema))

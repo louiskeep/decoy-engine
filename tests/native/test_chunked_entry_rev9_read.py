@@ -21,6 +21,7 @@ from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
@@ -37,7 +38,9 @@ from tests.native._rev9_support import (
     BY_NAME,
     companion_missing,
     run_entry,
+    run_entry_below_gate,
     run_public,
+    run_public_below_gate,
     same_column,
 )
 from tests.native.test_chunked_entry_rev7 import _DelegatingAdapter
@@ -68,9 +71,20 @@ def _expect_coded(info: Any, column: str, chunk_index: int) -> None:
     assert f"chunk {chunk_index}" in exc.message
 
 
-def _public_error(config: dict[str, Any], chunks: list[pa.Table]) -> BaseException:
+def _entries(configured: bool) -> tuple[Any, Any]:
+    """(`run_entry`, `run_public`) for a config that declares the read column, and their
+    below-gate forms for one that leaves it unconfigured, which the gate refuses at the entry."""
+    if configured:
+        return run_entry, run_public
+    return run_entry_below_gate, run_public_below_gate
+
+
+def _public_error(
+    config: dict[str, Any], chunks: list[pa.Table], *, below_gate: bool = False
+) -> BaseException:
+    public = run_public_below_gate if below_gate else run_public
     with pytest.raises(Exception) as info:
-        run_public(config, chunks)
+        public(config, chunks)
     return info.value
 
 
@@ -105,16 +119,17 @@ def test_predicate_read_column_matches_the_public_oracle(
     case: str, forced: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     name, expr, configured = _CASES[case]
+    entry, public = _entries(configured)
     base = [_when("s", expr)] + ([passthrough(name)] if configured else [])
     config = make_config(base + ([hash_col("h")] if forced else []))
     chunks = [_chunk(**{name: arr}) for arr in _INTS]
-    expected = run_public(make_config(base), chunks)
+    expected = public(make_config(base), chunks)
     if forced:
         chunks = [t.append_column("h", pa.array(["p", "q", "r"])) for t in chunks]
         with companion_missing(monkeypatch):
-            out, sink, ev = run_entry(config, chunks)
+            out, sink, ev = entry(config, chunks)
     else:
-        out, sink, ev = run_entry(config, chunks)
+        out, sink, ev = entry(config, chunks)
     if forced:
         assert ev[0].native_admitted is False
         assert ev[0].reroute_reason == "crypto_extension_unavailable"
@@ -132,11 +147,12 @@ def test_predicate_read_column_matches_the_public_oracle(
 @pytest.mark.parametrize("case", _BACKTICK_CASES)
 def test_backtick_predicate_is_rejected_at_compile(case: str) -> None:
     name, expr, configured = _BACKTICK_CASES[case]
+    entry, public = _entries(configured)
     base = [_when("s", expr)] + ([passthrough(name)] if configured else [])
     chunks = [_chunk(**{name: arr}) for arr in _INTS]
     for call in (
-        lambda: run_entry(make_config(base), chunks),
-        lambda: run_public(make_config(base), chunks),
+        lambda: entry(make_config(base), chunks),
+        lambda: public(make_config(base), chunks),
     ):
         with pytest.raises(PlanCompileError) as info:
             call()
@@ -162,12 +178,14 @@ def test_unicode_predicate_names_are_rejected_at_compile(name: str, configured: 
     The read-set scan still resolves such names (`test_read_set_scans_predicates`), which keeps
     a seed that skipped compile from leaving its column unmasked."""
     expr, good, bad = _UNICODE[name]
+    _, public = _entries(configured)
     cols = [_when("s", expr)] + ([passthrough(name)] if configured else [])
     config = make_config(cols)
     chunks = [_chunk(**{name: good}), _chunk(**{name: bad})]
+    mask = run_mask_chunked if configured else run_mask_chunked_below_gate
     with pytest.raises(PlanCompileError) as info:
         list(
-            run_mask_chunked(
+            mask(
                 config,
                 chunks,
                 table=TABLE,
@@ -177,7 +195,7 @@ def test_unicode_predicate_names_are_rejected_at_compile(name: str, configured: 
         )
     assert info.value.code == "when_outside_closed_grammar"
     with pytest.raises(PlanCompileError):
-        run_public(config, chunks)
+        public(config, chunks)
 
 
 def test_predicate_the_tokenizer_rejects_is_rejected_at_compile_and_reads_every_column() -> None:
@@ -185,11 +203,11 @@ def test_predicate_the_tokenizer_rejects_is_rejected_at_compile_and_reads_every_
     chunks = [_chunk(x=arr, y=arr) for arr in _INTS]
     config = make_config(cols)
     with pytest.raises(PlanCompileError) as info:
-        run_public(config, chunks)
+        run_public_below_gate(config, chunks)
     assert info.value.code == "when_outside_closed_grammar"
     with pytest.raises(PlanCompileError):
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,
@@ -241,7 +259,7 @@ def test_refused_value_in_chunk_two_is_coded(
 ) -> None:
     config = _read_cfg("x", configured=configured)
     chunks = [_chunk(x=_T64.good), _chunk(x=_T64.good), _chunk(x=_T64.bad)]
-    oracle_exc = _public_error(config, chunks)
+    oracle_exc = _public_error(config, chunks, below_gate=not configured)
     assert type(oracle_exc).__name__ == "ArrowInvalid"
     sink: list[Any] = []
     kwargs = dict(
@@ -256,7 +274,8 @@ def test_refused_value_in_chunk_two_is_coded(
         )
         chunks = [t.append_column("h", pa.array(["p", "q", "r"])) for t in chunks]
         monkeypatch.setitem(__import__("sys").modules, "decoy_engine_native", None)
-    gen = run_mask_chunked(config, chunks, **kwargs)
+    mask = run_mask_chunked if configured else run_mask_chunked_below_gate
+    gen = mask(config, chunks, **kwargs)
     first, second = next(gen), next(gen)
     assert first.num_rows == second.num_rows == 3
     with pytest.raises(ExecutionError) as info:
@@ -285,7 +304,7 @@ def test_two_read_columns_the_error_names_the_one_that_holds_the_value() -> None
         _chunk(a=_T64.good, b=_T64.good),
         _chunk(a=_T64.good, b=_T64.bad),
     ]
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
     )
     next(gen)
@@ -307,7 +326,7 @@ def test_unread_passthrough_stays_carried_while_a_masked_column_is_read() -> Non
         _chunk(y=pa.array(["q", "r", "q"]), x=_T64.good),
         _chunk(y=pa.array(["q", "r", "q"]), x=_T64.bad),
     ]
-    out, sink, _ev = run_entry(config, chunks)
+    out, sink, _ev = run_entry_below_gate(config, chunks)
     assert len(out) == 3
     assert same_column(out[2].column("x"), chunks[2].column("x"))
     assert _read_lists(sink) == [[]] * 3
@@ -403,10 +422,10 @@ def test_sibling_reference_puts_the_passthrough_column_in_the_read_set(
 def test_string_literal_equal_to_a_column_name_keeps_that_column_carried() -> None:
     config = make_config([_when("s", "s == 'x'")])
     chunks = [_chunk(x=pa.array([1, 2, 3])) for _ in range(2)]
-    out, sink, ev = run_entry(config, chunks)
+    out, sink, ev = run_entry_below_gate(config, chunks)
     assert _read_lists(sink) == [[]] * 2
     assert ev[0].native_admitted is True, ev[0].reroute_reason
-    expected = run_public(config, chunks)
+    expected = run_public_below_gate(config, chunks)
     for got, src, want in zip(out, chunks, expected, strict=True):
         assert same_column(got.column("x"), src.column("x"))
         assert got.column("s").to_pylist() == want.column("s").to_pylist()
