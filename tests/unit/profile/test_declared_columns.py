@@ -310,10 +310,10 @@ def test_prepared_capability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     def raw(name: str) -> pa.Table:
         served.append(name)
-        return _chunk("id", "zz") if name == "bad" else _chunk("id")
+        return _chunk("id", "email", "zz") if name == "bad" else _chunk("id", "email")
 
     loader = prepared.checked_loader(raw, ("t", "bad"))
-    assert loader("t").column_names == ["id"]
+    assert loader("t").column_names == ["id", "email"]
     with pytest.raises(PipelineValidationError):
         loader("bad")
     assert len(calls) == 5
