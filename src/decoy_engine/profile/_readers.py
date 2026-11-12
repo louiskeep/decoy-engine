@@ -48,7 +48,7 @@ from decoy_engine.profile._policy_bound import _PolicyBound
 from decoy_engine.profile._readers_csv import CsvFileSource, estimate_csv_rows
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Sequence
 
 # Fallback bounded sample size when a caller asks for a full scan
 # (sample_rows=None) under residency="bounded" -- see profile_source. A full
@@ -161,6 +161,7 @@ class OpenedLazyBatches:
         batch_rows: int,
         use_threads: bool,
         handle: FileHandle | None = None,
+        columns: Sequence[str] | None = None,
     ) -> None:
         self._parquet_file = parquet_file
         # The authorized handle lives as long as the batches do, through early failure and
@@ -168,7 +169,8 @@ class OpenedLazyBatches:
         self._handle = handle
         self._closed = False
         self.facts = footer_facts_of(parquet_file)
-        self.batches = self._read(batch_rows, use_threads)
+        # The projection narrows the batches only; `facts` stay the whole file's.
+        self.batches = self._read(batch_rows, use_threads, columns)
 
     @property
     def schema(self) -> pa.Schema:
@@ -186,18 +188,25 @@ class OpenedLazyBatches:
     def max_row_group_rows(self) -> int:
         return self.facts.max_row_group_rows
 
-    def _read(self, batch_rows: int, use_threads: bool) -> Iterator[pa.RecordBatch]:
+    def _read(
+        self, batch_rows: int, use_threads: bool, columns: Sequence[str] | None
+    ) -> Iterator[pa.RecordBatch]:
         # Wrap pyarrow's own iterator in a Python generator, as `iter_batches` does.
         # Returning the C-level iterator raw makes a downstream `yield from` raise
         # `RuntimeError: generator raised StopIteration` on Python 3.10 for an empty file:
         # the iterator's StopIteration escapes the consuming generator frame (PEP 479).
+        projection = {} if columns is None else {"columns": list(columns)}
         if self._handle is not None:
             yield from arrow_adapter.iter_batches(
-                self._handle, self._parquet_file, batch_size=batch_rows, use_threads=use_threads
+                self._handle,
+                self._parquet_file,
+                batch_size=batch_rows,
+                use_threads=use_threads,
+                **projection,
             )
         else:
             yield from self._parquet_file.iter_batches(
-                batch_size=batch_rows, use_threads=use_threads
+                batch_size=batch_rows, use_threads=use_threads, **projection
             )
 
     def close(self) -> None:
@@ -261,6 +270,7 @@ class LazySource:
         pre_buffer: bool | None = None,
         buffer_size: int = 0,
         use_threads: bool = True,
+        columns: Sequence[str] | None = None,
     ) -> OpenedLazyBatches:
         """Open the file once and return its footer facts, a batch iterator and the owner
         of the close, so the schema a caller validates is the schema its batches are read
@@ -270,7 +280,8 @@ class LazySource:
 
         `pre_buffer=None` omits the argument, so each installed PyArrow keeps its own
         default (`False` on 24.0.0, `True` on 25.0.1); pass it to pin the behavior.
-        `buffer_size` and `use_threads` default to pyarrow's own defaults."""
+        `buffer_size` and `use_threads` default to pyarrow's own defaults. `columns` narrows the
+        batches; the schema and facts stay the whole file's."""
         options: dict[str, Any] = {}
         if pre_buffer is not None:
             options["pre_buffer"] = pre_buffer
@@ -283,7 +294,7 @@ class LazySource:
             handle.close()
             raise
         try:
-            return OpenedLazyBatches(parquet_file, batch_rows, use_threads, handle)
+            return OpenedLazyBatches(parquet_file, batch_rows, use_threads, handle, columns)
         except BaseException:
             parquet_file.close()
             handle.close()

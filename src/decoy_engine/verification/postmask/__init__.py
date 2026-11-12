@@ -40,6 +40,13 @@ shape changes in a non-backward-compatible way.
 
 from __future__ import annotations
 
+from decoy_engine.verification.postmask._stream_input import (
+    TableBatches,
+    from_lazy,
+    from_table,
+    key_batches,
+    missing_columns,
+)
 from decoy_engine.verification.postmask.runner import run_post_mask
 from decoy_engine.verification.postmask.types import (
     SCHEMA_VERSION,
@@ -57,5 +64,10 @@ __all__ = [
     "PostMaskReport",
     "ResidualPIIFinding",
     "Severity",
+    "TableBatches",
+    "from_lazy",
+    "from_table",
+    "key_batches",
+    "missing_columns",
     "run_post_mask",
 ]
