@@ -10,8 +10,7 @@ This is scaffolding for ML2.2: the regex baseline has no training phase and
 does not use this utility. It is defined here so the interface is reviewed
 and tested before the model is built.
 
-Requires: scikit-learn (``[ml]`` optional extra):
-    pip install -e '.[ml]'
+Requires scikit-learn, a base dependency.
 
 Source: sklearn §3.1.2.4 ``StratifiedGroupKFold``:
     "ensures the same group is not represented in both testing and training
@@ -165,7 +164,7 @@ def held_out_split(
     Raises
     ------
     ImportError
-        If scikit-learn is not installed.  Install via ``pip install -e '.[ml]'``.
+        If scikit-learn fails to import.  It is a base dependency: reinstall decoy-engine.
 
     Notes
     -----
@@ -180,7 +179,8 @@ def held_out_split(
         from sklearn.model_selection import StratifiedGroupKFold
     except ImportError as e:
         raise ImportError(
-            "scikit-learn is required for held_out_split. Install it via: pip install -e '.[ml]'"
+            "scikit-learn is a base dependency and failed to import for held_out_split. "
+            "Reinstall decoy-engine."
         ) from e
 
     splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)

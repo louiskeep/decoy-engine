@@ -12,7 +12,11 @@ import pytest
 
 from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import make_config, passthrough, redact
-from tests.native._rev9_support import run_entry, run_public, same_column
+from tests.native._rev9_support import (
+    run_entry_below_gate,
+    run_public_below_gate,
+    same_column,
+)
 
 # (predicate, the real column name it reads after NFKC)
 _CASES = {
@@ -49,8 +53,8 @@ def test_nfkc_spelled_predicate_is_rejected_at_compile(case: str, configured: bo
         cols.append(passthrough(name))
     chunks = [pa.table({"s": ["alice", "bob"], name: pa.array([1, 5], pa.int64())})]
     for call in (
-        lambda: run_entry(make_config(cols), chunks),
-        lambda: run_public(make_config(cols), chunks),
+        lambda: run_entry_below_gate(make_config(cols), chunks),
+        lambda: run_public_below_gate(make_config(cols), chunks),
     ):
         with pytest.raises(PlanCompileError) as info:
             call()
@@ -67,8 +71,8 @@ def test_nfkc_literal_does_not_read_the_column(configured: bool) -> None:
         pa.table({"s": ["alice", "bob", "carol"], "x": pa.array(v, pa.int64())})
         for v in ([1, 5, 9], [9, 1, 5], [2, 6, 3])
     ]
-    expected = run_public(make_config(cols), chunks)
-    out, sink, _ = run_entry(make_config(cols), chunks)
+    expected = run_public_below_gate(make_config(cols), chunks)
+    out, sink, _ = run_entry_below_gate(make_config(cols), chunks)
     listed = [r.quality_metrics["chunked_route"]["pandas_read_passthrough"] for r in sink]
     assert listed == [[]] * 3
     for got, src, want in zip(out, chunks, expected, strict=True):
@@ -95,9 +99,9 @@ def test_duplicate_source_column_names_raise_the_oracle_refusal(configured: bool
     )
     cols = [redact("s")] + ([passthrough("x")] if configured else [])
     with pytest.raises(TransformError) as pub:
-        run_public(make_config(cols), [chunk])
+        run_public_below_gate(make_config(cols), [chunk])
     with pytest.raises(TransformError) as ent:
-        run_entry(make_config(cols), [chunk])
+        run_entry_below_gate(make_config(cols), [chunk])
     # Only the config-key table name and a count: no field name, no cell value, nothing chained.
     expected = "table 't' has 1 duplicated field name(s)"
     for err in (pub.value, ent.value):

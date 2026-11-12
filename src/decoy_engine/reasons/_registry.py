@@ -21,7 +21,7 @@ from decoy_engine.reasons._types import (
     Severity,
 )
 
-REGISTRY_VERSION = "1.23.0"
+REGISTRY_VERSION = "1.24.0"
 REASON_SCHEMA_VERSION = 1
 EVENT_SCHEMA_VERSION = 1
 # Released identities whose summary carries an editorial correction the next release ships as a

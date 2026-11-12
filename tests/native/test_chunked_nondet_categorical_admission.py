@@ -33,7 +33,10 @@ from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import run_one
+from tests._declared_schema import chunked_entry_kwargs
+from tests.native._b8_support import (
+    run_one,
+)
 from tests.native._chunked_categorical_support import (
     FORCE,
     cat_col,
@@ -171,16 +174,18 @@ def test_a_non_admissible_config_fails_before_any_chunk_and_never_reaches_the_or
 
     run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
     ev: list[Any] = []
+    config = make_config([case[1], passthrough("p")])
     kwargs: dict[str, Any] = {"route_evidence_sink": ev} if entry == "run_mask_chunked" else {}
     with pytest.raises(PlanCompileError) as info:
         list(
             run(
-                make_config([case[1], passthrough("p")]),
+                config,
                 stream(),
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
                 **kwargs,
+                **chunked_entry_kwargs(run, config, TABLE),
             )
         )
     assert info.value.code == NONDET
@@ -433,14 +438,16 @@ def test_the_when_rejection_fires_before_any_chunk_on_both_entries(entry: str) -
             yield chunk
 
     run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    config = make_config([_nd(when=_OUTSIDE_GRAMMAR), passthrough("p")])
     with pytest.raises(PlanCompileError) as info:
         list(
             run(
-                make_config([_nd(when=_OUTSIDE_GRAMMAR), passthrough("p")]),
+                config,
                 stream(),
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(run, config, TABLE),
             )
         )
     assert info.value.code == WHEN_CODE and consumed == []

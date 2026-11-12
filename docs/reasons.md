@@ -18,7 +18,7 @@ Namespaces: `config`, `plan`, `runtime`, `provider`, `quality`, `connector`, `su
 
 ### Versioning
 
-`registry_version` (`1.23.0`), `reason_schema_version` (`1`) and `event_schema_version` (`1`) are independent.
+`registry_version` (`1.24.0`), `reason_schema_version` (`1`) and `event_schema_version` (`1`) are independent.
 
 Codes are append-only: a code never disappears or changes meaning. A retired code stays as a tombstone with its replacement link.
 
@@ -52,6 +52,8 @@ Release prep (`scripts/release/stamp_release.py --version X.Y.Z`) stamps every p
 The same fixture also pins the two GEN-CLI additions (`warning.generation_fidelity_below_threshold`: a generated table's overall score, or one comparable column's score, is below `fidelity_warn_threshold`; and `warning.seed_ignored_with_master_key`: a job seed is set next to a master key, so generated tables do not use the seed).
 
 `reason-manifest-v1.23-gen-types.json` pins the three GEN-TYPES E2 additions (`config.generate_output_type_unsupported`, `runtime.output_type_cast_failed` and `runtime.declared_boolean_invalid`; `since` 1.23.0: a generate column or fixed-width target cannot carry the requested `output_type`, a generated value could not be cast to its `output_type`, and a value is not a boolean under `boolean/text/v1`).
+
+`reason-manifest-v1.24-fpe-fallbacks.json` pins the two FPE handler fallback codes (`runtime.fpe_unencryptable_value` and `runtime.fpe_checksum_unsupported`; `since` 1.24.0). The `fpe` strategy had emitted both since Task 5.2 when a low-level FPE error carried no more specific code, but neither was registered, so they surfaced as `decoy.unregistered_reason`. The checksum one's symbol is `FPE_CHECKSUM_UNSUPPORTED_STRATEGY`, because `FPE_CHECKSUM_UNSUPPORTED` already names the low-level `fpe.checksum_unsupported`.
 
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.
 
