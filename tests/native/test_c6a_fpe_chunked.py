@@ -24,6 +24,7 @@ from decoy_engine.execution.native._companion_status import native_companion_sta
 from decoy_engine.execution.native._crypto_ext import FpeConfig
 from decoy_engine.execution.native._crypto_reference import reference_fpe
 from decoy_engine.execution.native._fpe_ext import native_fpe
+from tests._declared_schema import declared_schema
 from tests.native._b8_support import assert_same_as_oracle, run_pair
 from tests.native._chunked_entry_support import ENGINE_VERSION, TABLE, key_provider, make_config
 
@@ -164,6 +165,7 @@ def _oracle_raises(config: dict[str, Any], chunks: list[pa.Table]) -> StrategyEr
                 config,
                 chunks,
                 table=TABLE,
+                source_schema=declared_schema(config, TABLE),
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
             )
@@ -303,7 +305,12 @@ def test_checksum_declines_to_oracle() -> None:
     assert sink[0].reroute_reason == "fpe_checksum_not_native:c"
     oracle = list(
         run_mask_pipeline_chunked(
-            config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
+            config,
+            chunks,
+            table=TABLE,
+            source_schema=declared_schema(config, TABLE),
+            engine_version=ENGINE_VERSION,
+            key_provider=key_provider(),
         )
     )
     assert (
@@ -340,7 +347,12 @@ def test_companion_absent_declines_whole_table(monkeypatch: pytest.MonkeyPatch) 
     assert sink[0].reroute_reason == "fpe_extension_unavailable"
     oracle = list(
         run_mask_pipeline_chunked(
-            config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
+            config,
+            chunks,
+            table=TABLE,
+            source_schema=declared_schema(config, TABLE),
+            engine_version=ENGINE_VERSION,
+            key_provider=key_provider(),
         )
     )
     assert (

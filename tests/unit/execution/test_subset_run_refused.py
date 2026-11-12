@@ -23,7 +23,7 @@ from decoy_engine.execution import run_job_with_governor, run_pipeline_isolated
 from decoy_engine.plan import compile_plan
 from decoy_engine.profile import profile_source
 from decoy_engine.subset import plan_subset, run_subset, subset_inputs_from_config
-from tests._declared_schema import declare_rest
+from tests._declared_schema import chunked_entry_kwargs, declare_rest, declared_schema
 
 _VAR = "SUB_STOP_TEST_SECRET"
 _CODE = "subset_run_unsupported"
@@ -220,7 +220,13 @@ def test_chunked_refuses_at_call_without_pulling(tmp_path: Path) -> None:
     cfg = _dump(tmp_path, subset=True)
     chunks = _PulledChunks(_tables(tmp_path)["customers"])
     with pytest.raises(PipelineValidationError) as ei:
-        run_mask_pipeline_chunked(cfg, chunks, table="customers", engine_version="t")
+        run_mask_pipeline_chunked(
+            cfg,
+            chunks,
+            table="customers",
+            source_schema=declared_schema(cfg, "customers"),
+            engine_version="t",
+        )
     _assert_refusal(ei.value)
     assert chunks.pulls == 0
 
@@ -271,7 +277,14 @@ def test_no_subset_runs_unchanged(tmp_path: Path) -> None:
 
     for fn in (run_mask_pipeline_chunked, run_mask_chunked, run_native_or_oracle_chunked):
         rows = sum(
-            t.num_rows for t in fn(cfg, _PulledChunks(cust), table="customers", engine_version="t")
+            t.num_rows
+            for t in fn(
+                cfg,
+                _PulledChunks(cust),
+                table="customers",
+                engine_version="t",
+                **chunked_entry_kwargs(fn, cfg, "customers"),
+            )
         )
         assert rows == 100
     plan = compile_plan(cfg, profile_source(cfg), decoy_engine_version="t")
