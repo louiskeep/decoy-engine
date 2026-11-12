@@ -7,6 +7,7 @@ git serves is the real `ci/` registry and workflows, which is also the AT-20 fix
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -138,6 +139,8 @@ class FakeGitHub:
                 qs = parse_qs(urlparse(path).query)
                 page, size = int(qs.get("page", ["1"])[0]), int(qs["per_page"][0])
                 self.job_pages.append(page)
+                for i, job in enumerate(jobs):
+                    job.setdefault("id", rid * 10_000 + i)
                 return {"total_count": len(jobs), "jobs": jobs[(page - 1) * size : page * size]}
         if "/actions/workflows/" in path and path.split("?")[0].endswith("/runs"):
             return {"workflow_runs": []}
@@ -458,6 +461,66 @@ def test_a_short_job_read_is_an_error_not_a_pass() -> None:
     for wf in SCHEDULED:
         gh.add(wf, scheduled_names(wf), event="schedule", sha=MAIN)
     assert run_nightly(gh) == 2
+
+
+def _nightly_with(fake: type[FakeGitHub], extra: int = 0) -> FakeGitHub:
+    gh = fake()
+    for wf in SCHEDULED:
+        gh.add(wf, scheduled_names(wf), event="schedule", sha=MAIN)
+    for jobs in gh.jobs.values():
+        jobs += [{"name": f"extra-{i}", "conclusion": "success"} for i in range(extra)]
+    return gh
+
+
+def test_a_low_job_count_is_an_error_not_a_pass() -> None:
+    class Low(FakeGitHub):
+        def __call__(self, path: str) -> Any:
+            out = super().__call__(path)
+            if "/jobs" in path:
+                out["total_count"] -= 1
+            return out
+
+    assert run_nightly(_nightly_with(Low)) == 2
+
+
+@pytest.mark.parametrize("claimed", [150, 200])
+def test_a_repeated_job_page_is_an_error_not_a_pass(claimed: int) -> None:
+    asked: list[str] = []
+
+    class Repeat(FakeGitHub):
+        def __call__(self, path: str) -> Any:
+            out = super().__call__(re.sub(r"page=\d+$", "page=1", path))
+            if "/jobs" in path:
+                asked.append(path.rsplit("=", 1)[1])
+                out["total_count"] = claimed
+            return out
+
+    assert run_nightly(_nightly_with(Repeat, extra=150)) == 2
+    assert "2" in asked
+
+
+def test_a_job_count_that_moves_between_pages_is_an_error() -> None:
+    class Moving(FakeGitHub):
+        def __call__(self, path: str) -> Any:
+            out = super().__call__(path)
+            if "/jobs" in path and path.endswith("page=2"):
+                out["total_count"] += 100
+            return out
+
+    assert run_nightly(_nightly_with(Moving, extra=150)) == 2
+
+
+def test_a_job_without_an_id_is_an_error() -> None:
+    class NoId(FakeGitHub):
+        def __call__(self, path: str) -> Any:
+            out = super().__call__(path)
+            if "/jobs" in path:
+                # One job, so the distinct-id count alone cannot catch the missing id.
+                first = out["jobs"][:1]
+                out = {"total_count": 1, "jobs": [{k: v for k, v in first[0].items() if k != "id"}]}
+            return out
+
+    assert run_nightly(_nightly_with(NoId)) == 2
 
 
 def test_a_skipped_scheduled_job_is_not_green() -> None:

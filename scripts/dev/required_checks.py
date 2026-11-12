@@ -173,22 +173,32 @@ def _newest(runs: list[dict[str, Any]], **want: Any) -> dict[str, Any] | None:
 
 
 def _jobs(repo: str, run: dict[str, Any], fetch: Fetch) -> dict[str, list[str | None]]:
-    """Every job of the run, all pages; a short read is an error, never a smaller list."""
+    """Every job of the run, all pages; any read that is not exact is an error, never a list."""
     jobs: list[dict[str, Any]] = []
+    total: int | None = None
     page = 1
     while True:
         resp = fetch(
             f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100&page={page}"
         )
-        total, batch = resp.get("total_count"), resp["jobs"]
-        if not isinstance(total, int):
+        count, batch = resp.get("total_count"), resp["jobs"]
+        if type(count) is not int:
             raise CheckError(f"run {run['id']}: job listing has no total_count")
+        total = count if total is None else total
+        if count != total:
+            raise CheckError(f"run {run['id']}: job count moved from {total} to {count} mid-read")
         jobs += batch
         if len(jobs) >= total:
             break
         if not batch:
             raise CheckError(f"run {run['id']}: read {len(jobs)} of {total} jobs")
         page += 1
+    # A low count or a repeated page would otherwise pass as a complete read.
+    ids = {job.get("id") for job in jobs}
+    if len(jobs) != total or len(ids) != len(jobs) or None in ids:
+        raise CheckError(
+            f"run {run['id']}: read {len(jobs)} jobs ({len(ids)} distinct) against a count of {total}"
+        )
     by_name: dict[str, list[str | None]] = {}
     for job in jobs:
         by_name.setdefault(job["name"], []).append(job["conclusion"])
