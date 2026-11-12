@@ -178,7 +178,14 @@ def test_a_float_child_key_declines(tmp_path: Path, static_reasons: list[str]) -
     config = mixed_config(
         tmp_path,
         child,
-        parent_columns=[{"name": "id", "type": "categorical", "categories": [1.5, 2.5]}],
+        parent_columns=[
+            {
+                "name": "id",
+                "type": "categorical",
+                "categories": [1.5, 2.5, 3.5, 4.5, 5.5],
+                "unique": True,
+            }
+        ],
     )
     _assert_static_decline(
         config, {CHILD: child}, static_reasons, "mixed-fk-cross-generate-unsupported"
@@ -195,7 +202,7 @@ def test_a_nullable_int_key_declines_to_full_frame(
     config = mixed_config(
         tmp_path,
         child,
-        parent_columns=[{"name": "id", "type": "categorical", "categories": [10, 11, 12, 13]}],
+        parent_columns=[{"name": "id", "type": "sequence", "start": 10, "step": 1}],
     )
     result = _assert_static_decline(config, {CHILD: child}, static_reasons, "not_chunk_admissible")
     assert_outputs_identical(result.outputs, oracle(config, {CHILD: child}).outputs)
@@ -419,7 +426,14 @@ def test_a_non_int_non_string_parent_key_falls_back_after_generation(
     config = mixed_config(
         tmp_path,
         child,
-        parent_columns=[{"name": "id", "type": "categorical", "categories": [1.5, 2.5]}],
+        parent_columns=[
+            {
+                "name": "id",
+                "type": "categorical",
+                "categories": [1.5, 2.5, 3.5, 4.5, 5.5],
+                "unique": True,
+            }
+        ],
     )
     generate_calls.clear()
     got = run(config, {CHILD: child})
@@ -479,7 +493,12 @@ def _uint64_job(tmp_path: Path, email_when: str | None) -> tuple[dict[str, Any],
         tmp_path,
         child,
         parent_columns=[
-            {"name": "id", "type": "categorical", "categories": [str(BIG), "1", "2", "3"]}
+            {
+                "name": "id",
+                "type": "categorical",
+                "categories": [str(BIG), "1", "2", "3", "4"],
+                "unique": True,
+            }
         ],
         child_columns=[email, {"name": "note", "strategy": "redact"}],
     )

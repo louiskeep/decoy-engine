@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 import yaml
+
 from decoy_engine.plan.checks._relationship_keys import check_generated_parent_keys
 
 ROOT = Path(__file__).resolve().parents[4]

@@ -68,7 +68,7 @@ def check_generated_parent_keys(config: dict[str, Any]) -> None:
         summary = reasons.lookup(str(reasons.plan.RELATIONSHIP_PARENT_NOT_UNIQUE))[0].summary
         shown = ", ".join(repr(k) for k in keys)
         raise PlanCompileError(
-            code=str(reasons.plan.RELATIONSHIP_PARENT_NOT_UNIQUE),
+            code=reasons.plan.RELATIONSHIP_PARENT_NOT_UNIQUE,
             path=f"tables.{parent['table']}.generate_columns.{named[0]}",
             message=(
                 f"{summary} At table {parent['table']!r}, key columns {shown}. "
