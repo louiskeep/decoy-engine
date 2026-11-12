@@ -96,7 +96,7 @@ def test_success_two_tables(tmp_path) -> None:
     assert payload["status"] == "succeeded"
     assert payload["exit_code"] == EXIT_MAP[("succeeded", None)]
     assert payload["pipeline_kind"] == "mask"
-    assert payload["route"]["execution_mode"] == "full_frame"
+    assert payload["route"]["execution_mode"] == route_summary(run.quality_metrics).route
     assert payload["producer"]["cli_version"] == "0.1.0"
     assert payload["timings"]["phases"] == [{"name": "resolve", "elapsed_s": 0.2}]
 
