@@ -241,3 +241,7 @@ modules:
     note: Unique generate columns keep a seen set with 1,000 attempts per faker row, each retry
       on its own derived seed, and sample categorical, reference and junction-pair domains
       without replacement. Method only for the proxy; the engine does not call fake.unique.
+
+  - path: src/decoy_engine/publication/_descriptor.py
+    pattern: Git content addressing plus RFC 8785 canonical JSON
+    source: Git object model (content-addressed names); RFC 8785 JSON Canonicalization Scheme (IETF)
