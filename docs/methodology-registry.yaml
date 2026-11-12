@@ -249,3 +249,7 @@ modules:
   - path: src/decoy_engine/publication/_publish.py
     pattern: Delta Lake idempotent transaction identifiers
     source: Delta Lake transaction protocol (transaction identifiers, Apache-2.0); PostgreSQL SyncDataDirectory (fsync found state before trusting it)
+
+  - path: src/decoy_engine/publication/_sink_state.py
+    pattern: a table-driven finite-state machine
+    source: UML state machines and the W3C SCXML state-transition table; java.util.concurrent.FutureTask (state changed under a guard, the task run outside it)

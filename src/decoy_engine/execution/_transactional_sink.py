@@ -25,12 +25,17 @@ Staging always lives in target.parent so staging and target share a
 filesystem, ensuring the rename cannot fail with EXDEV.
 
 See GNU Coreutils mv(1), POSIX.1-2008 rename(2), and Python os.replace docs.
+
+The sink is two parts: `StagedParquetWriter`, the write half that only stages Parquet files, and
+the sink itself, which owns the stage and moves every call through the publication sink state
+table (`decoy_engine.publication._sink_state`).
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+import uuid
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -51,6 +56,7 @@ from decoy_engine.fileaccess import (
 )
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.progress import get_active_channel
+from decoy_engine.publication._sink_state import Act, Exit, SinkState, SinkStateMachine
 from decoy_engine.reasons import CleanupState, Operation, PublicationState
 
 
@@ -153,62 +159,39 @@ class _CallableSinkAdapter:
         pass
 
 
-class ParquetTransactionalSink:
-    """File-based transactional sink using a single atomic POSIX directory rename.
+def validate_table_name(table: str) -> None:
+    """A table name is one path component: no separator, no ``..``."""
+    if (
+        os.sep in table
+        or (os.altsep is not None and os.altsep in table)
+        or ".." in table
+        or table != Path(table).name
+    ):
+        raise ValueError(
+            f"table name {table!r} is not a single path component; "
+            "must not contain path separators or '..'"
+        )
 
-    On write(), each masked table is serialized as Parquet to a private staging
-    directory (a sibling of the target directory, sharing a filesystem). On
-    commit(), the staging directory is atomically published as the target via a
-    single rename (POSIX rename within one filesystem): either the
-    entire set of tables lands at once or nothing is published. On abort(), the
-    staging directory is removed so nothing partial reaches the target.
 
-    Commit-time failure: if the rename raises (disk full, permissions denied,
-    or the target already exists and is non-empty), nothing is published and the
-    staging directory is intact for a subsequent abort().
+class StagedParquetWriter:
+    """The write half of the reference sink: stages masked tables as Parquet files in an output
+    stage and never publishes, locks or names a descriptor.
 
-    If the target directory already exists and is non-empty when commit() is
-    called, the rename raises OSError and commit fails closed.
-
-    The staging directory name starts with ``_decoy_stage_`` so callers can
-    identify and clean up orphaned directories if needed.
-
-    The stage is a policy-issued output transaction: the sink holds the output capability it
-    was built with and uses it for every later write, commit and abort, so a sink built under
-    one policy is judged by that policy however it is driven afterwards.
-
-    Args:
-        target_dir: Directory where committed Parquet files are published via atomic rename
-            from the staging directory, or an `OutputDir` the policy already issued for it.
-        file_access: The policy that decides where output may go (default: ambient CLI).
-        field_key: The config position named in a denial.
+    The stage comes from ``stage()``, called once per write, so the owner decides when it is
+    begun and who publishes it. Each table is ``<table>.parquet`` directly in the stage; writing
+    a table again replaces its staged file. Failures are recorded on ``publication_evidence``
+    at the boundary that failed (write or close), and the stored size of every closed file is
+    recorded and reported on the progress channel (``stored_output``).
     """
 
-    # Capability marker for bounded generation: write_batches appends one row group per batch and
-    # never materializes the stream. The callable adapter lacks it, so it cannot take a streamed run.
-    bounded_write_batches = True
-
     def __init__(
-        self,
-        target_dir: Path | str | OutputDir,
-        *,
-        file_access: FileAccess | None = None,
-        field_key: str = "targets.path",
+        self, stage: Callable[[], OutputTxn], evidence: PublicationEvidence | None = None
     ) -> None:
-        if isinstance(target_dir, (str, Path)):
-            policy = fileaccess.capture(file_access)
-            self._out: OutputDir = policy.output_dir(
-                FileRequest(FileRole.TARGET_OUTPUT, "write", str(target_dir), field_key)
-            )
-            self._target = Path(target_dir)
-        else:
-            self._out = target_dir
-            self._target = Path(target_dir.locator)
-        self._txn: OutputTxn | None = None
-        self.publication_evidence = PublicationEvidence()
+        self._stage = stage
+        self.publication_evidence = evidence if evidence is not None else PublicationEvidence()
 
     def write(self, table: str, data: pa.Table) -> None:
-        """Stage one masked table as Parquet in the private staging directory.
+        """Stage one masked table as Parquet.
 
         Args:
             table: Table name used as the Parquet file stem. Must be a single
@@ -222,10 +205,10 @@ class ParquetTransactionalSink:
                 file cannot be written.
             pa.lib.ArrowInvalid: If ``data`` cannot be serialized as Parquet.
         """
-        self._validate_table_name(table)
+        validate_table_name(table)
         txn = self._stage()
         component = f"{table}.parquet"
-        self._replace_staged(txn, component)
+        _replace_staged(txn, component)
         self.publication_evidence.last_operation = Operation.WRITE
         try:
             arrow_adapter.write_table(data, txn, component)
@@ -242,11 +225,9 @@ class ParquetTransactionalSink:
 
         Used by the out-of-core runner (SC1) so the whole table is never
         resident: each batch is written to the staged Parquet file as it
-        arrives. This staged file lands in the same staging directory, under
-        the same table-name validation and same-filesystem invariant, as
-        write(); the commit()/abort() atomic-rename contract is unchanged.
-        Follows the pyarrow.parquet.ParquetWriter incremental-write pattern
-        (Apache Arrow docs: "Reading and Writing Single Files").
+        arrives, in the same stage and under the same table-name validation
+        as write(). Follows the pyarrow.parquet.ParquetWriter incremental-write
+        pattern (Apache Arrow docs: "Reading and Writing Single Files").
 
         Args:
             table: Table name used as the Parquet file stem. Same validation
@@ -269,14 +250,14 @@ class ParquetTransactionalSink:
         If the batch iterator raises partway through, the in-flight exception
         is preserved (a close() failure while unwinding is suppressed so it
         cannot mask it) and the partially staged file is never published: it
-        exists only under the staging directory, which abort() removes
-        wholesale. On the success path a close() failure (for example a footer
-        flush hitting ENOSPC) is a real write error and does surface.
+        exists only in the stage, which the owner's abort removes wholesale.
+        On the success path a close() failure (for example a footer flush
+        hitting ENOSPC) is a real write error and does surface.
         """
-        self._validate_table_name(table)
+        validate_table_name(table)
         txn = self._stage()
         component = f"{table}.parquet"
-        self._replace_staged(txn, component)
+        _replace_staged(txn, component)
         evidence = self.publication_evidence
         evidence.last_operation = Operation.WRITE
         writer = arrow_adapter.parquet_writer(txn, component, schema)
@@ -319,6 +300,116 @@ class ParquetTransactionalSink:
         if channel.active:
             channel.publish_stored(table, size)
 
+
+def _replace_staged(txn: OutputTxn, component: str) -> None:
+    """Writing a table again replaces its staged file, as the path write always did."""
+    try:
+        txn.remove(component)
+    except FileNotFoundError:
+        pass
+
+
+class ParquetTransactionalSink:
+    """File-based transactional sink using a single atomic POSIX directory rename.
+
+    On write(), each masked table is serialized as Parquet to a private staging
+    directory (a sibling of the target directory, sharing a filesystem) by the
+    sink's write half, `StagedParquetWriter`. On commit(), the staging directory
+    is atomically published as the target via a single rename (POSIX rename within
+    one filesystem): either the entire set of tables lands at once or nothing is
+    published. On abort(), the staging directory is removed so nothing partial
+    reaches the target.
+
+    Commit-time failure: if the rename raises (disk full, permissions denied,
+    or the target already exists and is non-empty), nothing is published and the
+    staging directory is intact for a subsequent abort().
+
+    If the target directory already exists and is non-empty when commit() is
+    called, the rename raises OSError and commit fails closed.
+
+    The staging directory name starts with ``_decoy_stage_`` so callers can
+    identify and clean up orphaned directories if needed.
+
+    The stage is a policy-issued output transaction: the sink holds the output capability it
+    was built with and uses it for every later write, commit and abort, so a sink built under
+    one policy is judged by that policy however it is driven afterwards.
+
+    Every call moves through the sink state table (`publication/_sink_state.py`, F22 plan 5.6)
+    under one lock, with the I/O outside it: after a commit the sink is sealed (a second commit
+    returns the same result, a write is refused `publication_attempt_sealed`); a call that
+    arrives while another is in flight is refused busy; an abort that arrives in flight is
+    applied when that call ends; after a failure or an abort every call but abort is refused.
+
+    Args:
+        target_dir: Directory where committed Parquet files are published via atomic rename
+            from the staging directory, or an `OutputDir` the policy already issued for it.
+        file_access: The policy that decides where output may go (default: ambient CLI).
+        field_key: The config position named in a denial.
+    """
+
+    # Capability marker for bounded generation: write_batches appends one row group per batch and
+    # never materializes the stream. The callable adapter lacks it, so it cannot take a streamed run.
+    bounded_write_batches = True
+
+    def __init__(
+        self,
+        target_dir: Path | str | OutputDir,
+        *,
+        file_access: FileAccess | None = None,
+        field_key: str = "targets.path",
+    ) -> None:
+        if isinstance(target_dir, (str, Path)):
+            policy = fileaccess.capture(file_access)
+            self._out: OutputDir = policy.output_dir(
+                FileRequest(FileRole.TARGET_OUTPUT, "write", str(target_dir), field_key)
+            )
+            self._target = Path(target_dir)
+        else:
+            self._out = target_dir
+            self._target = Path(target_dir.locator)
+        self._txn: OutputTxn | None = None
+        self.publication_evidence = PublicationEvidence()
+        self._writer = StagedParquetWriter(self._stage, self.publication_evidence)
+        # No caller-chosen operation yet: each sink is its own attempt.
+        self._machine = SinkStateMachine(uuid.uuid4().hex)
+
+    @property
+    def state(self) -> SinkState:
+        """Where this attempt is in the sink state table."""
+        return self._machine.state
+
+    def write(self, table: str, data: pa.Table) -> None:
+        """Stage one masked table as Parquet (`StagedParquetWriter.write`).
+
+        Raises:
+            ValueError: If ``table`` is not a single path component (the state is unchanged).
+            PublicationRefused: If the sink is busy, sealed, failed or aborted.
+            OSError, pa.lib.ArrowInvalid: As `StagedParquetWriter.write`; the attempt fails.
+        """
+        validate_table_name(table)
+        self._writing(lambda: self._writer.write(table, data))
+
+    def write_batches(
+        self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
+    ) -> None:
+        """Stream-append one masked table (`StagedParquetWriter.write_batches`); the same
+        state rules as write(), and the same atomic commit/abort contract."""
+        validate_table_name(table)
+        self._writing(lambda: self._writer.write_batches(table, batches, schema=schema))
+
+    def _writing(self, write: Callable[[], None]) -> None:
+        self._machine.arrive("write")
+        try:
+            write()
+        except BaseException:
+            self._leave(Exit.ERROR)
+            raise
+        self._leave(Exit.OK)
+
+    def _leave(self, exit_: Exit) -> None:
+        if self._machine.leave(exit_):  # a pending abort applied on this exit
+            self._cleanup_staging()
+
     @property
     def spill_parent(self) -> Path:
         """The directory a streamed run's schema hold-back may spill into: the target's
@@ -337,20 +428,8 @@ class ParquetTransactionalSink:
         artifact this same run just published (DE-08 re-gate HIGH #1). A pure
         function of `table` and `self._target`; valid before or after commit.
         """
-        self._validate_table_name(table)
+        validate_table_name(table)
         return self._target / f"{table}.parquet"
-
-    def _validate_table_name(self, table: str) -> None:
-        if (
-            os.sep in table
-            or (os.altsep is not None and os.altsep in table)
-            or ".." in table
-            or table != Path(table).name
-        ):
-            raise ValueError(
-                f"table name {table!r} is not a single path component; "
-                "must not contain path separators or '..'"
-            )
 
     def _stage(self) -> OutputTxn:
         if self._txn is None:
@@ -359,14 +438,6 @@ class ParquetTransactionalSink:
             # Staged files exist and nothing has cleaned them yet.
             self.publication_evidence.cleanup = CleanupState.UNKNOWN
         return self._txn
-
-    @staticmethod
-    def _replace_staged(txn: OutputTxn, component: str) -> None:
-        """Writing a table again replaces its staged file, as the path write always did."""
-        try:
-            txn.remove(component)
-        except FileNotFoundError:
-            pass
 
     def commit(self) -> None:
         """Atomically publish the staging directory as the target.
@@ -381,11 +452,16 @@ class ParquetTransactionalSink:
         raises OSError and nothing is published; the staging directory remains
         intact for a subsequent abort().
 
+        A sealed sink returns at once, with no I/O.
+
         Raises:
             OSError: If the rename fails (target non-empty, disk full, or
                 permission denied). Nothing is published on failure; staging
                 is intact for abort().
+            PublicationRefused: If the sink is busy, failed or aborted.
         """
+        if self._machine.arrive("commit").act is Act.RESULT:
+            return
         evidence = self.publication_evidence
         evidence.last_operation = Operation.COMMIT
         try:
@@ -393,25 +469,30 @@ class ParquetTransactionalSink:
                 # Nothing was written; create an empty target directory directly.
                 self._out.ensure_dir()
                 evidence.state = PublicationState.PUBLISHED
-                return
-            self._txn.publish()
+            else:
+                self._txn.publish()
         except BaseException as exc:
             # The rename is atomic: a failure leaves nothing published and staging intact.
             evidence.state = PublicationState.NOT_PUBLISHED
             evidence.cleanup = CleanupState.NOT_NEEDED
             capture_publication_failure(exc, self, Operation.COMMIT)
+            self._leave(Exit.ERROR)
             raise
-        # Rename succeeded: staging is now the target directory; clear state.
-        self._txn = None
-        evidence.state = PublicationState.PUBLISHED
-        evidence.cleanup = CleanupState.NOT_NEEDED
+        if self._txn is not None:
+            # Rename succeeded: staging is now the target directory; clear state.
+            self._txn = None
+            evidence.state = PublicationState.PUBLISHED
+            evidence.cleanup = CleanupState.NOT_NEEDED
+        self._leave(Exit.PUBLISHED)
 
     def abort(self) -> None:
         """Remove the staging directory so nothing partial reaches the target.
 
-        Best-effort: must not raise even if cleanup fails.
+        Best-effort: must not raise even if cleanup fails. While a write or commit is in
+        flight the abort is recorded and applied when that call ends.
         """
-        self._cleanup_staging()
+        if self._machine.arrive("abort").act is Act.ABORT:
+            self._cleanup_staging()
 
     def _cleanup_staging(self) -> None:
         evidence = self.publication_evidence

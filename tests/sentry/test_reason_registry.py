@@ -104,6 +104,10 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("publication/_types.py", "raise_for_outcome"): (
         "re-raises a CommitReceipt's code; the receipt accepts only a registered `decoy` code"
     ),
+    ("publication/_sink_state.py", "SinkStateMachine._refuse"): (
+        "raises the code of a literal sink-state cell (a registry symbol) or the one the attempt "
+        "ended with; its CommitReceipt accepts only a registered `decoy` code"
+    ),
     ("validation_result.py", "ValidationResult.add_error"): _CTOR,
     ("validation_result.py", "ValidationResult.add_warning"): _CTOR,
     ("progress.py", "ProgressChannel.route"): _CTOR,
