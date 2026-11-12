@@ -22,8 +22,16 @@ COLUMNS = ["email", "code", "num", "same", "const"]
 def _pair(n: int) -> tuple[pa.Table, pa.Table]:
     ks = range(n)
     src_email = [f"user{k}@corp.com" for k in ks]
+    # A scrambled pattern, so batch rates differ and averaging them cannot match the sum.
+    mix = [(k * 2654435761 >> 5) % 1009 for k in ks]
     out_email = [
-        None if k % 11 == 5 else src_email[k] if k % 3 == 0 else f"u{k}@m.org" if k % 2 else f"x{k}"
+        None
+        if mix[k] % 11 == 5
+        else src_email[k]
+        if mix[k] % 3 == 0
+        else f"u{k}@m.org"
+        if mix[k] % 2
+        else f"x{k}"
         for k in ks
     ]
     src_code = [f"c{k % 50}" for k in ks]
