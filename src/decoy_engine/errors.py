@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Final
 
 from decoy_engine import reasons
-from decoy_engine._error_base import DecoyError
+from decoy_engine._error_base import ConnectorErrorKind, DecoyError
 
 if TYPE_CHECKING:
     from decoy_engine.execution._row_error_summary import RowErrorSummary
@@ -116,7 +116,11 @@ class ValidationError(DecoyError):
 
 
 class ConnectorError(DecoyError):
-    """Base class for connector-related errors."""
+    """Base class for connector errors; ``kind`` is the failure class a caller may branch on."""
+
+    def __init__(self, *args: object, kind: ConnectorErrorKind = "unexpected") -> None:
+        super().__init__(*args)
+        self.kind = kind
 
 
 class ConnectorAuthError(ConnectorError):
@@ -571,6 +575,7 @@ __all__ = [
     "ConfigRuleError",
     "ConnectorAuthError",
     "ConnectorError",
+    "ConnectorErrorKind",
     "DecoyError",
     "EmptyParentPoolError",
     "FKPreservationError",

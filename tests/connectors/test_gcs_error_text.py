@@ -54,6 +54,8 @@ MATRIX: dict[str, tuple[Callable[[], BaseException], type]] = {
         TransientError,
     ),
     "BadRequest": (lambda: gax_exc.BadRequest(MSG), PermanentError),
+    "PreconditionFailed": (lambda: gax_exc.PreconditionFailed(MSG), PermanentError),
+    "Conflict": (lambda: gax_exc.Conflict(MSG), PermanentError),
     "auth.TransportError": (lambda: gauth.TransportError(MSG), TransientError),
     "auth.TimeoutError": (lambda: gauth.TimeoutError(MSG), TransientError),
     "auth.DefaultCredentialsError": (lambda: gauth.DefaultCredentialsError(MSG), PermanentError),
@@ -106,6 +108,7 @@ def test_raised_connector_errors_are_value_free(
     err = info.value
     _value_free(str(err), repr(err))
     assert type(err) is expected, f"{case} at {point}: got {type(err).__name__}"
+    assert err.__cause__ is None and err.__context__ is None, f"{case} at {point}: chained"
 
 
 READER_POINTS: dict[str, tuple[str, Callable[[], Any], Callable[[], bytes]]] = {
@@ -390,3 +393,60 @@ def test_google_auth_errors_get_their_own_fixed_text(case: str) -> None:
         else "GCS credentials unavailable or invalid"
     )
     assert str(err) == want
+
+
+KIND = {
+    "NotFound": "not_found",
+    "Forbidden": "access_denied",
+    "PermissionDenied": "access_denied",
+    "Unauthenticated": "access_denied",
+    "ServiceUnavailable": "transient",
+    "TooManyRequests": "transient",
+    "DeadlineExceeded": "transient",
+    "GatewayTimeout": "transient",
+    "InternalServerError": "transient",
+    "RetryError": "transient",
+    "requests.Timeout": "transient",
+    "requests.ConnectionError": "transient",
+    "BadRequest": "rejected",
+    "PreconditionFailed": "precondition_failed",
+    "Conflict": "conflict",
+    "auth.TransportError": "transient",
+    "auth.TimeoutError": "transient",
+    "auth.DefaultCredentialsError": "credentials",
+    "auth.RefreshError": "credentials",
+    "auth.MalformedError": "credentials",
+    "auth.GoogleAuthError": "credentials",
+    "RuntimeError": "unexpected",
+}
+
+
+def test_every_matrix_case_has_an_expected_kind() -> None:
+    assert set(KIND) == set(MATRIX)
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_gcs_error_kind_is_set_on_every_arm(case: str) -> None:
+    """AT-C42, GCS half: 412 and 409 are their own kinds, never ``unexpected``."""
+    from typing import get_args
+
+    from decoy_engine.errors import ConnectorErrorKind
+
+    make, expected = MATRIX[case]
+    err = _clients().gcs_error(make())
+    assert err.kind == KIND[case]  # type: ignore[attr-defined]
+    assert KIND[case] in get_args(ConnectorErrorKind)
+    assert type(err) is (TransientError if KIND[case] == "transient" else PermanentError)
+    assert type(err) is expected
+
+
+def test_a_classified_gcs_error_is_raised_by_the_guard_unchained() -> None:
+    inner = PermanentError("fixed")
+
+    def call() -> None:
+        raise inner
+
+    with pytest.raises(PermanentError) as info:
+        _clients()._guard(call)
+    assert info.value is inner
+    assert inner.__cause__ is None and inner.__context__ is None

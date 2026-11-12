@@ -191,3 +191,34 @@ class _TranslatingFile:
 
 def gcs_open(blob: Any, mode: str) -> _TranslatingFile:
     return _TranslatingFile(_guard(blob.open, mode, timeout=GCS_TIMEOUT, retry=gcs_retry()))
+
+
+def s3_client(
+    *,
+    region: str | None,
+    endpoint_url: str | None,
+    access_key_id: str | None,
+    secret_access_key: str | None,
+) -> Any:
+    """STUB (red-first): legacy factory."""
+    import boto3
+    from botocore.config import Config as BotoConfig
+
+    kwargs: dict[str, Any] = {
+        "region_name": region,
+        "endpoint_url": endpoint_url,
+        "config": BotoConfig(
+            connect_timeout=5, read_timeout=60, retries={"max_attempts": 1, "mode": "standard"}
+        ),
+    }
+    return boto3.client("s3", **kwargs)
+
+
+def s3_error(exc: BaseException) -> ConnectorError:
+    """STUB (red-first)."""
+    return PermanentError("S3 stub")
+
+
+def s3_call(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """STUB (red-first)."""
+    return call(*args, **kwargs)
