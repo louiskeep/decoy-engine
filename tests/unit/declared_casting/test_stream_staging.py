@@ -200,3 +200,12 @@ def test_a_table_name_never_places_the_staged_copy(tmp_path: Path, hostile: str)
     assert seen["root"] in seen["staged"].parents, seen
     assert seen["outside"] == sorted([str(tmp_path / "src.parquet"), str(seen["staged"])]), seen
     assert not list(caller.parent.glob("x.typed.parquet")) and not list(elsewhere.iterdir())
+
+
+def test_characterization_staged_file_name_and_mode(tmp_path: Path) -> None:
+    """Characterization: the declared-cast staging keeps its file stem and 0600 mode."""
+    from decoy_engine.declared_casting._stream import run_staged
+
+    seen: dict[str, Any] = {}
+    run_staged(_fn(seen), _call(tmp_path, seen), 1000)
+    assert seen["path"].name == "s0000.typed.parquet"
