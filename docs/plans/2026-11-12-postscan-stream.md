@@ -120,7 +120,7 @@ Rules:
 - `children=()` gives the parent facts only (PS-2a checks each primary key once).
 - A type mismatch (`_comparable` differs) returns `status="key_type_mismatch"`, zero counts and
   `children=()`, and opens no connection. Pre-scan maps it to `SCAN_KEY_TYPE_MISMATCH` as today
-  (`:389-395`); post-scan to `post_scan.key_type_mismatch`. From PS-2b, `_comparable` compares
+  (`:389-395`); post-scan to `post_scan.key_type_mismatch`. From PS-2b0, `_comparable` compares
   type families (4.2.1), so mixed integer widths and string encodings are measured, not refused.
 - `batches()` is called once per load; a self-reference passes two `KeyBatches` over one table and
   reads it twice. Stated, not optimized.
@@ -214,7 +214,7 @@ multi-parent child tuple (one union check). Column-key cycles are refused while 
 (`relationships/_graph.py:302-308`); cross-table cycles that remain routable take full-frame and
 are checked normally (`execution/_pipeline_routing.py:404`, `:427`).
 
-#### 4.2.1 Comparable key types (PS-2b)
+#### 4.2.1 Comparable key types (PS-2b0)
 
 Today `_comparable` (`profiling/_scan_integrity.py:286-296`) compares exact Arrow type text and
 folds only `large_string` to `string` and `large_binary` to `binary`. An `int32` child against an
@@ -222,7 +222,10 @@ folds only `large_string` to `string` and `large_binary` to `binary`. An `int32`
 pre-scan and post-scan measure through the same `key_facts`, so one change covers both: the Arrow
 side decides comparability (`_comparable`), and the DuckDB side compares the values (`_load` at
 `:309-316`, the join in `_child_facts` at `:419-427`). `_keys.py` adds no comparison of its own;
-its multi-parent union (`_union`) feeds every parent through one `parent` table.
+its multi-parent union (`_union`) feeds every parent through one `parent` table. Where `_keys.py`
+needs a comparability answer without counting (the `not_run` baseline, 4.2.2), it calls the one
+public predicate `profiling.keys_comparable(parent: KeyBatches, children: Sequence[KeyBatches])
+-> bool`, built on `_comparable`; it reads schemas only and opens no connection.
 
 `_comparable` returns one token per key column, by family:
 
@@ -241,15 +244,18 @@ Exactness, checked against DuckDB 1.5.4 with pyarrow 24:
   exactly: `2**63 + 5` stored as `uint64` never matches `-(2**63) + 5` stored as `int64`.
 - The one unsafe step is `_load` today: it creates each table from the first schema it sees, and
   an `INSERT` of a wider batch then fails on overflow (`ConversionException`) or narrows. The
-  multi-parent union hits this when parents differ in width. So `key_facts` computes one DuckDB
-  type per label from every schema passed to the call and creates `parent` and `child` with it:
+  multi-parent union hits this when parents differ in width: its declared schema is
+  `parts[0].schema` (the first parent's, not the widened one), so an `int32` first parent fixes
+  an `INTEGER` column and a later `int64` parent's value above that range fails. So `key_facts`
+  computes one DuckDB type per label from every schema passed to the call and creates `parent`
+  and `child` with it:
   the declared type when all are identical (today's behavior, unchanged); `VARCHAR` for the string
   family; `BIGINT` for the integer family when no member is `uint64`; `HUGEINT` when one is. Every
   insert then widens without loss.
 
 Left out, staying `key_type_mismatch`: floats (equality on floats is not a safe key rule),
-decimals (scale differs), dates and timestamps (unit
-and time zone change the value), dictionaries of non-string values, and integer against string.
+decimals (scale differs), dates and timestamps (unit and time zone change the value),
+dictionaries of non-string values, and integer against string.
 
 Pre-scan effect: a relationship whose ends differ only inside a family is now `checked` with exact
 counts, instead of `key_type_mismatch` with the `SCAN_KEY_TYPE_MISMATCH` warning. Integer against
@@ -269,26 +275,29 @@ A zero baseline is a measured zero only when the source side was counted. Each `
 | `error` | an uncoded failure while counting the source; `baseline_error_class` holds the class name | `null` |
 | `not_run` | not counted: the output side ended in `error` or `key_column_missing`, or is a type mismatch over comparable source types | `null` |
 
-`_keys.py` always takes the source key types, even when the output side is a type mismatch; that
-reads schemas only and opens no connection. Introduced codes compare output with the measured
-counts, or with zero when `baseline` is not `measured`. `post_scan_verdict` (4.8) then decides
+`_keys.py` always takes the source key types through `profiling.keys_comparable` (4.2.1), even
+when the output side is a type mismatch; that reads schemas only and opens no connection.
+Introduced codes compare output with the measured counts, or with zero when `baseline` is not
+`measured`. `post_scan_verdict` (4.8) then decides
 per key by code and `baseline`, never by `status == "checked"`:
 
 | Output `status` | `baseline` | Key `codes` | Verdict |
 |---|---|---|---|
 | `error` | `not_run` | `check_error` | block |
 | `key_column_missing` | `not_run` | `key_column_missing` | block |
-| `key_type_mismatch` | `key_type_mismatch` | `key_type_mismatch` | warn: the run did not break it |
+| `key_type_mismatch` | `key_type_mismatch` | `key_type_mismatch` | warn: nothing is measurable on either side and the run did not break it |
 | `key_type_mismatch` | `not_run`, `no_source`, `key_column_missing`, `error` | `key_type_mismatch` | block |
 | `checked` | `measured`, `no_source` | each introduced code (output above baseline) | block |
 | `checked` | `key_column_missing` | each introduced code (output above zero) | block |
 | `checked` | `error` | `check_error`, plus each introduced code (output above zero) | block on an introduced code; `check_error` alone warns |
-| `checked` | `key_type_mismatch` | `key_type_mismatch` only; output counts reported | warn |
+| `checked` | `key_type_mismatch` | `key_type_mismatch`, plus each introduced code (output above zero) | block on an introduced code; `key_type_mismatch` alone warns |
 
-So output violations with an unmeasured baseline block only when the output count is above zero
-and the baseline is unmeasured for a reason other than a type mismatch that was already in the
-source. A warning code stays on its key and is listed in `verdict.warnings`; it never blocks. No
-reason code is added: the codes of the 4.2 table express every row.
+So when the output is measured, an output count above zero blocks on its introduced code
+whatever made the baseline unmeasured; a source-side `key_type_mismatch` or `check_error` then
+rides as a warning. Warn-and-do-not-block holds only where nothing can be measured on either
+side (the mismatch over mismatch row). A multi-parent child whose source parents differ in type
+takes the same rows. A warning code stays on its key and is listed in `verdict.warnings`;
+it never blocks. No reason code is added: the codes of the 4.2 table express every row.
 
 ### 4.3 Baselines and identity (F6, F16, F20)
 
@@ -482,7 +491,8 @@ moves `_asks_for_models` and the `ner_findings` test from `_route_guard.py` into
 warnings}`. Fields are additive under `post-scan-integrity/v2`. Every reason code in the report
 (`keys[].codes`, `verdict.codes`, `verdict.warnings`) crosses the wire as a mapping
 `{"namespace": ..., "code": ...}`, the form `_reason_wire` emits (`phase.py:470-476`), never as a
-hand-built dotted string.
+hand-built dotted string. One helper in `_keys.py` builds that mapping from a `ReasonCode`, and
+`_blocked.py` imports it; there is no third helper.
 
 `PostScanBlockedError(DecoyError)` is SCAN-ML M4's class (4.5 there): the value-free report in a field, the registry's fixed summary plus `_blocked.py`'s safe location as `str(error)`, raised with
 an empty chain. Whichever of M4 and PS-2b builds first defines it in
@@ -504,8 +514,9 @@ a key status also adds no code; the key code stands.
 `detector_id` or the fixed id `policy_validation`, and formats table, column and detector id. No
 caller or exception builds that message independently.
 
-One code goes on the record, by this order (first present wins); `verdict.codes` lists every
-blocking code in the same order, and `verdict.warnings` every warning-only key code:
+One code goes on the record, by this order (the first blocking code present wins, so a
+warning-only `check_error` or `key_type_mismatch` never becomes the reason of a block);
+`verdict.codes` lists every blocking code in the same order, and `verdict.warnings` every warning-only key code:
 
 1. `post_scan.check_error` (also an `error` finding or `pass_failed_with`)
 2. `post_scan.key_column_missing`
@@ -605,6 +616,7 @@ finding.
 | Declared key column missing from output | block | `post_scan.key_column_missing` (new, same) |
 | Output key types not comparable, source side comparable | block | `post_scan.key_type_mismatch` (new, same) |
 | Source and output key types both not comparable | warn, no block (4.2.2) | `post_scan.key_type_mismatch` (new, same) |
+| Source key types not comparable, output measured | block only on an output count above zero (4.2.2) | the introduced code, with `post_scan.key_type_mismatch` as a warning |
 | Uncoded read, DuckDB or spill error measuring the output | `error` result, block, class name only | `post_scan.check_error` (reused) |
 | Uncoded error measuring the source | baseline `error`; block only on an output count above zero (4.2.2) | `post_scan.check_error` (reused) as a warning, plus the introduced code |
 | Coded engine error inside a key check (`passes_through`) | propagates unchanged | the error's own code |
@@ -630,8 +642,8 @@ release stamping owns the version. Code-adding slices: PS-2a, PS-2b, PS-3, PS-8,
 |---|---|---|---|
 | No commit without the gate | `observed_commit` | AST sentry over `execution/` and `generation/`: every sink `.commit()` sits inside `observed_commit`; `OutputPublish.commit` is the one wrapper; `atomic_commit` only in `_isolated_run.py` `_commit` and `_run_in_process` (named, until F22 c2 deletes it); aliases and `getattr` resolved | call `sink.commit()` directly in `_sequential.py`; add an `atomic_commit` call elsewhere |
 | Gate ran on every route | gate binding plus post-condition | route-coverage sentry (AT-17), keyed on the imported `ROUTES` plus `stream` and `isolated` | drop the `mixed` entry |
-| One key core | `profiling.key_facts` | import sentry: no module under `verification/` or `execution/pipeline/_post_scan.py` imports `duckdb` or `connect_duckdb` | add `import duckdb` to `_keys.py` |
-| One pass-through rule | `profiling.passes_through` | AST sentry: no `except` clause under `verification/postmask/` or in `execution/pipeline/_post_scan.py` names a `FileAccess*`, `PipelineValidationError`, `ScanSourceError` or reason-adapter family class, and no module there keeps its own tuple of them | add `except FileAccessReadError: raise` to `_keys.py` |
+| One key core | `profiling.key_facts`, `profiling.keys_comparable` | import sentry: no module under `verification/` or `execution/pipeline/_post_scan.py` imports `duckdb` or `connect_duckdb`; AST sentry: no module there calls `_comparable` or compares (`==`, `!=`, `in`) a `.type`, `.types` or `.schema` value of a key | add `import duckdb` to `_keys.py`; compare `own.schema != parent.schema` in `_keys.py` |
+| One pass-through rule | `profiling.passes_through` | AST sentry over `verification/postmask/` and `execution/pipeline/_post_scan.py`: every broad handler (`except Exception`, `except BaseException`, bare `except`) opens with `if passes_through(<bound name>): raise`, and no handler there catches `DecoyError` or a subclass | delete that line from the source-side handler in `_keys.py` |
 | One model predicate | `config._post_scan.post_scan_model_setting` | AST sentry: no other module reads `ner_findings` or compares `detectors` with `"regex"` | inline the test in `_route_guard.py` |
 | One applicability predicate | `config._post_scan.post_scan_gate_applies` | AST sentry: `PostScanGate.required` is assigned only from a `post_scan_gate_applies` call, and no other function under `src/decoy_engine/` both reads `relationships` and `post_scan.integrity` to decide whether the gate runs (ratchet baseline of zero, by module) | set `required` from a local `bool(config.relationships) or integrity` expression in `_post_scan.py` |
 | One route readability decision | `post_scan_output_readable` plus `post_scan_resident_reason` in `config._post_scan` | AST sentry inventories compiler, estimator and runtime sites and fails on a literal output/baseline decision | pass `True` in `_job_estimate.py` |
@@ -639,8 +651,8 @@ release stamping owns the version. Code-adding slices: PS-2a, PS-2b, PS-3, PS-8,
 | Value-free results | facts types hold ints, names and `ReasonRef` only | AT-14 canary | add a key value to a finding |
 | No whole-table read in the gate | `TableBatches` | AT-15 spies | read a staged file with `pq.read_table` |
 
-Each sentry is shown red on its seeded mutation in the slice record. The blocking-decision and
-pass-through sentries land in PS-2b.
+Each sentry is shown red on its seeded mutation in the slice record. The blocking-decision,
+pass-through and key-type comparison sentries land in PS-2b.
 
 ## 7. Acceptance tests
 
@@ -662,13 +674,14 @@ Red first: each slice's first commit adds its tests, red on the base.
 | AT-12 | PS-2a | An uncoded failure at `_before_fetch` (a `RuntimeError` carrying a canary): `check_keys` raises nothing; the key's `KeyResult` has status `error`, codes `check_error`, `error_class` the safe class name, no canary anywhere. A coded error raised in a read (`runtime.lazy_source_changed` from `check_opened`, `FileAccessReadError`, `ScanSourceError`) propagates as the same object; `_keys.py` decides through `profiling.passes_through` | wrap every exception into `check_error` |
 | AT-13 | PS-2b | Breaches of several kinds plus an NER fail stub: reason is the first code in 4.8 order; `verdict.codes` has all, in order | sort codes alphabetically |
 | AT-32 | PS-2b | Verdict cells: residual and policy `fail` block with one value-free table/column/detector-id message; warning/info do not; error or `pass_failed_with` gives `check_error`; FK fail/error derived from a key adds no duplicate code. The verdict reads codes, not status: a result with status `error` and `check_error` blocks; status `key_type_mismatch` blocks or warns by its `baseline` (4.2.2); a `checked` result with no codes passes | block on key codes only; skip results whose status is not `checked` |
-| AT-35 | PS-2b | Type families in `key_facts`, through `_keys.py` and pre-scan alike: `int32` child against `int64` parent; `uint64` parent holding `2**63 + 5` against an `int64` child holding `-(2**63) + 5` and `1` (one orphan, no wrap, no error); a dictionary string parent whose two batches carry different dictionaries against a `large_string` child; a multi-parent union of an `int32` and an `int64` parent with a child value above the `int32` range; all give exact counts equal to the same data in one common type. `int64` against `string`, `float64` against `int64`, and a dictionary of `int64` against `int64` stay `key_type_mismatch` | create the union table from the first schema; cast `uint64` to `int64` in Arrow |
-| AT-36 | PS-2b | Pre-scan: Parquet `int32` child and `int64` parent give `checked` with exact counts and no `SCAN_KEY_TYPE_MISMATCH` warning; `test_type_mismatch_gives_no_counts` (integer against CSV text) passes unchanged | keep exact type text in `_comparable` |
-| AT-37 | PS-2b | Baseline status, one cell per row of the 4.2.2 verdict table: source and output both `int64` against `string`: `key_type_mismatch` warns, no block; source comparable and output not: block; source `int64` against `string` with the output cast comparable and one output orphan: counts reported, warns, no block; source table missing the key column with one output orphan: block, with none: pass; an uncoded source-side error with output orphans: block on `foreign_key_orphans_introduced` with `check_error` in `verdict.warnings` and `baseline_error_class` set, with none: pass with the warning; a generated child: `no_source`, any orphan blocks; `source` counts are `null` unless `baseline` is `measured` or `no_source`; every code in the report is a `{namespace, code}` mapping | read an unmeasured baseline's zero as measured |
+| AT-35 | PS-2b0 | Type families in `key_facts` and pre-scan: `int32` child against `int64` parent; `uint64` parent holding `2**63 + 5` against an `int64` child holding `-(2**63) + 5` and `1` (one orphan, no wrap, no error); a dictionary string parent whose two batches carry different dictionaries against a `large_string` child; a union-shaped parent, as `_keys.py` builds it (declared schema of the `int32` parent first, then the batches of an `int64` parent, which also rides as a child), with a child value above the `int32` range, red under the old first-schema load; all give exact counts equal to the same data in one common type. `int64` against `string`, `float64` against `int64`, and a dictionary of `int64` against `int64` stay `key_type_mismatch` | create the union table from the first schema; cast `uint64` to `int64` in Arrow |
+| AT-36 | PS-2b0 | Pre-scan: Parquet `int32` child and `int64` parent give `checked` with exact counts and no `SCAN_KEY_TYPE_MISMATCH` warning; `test_type_mismatch_gives_no_counts` (integer against CSV text) passes unchanged | keep exact type text in `_comparable` |
+| AT-37 | PS-2b | Baseline status, one cell per row of the 4.2.2 verdict table: source and output both `int64` against `string`: `key_type_mismatch` warns, no block; source comparable and output not: block; source `int64` against `string` with the output cast comparable: one output orphan blocks on `foreign_key_orphans_introduced` with `key_type_mismatch` in `verdict.warnings`, none passes with the warning; the same for a child whose two source parents differ in type; the PS-2a test `test_a_source_side_type_mismatch_gives_a_zero_baseline` (`tests/unit/detection_verification/postscan/test_keys.py`) is kept, still asserts the block, and gains `baseline == "key_type_mismatch"`; a coded error (a changed lazy source, a `FileAccessReadError`) raised while counting the source propagates as the same object; source table missing the key column with one output orphan: block, with none: pass; an uncoded source-side error with output orphans: block on `foreign_key_orphans_introduced` with `check_error` in `verdict.warnings` and `baseline_error_class` set, with none: pass with the warning; a generated child: `no_source`, any orphan blocks; `source` counts are `null` unless `baseline` is `measured` or `no_source`; every code in the report is a `{namespace, code}` mapping | read an unmeasured baseline's zero as measured; drop the `passes_through` line from the source-side handler |
+| AT-38 | PS-2a or PS-2b0, whichever merges second | Through `check_keys`: a child against an `int32` parent and an `int64` parent (in that declared order) holding a value above the `int32` range gives exact counts and no `check_error` | create the union table from `parts[0].schema` |
 | AT-14 | PS-2a, PS-6, PS-8 | Canary `CANARY-7f3a` duplicated, orphaned, in a column hit and in a forced DuckDB error: absent from the report, `str(exc)`, `ReasonRecord`, logs and the `quality_metrics` dump | add a value to a finding |
 | AT-23 | PS-3 | Generated parent faker key without `unique` is refused before any read; `row_count <= 1`, `unique: true`, a sequence, and `unique_together` exactly equal to composite parent columns are accepted; pair supersets and subsets are refused | accept a non-unique faker key |
 | AT-23b | PS-3 | The five-file fixture census is complete (four parity fixture files plus `test_numeric_typing_readers.py`), taken with the lenient generate checks off: grep census and affected suites are red before migration, then green with same-Arrow-type unique keys and regenerated exact values; shipped examples and current docs have zero refused configs | omit `_f0_fixtures.py` from the census |
-| AT-21 | PS-4 | FK findings: introduced orphans `fail`, inherited only `warning`, none `info`, unchecked `error`; a composite fills the tuples; tag stays v2; the three named fixtures change as listed; `compute_post_scan_integrity` retains FK findings when `keys=None` | keep the 1% threshold |
+| AT-21 | PS-4 | FK findings: introduced orphans `fail`, inherited only `warning`, none `info`; a key that carries only warning codes (a mismatch over a mismatch baseline, a lone source-side `check_error`) derives `warning`; only a key that blocks without counts (`error`, `key_column_missing`, a blocking `key_type_mismatch`) derives `error`; a composite fills the tuples; tag stays v2; the three named fixtures change as listed; `compute_post_scan_integrity` retains FK findings when `keys=None` | keep the 1% threshold |
 | AT-19 | PS-5 | Column facts on tables of 10, 10,000 and 250,000 rows over batches of 7 and 100,000: identity counts, `bytes_identical`, distinct counts and every detector rate equal the resident pandas values exactly. Batch boundaries change no result: an integer column whose nulls sit only in the second batch, plus a string column, give the same facts in one batch and in uneven batches as the whole table | average per-batch rates instead of summing hits; compare per-batch pandas frames whose dtype depends on the batch |
 | AT-22 | PS-6 | `run_post_mask` adapter equals the old runner on every existing fixture, with one named carve-out: an integer column holding a null is read as whole numbers (4.4), and a dedicated test pins the finding that moves; a column near `min_rate` escalates exactly as on the resident path | read only the first batch |
 | AT-31 | PS-7 | Unit: `run_resident` stamps `keys` and `verdict`; a second call is a no-op; `before_commit` on a required, unrun gate with a sink lacking `staged_tables` raises `check_error`. Every error the gate raises (a blocking verdict, a key `check_error` result, a gate that cannot run, a part that fails with an uncoded error) has `__cause__` and `__context__` `None` and no canary in `str(exc)`; a coded error from a part propagates as the same object | reset `ran` in `before_commit`; raise inside `except` |
@@ -695,7 +708,8 @@ Sizes are hand-written lines, source plus tests. "Today": buildable from main, n
 |---|---|---|---|---|---|
 | PS-1 | 4.1 interfaces: `KeyBatches`, `KeyFacts`, `ChildKeyFacts`, `key_facts`; `_check` on it; projected `open_batches`; `_stream_input.py`; registry rename; AT-1 to AT-3 | 210 + 230 | R1 | none | building now |
 | PS-2a | `_keys.py`: declared keys, unioned multi-parent facts, baseline/output facts, per-key codes and report, `error` results, coded errors through the public `profiling.passes_through`; AT-4 to AT-12, AT-14 keys, AT-34 | 190 + 250 | R2 | PS-1 | after PS-1 |
-| PS-2b | `_blocked.py`: `post_scan_verdict` on codes and `baseline`, `verdict.warnings`, `severity_counts`, code order, exception, reason, blocking and pass-through sentries; `_comparable` families and the typed `_load` (4.2.1); `baseline` and its error class in `_keys.py` (4.2.2); AT-13, AT-32, AT-35 to AT-37 | 190 + 330 | R2 | PS-2a | after PS-2a |
+| PS-2b0 | `profiling/` only: `_comparable` families, the typed one-type-per-label `_load`, public `keys_comparable` (4.2.1); AT-35, AT-36, AT-38 if it merges second | 45 + 140 | R2 | PS-1 (on main) | today, beside PS-2a |
+| PS-2b | `_blocked.py`: `post_scan_verdict` on codes and `baseline`, `verdict.warnings`, `severity_counts`, code order, exception, reason, blocking and pass-through sentries, the key-core comparison sentry; `baseline` and its error class in `_keys.py` through `keys_comparable` (4.2.2); AT-13, AT-32, AT-37 | 165 + 300 | R2 | PS-2a, PS-2b0 | after both |
 | PS-3 | Generated-parent rule plus the four fixture migrations in the same slice, one plan code; AT-23, AT-23b | 70 + 340 | R2 | none | today |
 | PS-4 | FK finding from the keys facts (4.8), composite tuples, `run_post_mask(keys=)`, contract note, fixtures, pandas FK checker deleted; AT-21 | 90 + 200 (about 250 deleted) | R2 | PS-2b (`baseline`, 4.2.2) | after PS-2b |
 | PS-5 | `_column_facts.py`, `profiling/_scan_integrity.py` public `column_distinct`, `_scoring.py` `counting_scope`; AT-19 | 190 + 230 | R2 | PS-1 | after PS-1 |
@@ -707,11 +721,11 @@ Sizes are hand-written lines, source plus tests. "Today": buildable from main, n
 | PS-11 | Loader and post-transform tee to scratch Parquet; loader and transform-bearing runs leave resident routing; AT-30, AT-33 | 90 + 180 | R2 | PS-10 | after PS-10 |
 | PS-12 | Lift model routing, retire/add route code, lift stream refusal, gate unified slice; AT-15, AT-17, AT-18; release note names integrity withholding and the hold; relationships/reasons/CODEMAP docs | 120 + 280 | R2 | PS-6, PS-9, PS-11 | after those |
 
-Total about 4,830 lines (about 1,780 source). PS-1 and PS-3 can start today in parallel; PS-5 after PS-1, beside PS-2a.
+Total about 4,880 lines (about 1,800 source). PS-1 and PS-3 can start today in parallel; PS-5 after PS-1, beside PS-2a.
 
-PS-2b carries key type families (4.2.1) and the baseline status (4.2.2) because PS-7 and PS-8
-block on their result; folded in, PS-2b stays under about 200 source lines, so no PS-2c is cut.
-PS-7 already waits on PS-2b, and PS-8 on PS-7.
+PS-7 and PS-8 block on key type families (4.2.1) and the baseline status (4.2.2), so both land
+first. PS-2b0 touches only `profiling/` and needs only PS-1, so it starts beside PS-2a. PS-2b
+waits on PS-2a and PS-2b0; PS-4 and PS-7 wait on PS-2b, and PS-8 on PS-7. The chain is acyclic.
 
 PS-3 is not split: its estimated fixture/test diff is about 340 lines, below the about-400 threshold, and the rule plus every migration must merge together so main never goes red.
 
@@ -776,7 +790,7 @@ Changed modules (layer, size now, after; no ceiling or pin rises; only the DS-9 
 | `execution/pipeline/_post_scan.py` | execution | 0 | about 300 (gate plus loader tee) |
 | `plan/checks/_relationship_keys.py` | plan | 0 | about 80 |
 | `detection/detectors.py` | detection | existing | +2 names: re-exports `counting_scope` and `_confidence_bucket` through its existing `_scoring` import block, so the column suite imports the package's public module (PS-5 deviation, accepted) |
-| `profiling/_scan_integrity.py`, `profiling/__init__.py`, `profiling/scan_set.py` | profiling | 427, existing, 527 | about 490 (PS-5 `column_distinct`, PS-2b families and typed `_load`), export swap plus `passes_through`, about 527 (PS-2a makes `_is_coded` with `_PASS_THROUGH` the public `passes_through`) |
+| `profiling/_scan_integrity.py`, `profiling/__init__.py`, `profiling/scan_set.py` | profiling | 427, existing, 527 | about 490 (PS-5 `column_distinct`, PS-2b0 families, typed `_load` and `keys_comparable`), export swap plus `passes_through` and `keys_comparable`, about 527 (PS-2a makes `_is_coded` with `_PASS_THROUGH` the public `passes_through`) |
 | `profile/_readers.py`, `profile/_lazy_csv.py`; `detection/_scoring.py` | profile; detection | 568, 246; 192 | about 575, 250; 220 |
 | `verification/postmask/__init__.py`, `residual_pii.py`, `policy_validation.py`, `fk_preservation.py`, `runner.py`, `types.py` | verification | existing, 398, 221, 337, 190, 148 | export swap, about 360, 200, 90, 210, 160 |
 | `config/_post_scan.py`, `config/__init__.py`; `plan/checks/_generate_columns.py` | config; plan | 135, existing; 515 | about 175, export swap; 517 |
@@ -809,8 +823,9 @@ Registries:
 - Reason codes: section 5 (retry class, owner module, file, registry version). PS-2a, PS-2b, PS-3,
   PS-8 and PS-12 add each new producer site to
   `tests/fixtures/f29/producer-inventory.json` (`tests/sentry/_baseline_sources.py:138-146`).
-- Sentry manifest: PS-2b registers the blocking sentry, PS-8 the commit/readability/import sentries,
-  and PS-12 route coverage in `scripts/dev/sentry_registry.toml`; each is covered by
+- Sentry manifest: PS-2b registers the blocking, pass-through and key-type comparison sentries,
+  PS-8 the commit/readability/import sentries, and PS-12 route coverage in
+  `scripts/dev/sentry_registry.toml`; each is covered by
   `tests/sentry/test_sentry_manifest.py` (CODEMAP "Sentry test", `CODEMAP.md:254`).
 
 ## 12. Recurring-defect coverage
@@ -871,6 +886,8 @@ Taken as recommended under the standing rule; the owner may overturn.
   collision-bearing options.
 - **POSTSCAN-COLUMN-WAIVER.** Add a per-column waiver for heuristic detector false positives.
   V1 keeps `integrity: true` fail-closed and documents that output is withheld.
+- **POSTSCAN-NULL-KEY-TYPE.** An all-null key column read as Arrow `null` is an "other" type, so
+  it blocks over a comparable source (a false block); let `null` match any family.
 
 CLI follow-ups: `src/decoy/_native_gate.py:236-250` still says post-scan integrity disqualifies
 native; SCAN-ML-4 (`run --chunked` skips regex post-scan) closes when RUN-STREAM C2 lands.
@@ -935,7 +952,8 @@ native; SCAN-ML-4 (`run --chunked` skips regex post-scan) closes when RUN-STREAM
 ### Reuse inventory
 
 `profiling/_scan_integrity.py` (`_check`, `_child_facts`, `_comparable`, `_labels`,
-`_before_fetch`, `_open_keys`, `_load`); `profiling/scan_set.py` pass-through rule
+`_before_fetch`, `_open_keys`, `_load`; public `keys_comparable` on `_comparable`);
+`profiling/scan_set.py` pass-through rule
 (`_PASS_THROUGH`, `_is_coded`, public as `passes_through`); the `_reason_wire` mapping form
 (`phase.py:470`); `parse_relationship_config`; `out_of_core/_duckdb.py`
 (`connect_duckdb`, `DuckDBRunRecorder`, the `bind_duckdb_run` pattern); `resolve_ooc_memory_limit`;
