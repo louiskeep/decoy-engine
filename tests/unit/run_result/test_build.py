@@ -157,8 +157,9 @@ def test_checks_value_free() -> None:
     blocked = build(result=fake(**metrics), blocking=True).to_payload()
     checks = {c["id"]: c for c in blocked["checks"]}
     assert checks["post_validation"]["codes"] == ["dup_scan"]
-    # Codes and counts only: no message, no value.
-    assert checks["post_validation"]["counts"]["fail"] == 1
+    # Codes and counts only: no message, no value. The row whose code cannot be shown is
+    # still a failed check, so it is counted.
+    assert checks["post_validation"]["counts"]["fail"] == 2
     assert checks["post_scan_integrity"]["status"] == "failed"
     assert checks["post_scan_integrity"]["counts"]["pass"] == 5
     assert checks["post_scan_integrity"]["codes"] == []
@@ -378,15 +379,31 @@ def _route_names_the_engine_writes() -> set[str]:
 
     names = {ROUTE_NAME, ROUTE_AUTO_CHUNK, ROUTE_UNKNOWN}
     for path in Path(decoy_engine.__file__).parent.joinpath("execution").rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if (
-                isinstance(node, ast.Call)
-                and getattr(node.func, "attr", None) == "execution_telemetry"
-            ):
-                for kw in node.keywords:
-                    if kw.arg == "route" and isinstance(kw.value, ast.Constant):
-                        names.add(str(kw.value.value))
+        names |= _telemetry_routes(path.read_text(encoding="utf-8"))
     return names
+
+
+def _telemetry_routes(source: str) -> set[str]:
+    """The literal ``route=`` of every ``execution_telemetry`` call, bare or through a module."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+        if called != "execution_telemetry":
+            continue
+        for kw in node.keywords:
+            if kw.arg == "route" and isinstance(kw.value, ast.Constant):
+                found.add(str(kw.value.value))
+    return found
+
+
+def test_the_route_scan_reads_both_call_shapes() -> None:
+    source = 'execution_telemetry(route="bare")\nmod.execution_telemetry(route="dotted")\n'
+    assert _telemetry_routes(source) == {"bare", "dotted"}
+    # The two routes the engine names through a bare call must be in the scanned set.
+    assert {"sequential", "out_of_core"} <= _route_names_the_engine_writes()
 
 
 def test_every_route_name_is_decided_on_purpose() -> None:
