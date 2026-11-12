@@ -67,6 +67,7 @@ from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.plan import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declared_schema
 
 _ENGINE_VERSION = "p4-slice3-text-mask-test"
 _LOW_THRESHOLD = 10
@@ -516,6 +517,7 @@ class TestFkSelfMaskRI:
                     cfg,
                     _pa_chunks(child_table, 2),
                     table="orders",
+                    source_schema=declared_schema(cfg, "orders"),
                     engine_version=_ENGINE_VERSION,
                 )
             )
@@ -622,7 +624,11 @@ class TestOutputDtypeInvariance:
         cfg = _config(tmp_path, columns)
         chunks = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 3), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 3),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert len(chunks) == 3  # the first is entirely null
@@ -733,7 +739,11 @@ class TestNerDefaultAndVersionGuard:
         with pytest.raises(StrategyError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 2), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 2),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "ner_model_version_mismatch"
@@ -797,7 +807,11 @@ class TestWhenRejection:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 1),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_text_mask_when_not_supported"
@@ -923,7 +937,11 @@ class TestSourceDtypeGate:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 1),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
@@ -939,7 +957,11 @@ class TestSourceDtypeGate:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, [chunk1, chunk2], table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    [chunk1, chunk2],
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
@@ -1114,7 +1136,11 @@ class TestAdmissionSurfaces:
         cfg = _config(tmp_path, columns)
         out = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 2), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 2),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert sum(c.num_rows for c in out) == 5

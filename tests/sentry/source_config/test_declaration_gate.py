@@ -10,6 +10,11 @@ walks guard it:
   `read_csv_source(` in `src/decoy_engine` is in `READERS` with a reason. A new reader fails
   until someone lists it and says why it is safe.
 
+- (c) the three public chunked entries (E2d) are in `ROUTES` too; in
+  `_oracle_preflight_admitted` the first chunk's columns are checked (`checked_stream(`) right
+  after `next(`, with no profile, compile or per-chunk wrap between; and no `declared=None`
+  appears in `src/`.
+
 Covered shapes: a plain call and an attribute call (`mod.name(...)`). The walk matches the
 called name, so a reader imported under another name is not seen.
 """
@@ -38,6 +43,9 @@ ROUTES: dict[tuple[str, str], frozenset[str]] = {
     ("execution/_isolated_run.py", "run_pipeline_isolated"): frozenset(
         {"_write_payload", "_run_in_process", "_run_isolated"}
     ),
+    ("execution/_chunked.py", "run_mask_pipeline_chunked"): frozenset({"_oracle_preflight"}),
+    ("execution/native/_chunked_entry.py", "run_mask_chunked"): frozenset({"_run_chunked"}),
+    ("execution/native/_dispatch.py", "run_native_or_oracle_chunked"): frozenset({"_run_chunked"}),
 }
 
 READER_NAMES = frozenset({"build_declared_source", "build_profile_source", "read_csv_source"})
@@ -199,3 +207,62 @@ def test_every_source_reader_call_is_listed_with_a_reason() -> None:
     stale = sorted(set(READERS) - found)
     assert stale == [], f"READERS lists a call that no longer exists: {stale}"
     assert all(READERS.values())
+
+
+PREFLIGHT = ("execution/_chunked_oracle.py", "_oracle_preflight_admitted")
+BEFORE_CHECK = frozenset({"first_chunk_profile", "compile_plan", "refused_per_chunk", "plan_carry"})
+
+
+def _preflight_order_violations(func: ast.FunctionDef) -> list[str]:
+    """The first-chunk check must follow `next(` and precede every profile, compile and wrap."""
+    calls = _calls(func)
+    pulled = [line for name, line in calls if name == "next"]
+    checked = [line for name, line in calls if name == "checked_stream"]
+    if not pulled or not checked:
+        return ["next or checked_stream is missing"]
+    return [
+        f"{name}@{line}" for name, line in calls if name in BEFORE_CHECK and line < min(checked)
+    ] + (
+        [f"checked_stream@{min(checked)} before next@{min(pulled)}"]
+        if min(checked) < min(pulled)
+        else []
+    )
+
+
+def test_the_first_chunk_is_checked_before_profile_compile_or_wrap() -> None:
+    rel, name = PREFLIGHT
+    assert _preflight_order_violations(_function(_parse(rel), name)) == []
+
+
+def test_moving_the_first_chunk_check_below_the_profile_makes_the_walk_fail() -> None:
+    rel, name = PREFLIGHT
+    tree = _parse(rel)
+    func = _function(tree, name)
+    holder = next(
+        n
+        for n in ast.walk(func)
+        if isinstance(n, ast.If)
+        and any(c == "checked_stream" for stmt in n.body for c, _ in _calls(stmt))
+    )
+    at = next(
+        i for i, s in enumerate(holder.body) if any(c == "checked_stream" for c, _ in _calls(s))
+    )
+    moved = holder.body.pop(at)
+    func.body.append(moved)
+    mutated = _reparse(tree)
+    assert _preflight_order_violations(_function(mutated, name)) != []
+
+
+def test_no_route_passes_declared_none() -> None:
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call):
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "declared"
+                        and isinstance(kw.value, ast.Constant)
+                        and kw.value.value is None
+                    ):
+                        offenders.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}")
+    assert offenders == []
