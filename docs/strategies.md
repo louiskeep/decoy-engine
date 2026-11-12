@@ -1794,7 +1794,7 @@ Two safety bounds are checked before parsing:
 | Column refs | bare identifiers (no dots, no dunders) |
 
 Anything not in the table above is rejected. This includes: function calls
-other than `concat`, `slice`, `days_between`, and `case_when`, attribute
+other than `concat`, `slice`, `days_between`, `case_when` and `if`, attribute
 access (`.`), subscript syntax (`[]`), `import`, and dunder identifiers
 (`__class__`, etc.).
 

@@ -7,7 +7,7 @@ SECURITY DESIGN: config-supplied expressions route through a CLOSED Lark
 grammar (grammar.lark in this package). Only the explicit operator set
 (arithmetic, comparison, logical, membership, concat, slice, days_between,
 ternary, if(), literals, column references) can parse. Any expression outside
-the grammar -- function calls other than concat/slice/days_between, attribute
+the grammar -- function calls other than concat/slice/days_between/case_when/if, attribute
 access, dunder identifiers, subscript syntax, import -- produces a Lark
 ParseError converted to ValidationError at compile time (before any row
 data is touched). There is NO Python eval(), exec(), or __import__ here.
@@ -153,7 +153,8 @@ def compile_expr(expr_string: str) -> CompiledExpression:
             f"operator set. Only arithmetic (+,-,*,/,//), comparison "
             f"(==,!=,<,>,<=,>=,in), logical (and,or,not), concat() (n-arg, "
             f"two or more), slice(s, start[, end]), days_between(), "
-            f"case_when(cond, val, ..., default), if/else ternary, literals, "
+            f"case_when(cond, val, ..., default), if(cond, val, other), if/else "
+            f"ternary, literals, "
             f"and column references are allowed. Workaround: use a formula "
             f"strategy for arbitrary Python expressions.{single_quote_hint} "
             f"Detail: {exc}"
