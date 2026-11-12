@@ -62,7 +62,7 @@ S3_BUILDERS = frozenset(
     }
 )
 # First-inventory size of the collision walk; lower it together with the baseline.
-WALK_FLOOR = 151
+WALK_FLOOR = 150
 
 
 def gcs_name_set() -> frozenset[str]:

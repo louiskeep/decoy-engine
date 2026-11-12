@@ -20,6 +20,9 @@ from decoy_engine.reasons.decoy import DELIVERY_DEPENDENT_DROPPED, DELIVERY_WITH
 
 DeliveryState = Literal["delivered", "failed", "withheld", "dropped"]
 
+# Target types whose tables a run delivers, so every one of them needs an outcome.
+DELIVERABLE_TARGET_TYPES = frozenset({"file", "s3", "gcs"})
+
 
 @dataclass(frozen=True)
 class TableDelivery:
@@ -32,7 +35,7 @@ class TableDelivery:
 
 @dataclass(frozen=True)
 class DeliveryDecision:
-    # Only tables with a file target appear; a table without one has no delivery state.
+    # Only tables with a deliverable target appear; any other table has no delivery state.
     tables: Mapping[str, TableDelivery]
     deliver: bool
 
@@ -66,9 +69,11 @@ def _check_universe(config: Mapping[str, Any], outcomes: Mapping[str, Any]) -> N
     names = {t["name"] for t in config.get("tables") or []}
     targets = config.get("targets") or {}
     # Validation does not tie target keys to tables; a target no table owns has no run outcome.
-    file_targets = {n for n, t in targets.items() if n in names and t.get("type") == "file"}
-    if set(outcomes) != file_targets:
-        raise PipelineConfigError("delivery outcomes do not match the file-target tables")
+    deliverable = {
+        n for n, t in targets.items() if n in names and t.get("type") in DELIVERABLE_TARGET_TYPES
+    }
+    if set(outcomes) != deliverable:
+        raise PipelineConfigError("delivery outcomes do not match the deliverable tables")
     try:
         edges = _children(config)
     except ValueError:
@@ -116,6 +121,6 @@ def plan_delivery(
             tables[name] = TableDelivery("dropped", reached[name], DELIVERY_DEPENDENT_DROPPED)
         else:
             tables[name] = TableDelivery("delivered")
-    # No file-target table means nothing failed or was withheld, so the run still goes on.
+    # No deliverable table means nothing failed or was withheld, so the run still goes on.
     deliver = not outcomes or any(t.state == "delivered" for t in tables.values())
     return DeliveryDecision(tables, deliver)
