@@ -8,15 +8,15 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import _chunked_oracle
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.generation.pool import PoolCache
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import chunked_entry_kwargs
 from tests.native._b8_support import (
     below_gate,
-    run_mask_chunked_below_gate,
-    run_mask_pipeline_chunked_below_gate,
 )
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -83,6 +83,7 @@ def _run(fn: Any, config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> 
             table=TABLE,
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
+            **chunked_entry_kwargs(fn, config, TABLE),
             **kw,
         )
     )
@@ -97,9 +98,9 @@ def _int_then_null_chunks() -> list[pa.Table]:
 
 def test_delegating_adapter_masks_int_then_null_chunk_like_the_oracle() -> None:
     config = make_config([truncate("n", 2)])
-    oracle = _run(run_mask_pipeline_chunked_below_gate, config, _int_then_null_chunks())
+    oracle = _run(run_mask_pipeline_chunked, config, _int_then_null_chunks())
     adapter = _DelegatingAdapter()
-    actual = _run(run_mask_chunked_below_gate, config, _int_then_null_chunks(), adapter=adapter)
+    actual = _run(run_mask_chunked, config, _int_then_null_chunks(), adapter=adapter)
     assert [t.column("n").to_pylist() for t in actual] == [
         t.column("n").to_pylist() for t in oracle
     ]
@@ -109,8 +110,8 @@ def test_delegating_adapter_masks_int_then_null_chunk_like_the_oracle() -> None:
 
 def test_default_run_mask_chunked_masks_int_then_null_chunk_like_the_oracle() -> None:
     config = make_config([truncate("n", 2)])
-    oracle = _run(run_mask_pipeline_chunked_below_gate, config, _int_then_null_chunks())
-    actual = _run(run_mask_chunked_below_gate, config, _int_then_null_chunks())
+    oracle = _run(run_mask_pipeline_chunked, config, _int_then_null_chunks())
+    actual = _run(run_mask_chunked, config, _int_then_null_chunks())
     assert [t.column("n").to_pylist() for t in actual] == [
         t.column("n").to_pylist() for t in oracle
     ]
@@ -119,8 +120,8 @@ def test_default_run_mask_chunked_masks_int_then_null_chunk_like_the_oracle() ->
 def test_adapter_without_kwargs_works_on_the_oracle_route() -> None:
     config = make_config([truncate("n", 2)])
     source = pa.table({"n": pa.array([100, 200, 300, 400], pa.int64())})
-    expected = _run(run_mask_pipeline_chunked_below_gate, config, split(source, 3))
-    actual = _run(run_mask_chunked_below_gate, config, split(source, 3), adapter=_NoKwargsAdapter())
+    expected = _run(run_mask_pipeline_chunked, config, split(source, 3))
+    actual = _run(run_mask_chunked, config, split(source, 3), adapter=_NoKwargsAdapter())
     assert [t.to_pydict() for t in actual] == [t.to_pydict() for t in expected]
 
 
@@ -143,14 +144,14 @@ def _source() -> pa.Table:
 
 def _warm_default(cache: PoolCache, config: dict[str, Any]) -> None:
     """Populate `cache` with the default-binding pool through the public entry."""
-    _run(run_mask_chunked_below_gate, config, split(_source(), 2), pool_cache=cache)
+    _run(run_mask_chunked, config, split(_source(), 2), pool_cache=cache)
     assert cache.stats().entries >= 1
 
 
 def _oracle_with_cache(config: dict[str, Any], cache: PoolCache, registry: Any) -> list[pa.Table]:
     """The public oracle's own preflight and loop, with a caller-supplied cache.
 
-    `run_mask_pipeline_chunked_below_gate` takes no cache, so the stale-cache check drives
+    `run_mask_pipeline_chunked` takes no cache, so the stale-cache check drives
     the shared helpers it is built from."""
     chunks = split(_source(), 2)
     state = _chunked_oracle._oracle_preflight(
@@ -182,7 +183,7 @@ def test_rebound_provider_does_not_reuse_a_stale_pool_on_run_mask_chunked() -> N
     registry = _rebound_registry()
     fresh_evidence: list[NativeRouteEvidence] = []
     fresh = _run(
-        run_mask_chunked_below_gate,
+        run_mask_chunked,
         config,
         split(_source(), 2),
         registry=registry,
@@ -193,7 +194,7 @@ def test_rebound_provider_does_not_reuse_a_stale_pool_on_run_mask_chunked() -> N
     _warm_default(cache, config)
     evidence: list[NativeRouteEvidence] = []
     reused = _run(
-        run_mask_chunked_below_gate,
+        run_mask_chunked,
         config,
         split(_source(), 2),
         registry=registry,

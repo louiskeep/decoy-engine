@@ -26,7 +26,7 @@ from decoy_engine.execution._when_gate import _eval_predicate
 from tests._declared_schema import declare_rest
 from tests.native._c8_i_support import (
     chunk_by_sizes,
-    run_public_oracle,
+    run_public_oracle_below_gate,
     source_table,
     when_config,
 )
@@ -168,6 +168,6 @@ def test_the_oracle_types_a_when_column_by_chunk_contents(
     config = when_config(kind, predicate)
     chunks = chunk_by_sizes(source, [5, 6]) if source.num_rows else [source]
     expected = pa.null() if scenario in _DEGENERATE else pa.string()
-    chunked = run_public_oracle(config, chunks)
+    chunked = run_public_oracle_below_gate(config, chunks)
     assert [t.schema.field("s").type for t in chunked] == [expected] * len(chunks)
     assert _whole_frame(config, source, tmp_path).schema.field("s").type == expected

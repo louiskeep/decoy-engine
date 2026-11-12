@@ -20,6 +20,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import _chunked_profile
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution.native import _chunked_evidence, _dispatch, _operator_step
@@ -84,10 +85,14 @@ def _table(values: list[Any] | None = None, typ: pa.DataType | None = None) -> p
     return gk_source(values if values is not None else _STRINGS, typ)
 
 
-def _oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
-    """The public oracle chunked entry (no dispatcher, no native route)."""
+def _oracle(
+    config: dict[str, Any], chunks: list[pa.Table], *, below_gate: bool = False
+) -> list[pa.Table]:
+    """The public oracle chunked entry (no dispatcher, no native route). `below_gate` is for a
+    test that feeds the same unconfigured column through `run_one`, which runs below the gate."""
+    entry = run_mask_pipeline_chunked_below_gate if below_gate else run_mask_pipeline_chunked
     return list(
-        run_mask_pipeline_chunked_below_gate(
+        entry(
             config,
             list(chunks),
             table=TABLE,
@@ -273,7 +278,7 @@ def test_a_self_anchor_declines_with_its_own_distinct_reason(tmp_path: Path) -> 
     reason = run.ev[0].reroute_reason or ""
     assert f"group_key_self_anchor_not_native_chunked_route:{TARGET}" in reason
     assert "masked_sibling" not in reason
-    assert _values(run.out) == _values(_oracle(config, chunks))
+    assert _values(run.out) == _values(_oracle(config, chunks, below_gate=True))
     assert _values(run.out) == _full_frame(config, table, tmp_path).column(TARGET).to_pylist()
 
 
@@ -417,7 +422,7 @@ def test_a_float_or_decimal_sibling_keeps_the_existing_trap_e_rejection(typ: pa.
     table = gk_source(values, typ)
     with pytest.raises(PlanCompileError) as exc:
         list(
-            run_mask_chunked_below_gate(
+            run_mask_chunked(
                 make_config(columns()),
                 [table],
                 table=TABLE,
@@ -679,7 +684,7 @@ def test_a_group_key_with_when_keeps_the_existing_rejection_on_both_legs() -> No
     config = make_config([passthrough(GB), col, passthrough("p")])
     with pytest.raises(PlanCompileError) as exc:
         list(
-            run_mask_chunked_below_gate(
+            run_mask_chunked(
                 config,
                 [_table()],
                 table=TABLE,

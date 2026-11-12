@@ -17,6 +17,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked import (
     _conditional_admission_failures,
     check_chunked_compatibility,
@@ -29,9 +30,8 @@ from decoy_engine.generation.pool import PoolCapacityError
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import chunked_entry_kwargs
 from tests.native._b8_support import (
-    run_mask_chunked_below_gate,
-    run_mask_pipeline_chunked_below_gate,
     run_one,
     with_force,
 )
@@ -276,19 +276,17 @@ def test_a_non_admissible_config_fails_before_any_chunk_and_never_reaches_the_or
             consumed.append(1)
             yield chunk
 
-    run = (
-        run_mask_chunked_below_gate
-        if entry == "run_mask_chunked"
-        else run_mask_pipeline_chunked_below_gate
-    )
+    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    config = make_config([case[1], passthrough("p")])
     with pytest.raises(PlanCompileError) as info:
         list(
             run(
-                make_config([case[1], passthrough("p")]),
+                config,
                 stream(),
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(run, config, TABLE),
             )
         )
     assert info.value.code == VETO
@@ -548,19 +546,17 @@ def test_the_when_rejection_fires_before_any_chunk_on_both_entries(entry: str) -
             consumed.append(1)
             yield chunk
 
-    run = (
-        run_mask_chunked_below_gate
-        if entry == "run_mask_chunked"
-        else run_mask_pipeline_chunked_below_gate
-    )
+    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    config = make_config([nd_faker(when=_OUTSIDE_GRAMMAR), passthrough("p")])
     with pytest.raises(PlanCompileError) as info:
         list(
             run(
-                make_config([nd_faker(when=_OUTSIDE_GRAMMAR), passthrough("p")]),
+                config,
                 stream(),
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(run, config, TABLE),
             )
         )
     assert info.value.code == WHEN_CODE and consumed == []

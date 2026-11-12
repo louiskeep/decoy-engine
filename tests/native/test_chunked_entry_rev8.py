@@ -8,11 +8,9 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.vault import VaultWriter
-from tests.native._b8_support import (
-    run_mask_chunked_below_gate,
-    run_mask_pipeline_chunked_below_gate,
-)
+from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -41,12 +39,16 @@ _ROUTES = ["native_eligible", "forced_oracle", "public_oracle"]
 
 def _start(route: str, config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> Any:
     if route == "public_oracle":
-        return _call(run_mask_pipeline_chunked_below_gate, config, chunks, **kw)
-    if route == "forced_oracle":
         return _call(
-            run_mask_chunked_below_gate, config, chunks, adapter=_DelegatingAdapter(), **kw
+            run_mask_pipeline_chunked,
+            config,
+            chunks,
+            source_schema=declared_schema(config, TABLE),
+            **kw,
         )
-    return _call(run_mask_chunked_below_gate, config, chunks, **kw)
+    if route == "forced_oracle":
+        return _call(run_mask_chunked, config, chunks, adapter=_DelegatingAdapter(), **kw)
+    return _call(run_mask_chunked, config, chunks, **kw)
 
 
 @pytest.mark.parametrize("route", _ROUTES)

@@ -13,6 +13,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
@@ -24,8 +25,6 @@ from tests._declared_schema import declared_schema
 from tests.native._b8_support import (
     Run,
     assert_same_as_oracle,
-    run_mask_chunked_below_gate,
-    run_mask_pipeline_chunked_below_gate,
     run_one,
     run_pair,
 )
@@ -234,7 +233,7 @@ def test_sub_floor_warning_parity_per_chunk(policy: str, size: int) -> None:
 def _native_raises(config: dict[str, Any], chunks: list[pa.Table]) -> StrategyError:
     with pytest.raises(StrategyError) as exc:
         list(
-            run_mask_chunked_below_gate(
+            run_mask_chunked(
                 config,
                 chunks,
                 table=TABLE,
@@ -248,7 +247,7 @@ def _native_raises(config: dict[str, Any], chunks: list[pa.Table]) -> StrategyEr
 def _oracle_raises(config: dict[str, Any], chunks: list[pa.Table]) -> StrategyError:
     with pytest.raises(StrategyError) as exc:
         list(
-            run_mask_pipeline_chunked_below_gate(
+            run_mask_pipeline_chunked(
                 config,
                 chunks,
                 table=TABLE,
@@ -301,7 +300,7 @@ def test_a_numeric_source_raises_the_existing_coded_rejection() -> None:
     chunks = split(source([1, 22, 333, None, 5], typ=pa.int64()), 2)
     with pytest.raises(PlanCompileError) as exc:
         list(
-            run_mask_chunked_below_gate(
+            run_mask_chunked(
                 config,
                 chunks,
                 table=TABLE,
@@ -327,7 +326,7 @@ def test_a_later_null_typed_chunk_is_rejected_schema_drift() -> None:
     config = make_config([tm_col(), passthrough("p")])
     with pytest.raises(PlanCompileError) as native_exc:
         list(
-            run_mask_chunked_below_gate(
+            run_mask_chunked(
                 config,
                 chunks,
                 table=TABLE,
@@ -337,7 +336,7 @@ def test_a_later_null_typed_chunk_is_rejected_schema_drift() -> None:
         )
     with pytest.raises(PlanCompileError) as oracle_exc:
         list(
-            run_mask_pipeline_chunked_below_gate(
+            run_mask_pipeline_chunked(
                 config,
                 chunks,
                 table=TABLE,

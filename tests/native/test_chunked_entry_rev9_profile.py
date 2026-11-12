@@ -9,21 +9,18 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import _chunked_oracle
 from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
-from decoy_engine.execution.native._dispatch import plan_native_route
+from decoy_engine.execution.native._dispatch import plan_native_route, run_native_or_oracle_chunked
 from decoy_engine.plan import compile_plan, plan_to_yaml
 from decoy_engine.profile import _walk
 from decoy_engine.profile._types import ColumnProfile
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import (
-    run_mask_chunked_below_gate,
-    run_mask_pipeline_chunked_below_gate,
-    run_native_or_oracle_chunked_below_gate,
-)
+from tests._declared_schema import chunked_entry_kwargs
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -142,7 +139,7 @@ def test_legacy_entry_keeps_the_full_pandas_profile(monkeypatch: pytest.MonkeyPa
     table = pa.table({"s": pa.array(["a", "b", "c"]), "x": pa.array([7, 8, 9], pa.int64())})
     config = make_config([redact("s"), passthrough("x")])
     list(
-        run_native_or_oracle_chunked_below_gate(
+        run_native_or_oracle_chunked(
             config,
             [table],
             table=TABLE,
@@ -212,6 +209,7 @@ def _run(fn: Any, config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Tab
             table="customers",
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
+            **chunked_entry_kwargs(fn, config, "customers"),
         )
     )
 
@@ -221,7 +219,7 @@ def test_carried_fk_key_is_yielded_exactly(
     kind: pa.DataType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen = _guard_spy(monkeypatch)
-    out = _run(run_mask_chunked_below_gate, _fk_config(), [_chunk(kind)])
+    out = _run(run_mask_chunked, _fk_config(), [_chunk(kind)])
     assert out[0].column("id").to_pylist() == _keys(kind).to_pylist()
     assert out[0].column("id").type == kind
     assert all("id" not in cols for cols in seen)
@@ -231,14 +229,12 @@ def test_carried_fk_key_is_yielded_exactly(
 def test_read_fk_key_keeps_the_refusal(kind: pa.DataType, monkeypatch: pytest.MonkeyPatch) -> None:
     seen = _guard_spy(monkeypatch)
     with pytest.raises(ExecutionError) as info:
-        _run(run_mask_chunked_below_gate, _fk_config(when="id != 0"), [_chunk(kind)])
+        _run(run_mask_chunked, _fk_config(when="id != 0"), [_chunk(kind)])
     assert info.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
     assert seen == [{"id"}]
 
 
-@pytest.mark.parametrize(
-    "entry", [run_mask_pipeline_chunked_below_gate, run_native_or_oracle_chunked_below_gate]
-)
+@pytest.mark.parametrize("entry", [run_mask_pipeline_chunked, run_native_or_oracle_chunked])
 @pytest.mark.parametrize("kind", [pa.int64(), pa.uint64()], ids=["int64", "uint64"])
 def test_public_oracle_and_legacy_entry_refuse_as_before(
     entry: Any, kind: pa.DataType, monkeypatch: pytest.MonkeyPatch

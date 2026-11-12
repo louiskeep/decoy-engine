@@ -19,6 +19,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import _column_access
 from decoy_engine.execution._column_access import (
     SIBLING_REFERENCE_KEYS,
@@ -37,10 +38,7 @@ from decoy_engine.generation.composite._name_email import CompositeNameEmail
 from decoy_engine.generation.composite._person import CompositePerson
 from decoy_engine.generation.composite._provider import CompositeProvider
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import (
-    run_mask_chunked_below_gate,
-    run_mask_pipeline_chunked_below_gate,
-)
+from tests._declared_schema import chunked_entry_kwargs
 
 REG = get_default_registry()
 _FIXED_CLASSES = {
@@ -734,6 +732,7 @@ def _outcome_of(entry_point: Any, config: dict[str, Any], chunks: list[pa.Table]
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(entry_point, config, TABLE),
             )
         )
     except Exception as exc:
@@ -754,8 +753,8 @@ def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> 
     chunks = [table.slice(0, 5), table.slice(5, 4), table.slice(9)]
     config = make_config(columns, global_settings={"unconfigured_column_policy": "warn"})
     assert TABLE
-    oracle = _outcome_of(run_mask_pipeline_chunked_below_gate, config, chunks)
-    ours = _outcome_of(run_mask_chunked_below_gate, config, chunks)
+    oracle = _outcome_of(run_mask_pipeline_chunked, config, chunks)
+    ours = _outcome_of(run_mask_chunked, config, chunks)
     assert ours[0] == oracle[0], (case, ours, oracle)
     if oracle[0] == "error":
         assert ours[1] == oracle[1]

@@ -854,7 +854,11 @@ class TestRunMaskChunkedCallSites:
         with pytest.raises(ExecutionError) as exc:
             list(
                 run_mask_pipeline_chunked_below_gate(
-                    cfg, [chunk], table="accounts", engine_version=_EV
+                    cfg,
+                    [chunk],
+                    table="accounts",
+                    engine_version=_EV,
+                    source_schema=declared_schema(cfg, "accounts"),
                 )
             )
         assert exc.value.code == "undeclared_output_columns"

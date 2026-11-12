@@ -17,6 +17,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution.native import _chunked_entry
@@ -129,7 +130,7 @@ def test_error_policy_keeps_the_oracle_route_and_raises_as_today() -> None:
     chunks = _all_chunks()
     with pytest.raises(ExecutionError) as public:
         list(
-            run_mask_pipeline_chunked_below_gate(
+            run_mask_pipeline_chunked(
                 config,
                 list(chunks),
                 table=TABLE,
@@ -141,7 +142,7 @@ def test_error_policy_keeps_the_oracle_route_and_raises_as_today() -> None:
     sink: list[Any] = []
     ev: list[Any] = []
     vault = VaultWriter(vault_key())
-    gen = run_mask_chunked_below_gate(
+    gen = run_mask_chunked(
         config,
         list(chunks),
         table=TABLE,

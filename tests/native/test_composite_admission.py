@@ -17,21 +17,22 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import _chunked
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_carry import passthrough_columns, plan_carry
 from decoy_engine.execution._column_access import column_access, handler_written_columns
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.execution.native._chunked_schema_rule import build_schema_rule
+from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
 from decoy_engine.generation.composite import CompositeAdapter, composite_capability
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests._declared_schema import declared_schema
+from tests._declared_schema import chunked_entry_kwargs, declared_schema
 from tests.native._b8_support import (
     FORCE,
     run_mask_chunked_below_gate,
     run_mask_pipeline_chunked_below_gate,
-    run_native_or_oracle_chunked_below_gate,
     with_force,
 )
 from tests.native._chunked_entry_support import (
@@ -128,7 +129,7 @@ def _chunks(data: dict[str, list[str]]) -> list[pa.Table]:
 def test_composite_provider_is_refused_by_both_chunked_entries(case: str) -> None:
     provider, columns, data, _written = CASES[case]
     config = make_config(columns, global_settings=_WARN)
-    for entry_point in (run_mask_chunked_below_gate, run_mask_pipeline_chunked_below_gate):
+    for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
         sink: list[Any] = []
         with pytest.raises(PlanCompileError) as info:
             list(
@@ -139,6 +140,7 @@ def test_composite_provider_is_refused_by_both_chunked_entries(case: str) -> Non
                     engine_version=ENGINE_VERSION,
                     key_provider=key_provider(),
                     chunk_result_sink=sink,
+                    **chunked_entry_kwargs(entry_point, config, TABLE),
                 )
             )
         assert info.value.code == "strategy_not_chunk_safe"
@@ -346,6 +348,7 @@ def test_a_configured_stored_index_column_is_refused_before_any_chunk(
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
                 chunk_result_sink=sink,
+                **chunked_entry_kwargs(entry_point, config, TABLE),
             )
         )
     assert info.value.code == "config_references_stored_index"
@@ -362,7 +365,7 @@ def test_legacy_entry_drops_a_stored_index_field_like_the_oracle() -> None:
     config = make_config([redact("s"), truncate("t")])
     ev: list[Any] = []
     out = list(
-        run_native_or_oracle_chunked_below_gate(
+        run_native_or_oracle_chunked(
             config,
             chunks,
             table=TABLE,
@@ -374,7 +377,7 @@ def test_legacy_entry_drops_a_stored_index_field_like_the_oracle() -> None:
     assert ev[0].native_admitted is True
     assert all("id" not in o.column_names for o in out)
     oracle = list(
-        run_mask_pipeline_chunked_below_gate(
+        run_mask_pipeline_chunked(
             config,
             chunks,
             table=TABLE,
@@ -496,7 +499,7 @@ def test_the_run_registry_reaches_the_compatibility_check(monkeypatch: pytest.Mo
     reg = _scalar_rebound_registry()
     chunk = pa.table({"s": ["a", "b"]})
     list(
-        run_mask_chunked_below_gate(
+        run_mask_chunked(
             make_config([redact("s")]),
             [chunk],
             table=TABLE,
@@ -613,9 +616,9 @@ def test_rebound_registry_output_equals_the_public_oracle(monkeypatch: pytest.Mo
         "key_provider": key_provider(),
         "registry": reg,
     }
-    ours = list(run_mask_chunked_below_gate(config, chunks, **kwargs))
+    ours = list(run_mask_chunked(config, chunks, **kwargs))
     oracle = list(
-        run_mask_pipeline_chunked_below_gate(
+        run_mask_pipeline_chunked(
             config, chunks, source_schema=declared_schema(config, TABLE), **kwargs
         )
     )
@@ -645,7 +648,10 @@ _READ_T = "t != 'zz'"
 
 
 def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
-    from tests.native._rev9_support import run_entry, run_public
+    from tests.native._rev9_support import (
+        run_entry_below_gate,
+        run_public_below_gate,
+    )
 
     big = 2**53 + 1
     chunks = [
@@ -657,7 +663,7 @@ def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
         )
         for _ in range(2)
     ]
-    out, sink, _ev = run_entry(_when_config(_READ_BIG), chunks)
+    out, sink, _ev = run_entry_below_gate(_when_config(_READ_BIG), chunks)
     for got, src in zip(out, chunks, strict=True):
         assert got.schema.field("big").equals(src.schema.field("big"), check_metadata=True)
         assert got.column("big").to_pylist() == [big, None, 3]
@@ -665,7 +671,7 @@ def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
         ["big"]
     ] * 2
     # The unchanged public oracle rounds it through float64; only characterized here.
-    public = run_public(_when_config(_READ_BIG), chunks)
+    public = run_public_below_gate(_when_config(_READ_BIG), chunks)
     assert public[0].schema.field("big").type == pa.float64()
     assert public[0].column("big").to_pylist()[0] == float(2**53)
     # Every row is selected, as the replaced bytes comparison selected every row.
@@ -673,7 +679,7 @@ def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
 
 
 def test_a_read_when_column_still_raises_for_an_unrepresentable_value() -> None:
-    from tests.native._rev9_support import BY_NAME, run_public
+    from tests.native._rev9_support import BY_NAME, run_public_below_gate
 
     t64 = BY_NAME["time64ns_unaligned"]
     chunks = [
@@ -692,14 +698,14 @@ def test_a_read_when_column_still_raises_for_an_unrepresentable_value() -> None:
         next(gen)
     assert getattr(ours.value, "code", None) == "chunked_passthrough_value_unrepresentable"
     with pytest.raises(pa.ArrowInvalid):
-        run_public(_when_config(_READ_T), chunks)
+        run_public_below_gate(_when_config(_READ_T), chunks)
 
 
 def test_a_when_does_not_refuse_an_unrelated_stored_index() -> None:
     config = make_config(
         [{**redact("s"), "when": "s != 'zz'"}, truncate("t")], global_settings=_WARN
     )
-    for entry_point in (run_mask_chunked_below_gate, run_mask_pipeline_chunked_below_gate):
+    for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
         list(
             entry_point(
                 config,
@@ -707,6 +713,7 @@ def test_a_when_does_not_refuse_an_unrelated_stored_index() -> None:
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(entry_point, config, TABLE),
             )
         )
 
@@ -719,7 +726,7 @@ def test_an_unparsable_when_naming_a_named_stored_index_is_rejected_at_compile()
     config = make_config(
         [{**redact("s"), "when": "id != b'zz'"}, truncate("t")], global_settings=_WARN
     )
-    for entry_point in (run_mask_chunked_below_gate, run_mask_pipeline_chunked_below_gate):
+    for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
         with pytest.raises(PlanCompileError) as info:
             list(
                 entry_point(
@@ -728,6 +735,7 @@ def test_an_unparsable_when_naming_a_named_stored_index_is_rejected_at_compile()
                     table=TABLE,
                     engine_version=ENGINE_VERSION,
                     key_provider=key_provider(),
+                    **chunked_entry_kwargs(entry_point, config, TABLE),
                 )
             )
         assert info.value.code == "when_outside_closed_grammar"
@@ -744,7 +752,7 @@ def test_a_when_naming_an_unnamed_stored_index_is_rejected_at_compile() -> None:
         [{**redact("s"), "when": "__index_level_0__ != b'zz'"}, truncate("t")],
         global_settings=_WARN,
     )
-    for entry_point in (run_mask_chunked_below_gate, run_mask_pipeline_chunked_below_gate):
+    for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
         with pytest.raises(PlanCompileError) as info:
             list(
                 entry_point(
@@ -753,6 +761,7 @@ def test_a_when_naming_an_unnamed_stored_index_is_rejected_at_compile() -> None:
                     table=TABLE,
                     engine_version=ENGINE_VERSION,
                     key_provider=key_provider(),
+                    **chunked_entry_kwargs(entry_point, config, TABLE),
                 )
             )
         assert info.value.code == "when_outside_closed_grammar"
@@ -832,13 +841,15 @@ def test_stored_index_drift_is_raised_by_both_public_entries(
     plain = [c.replace_schema_metadata(None) for c in indexed]
     chunks = [indexed[0], plain[1]] if direction == "index_then_plain" else [plain[0], indexed[1]]
     sink: list[Any] = []
+    config = make_config([redact("s"), truncate("t")], global_settings=_WARN)
     gen = entry_point(
-        make_config([redact("s"), truncate("t")], global_settings=_WARN),
+        config,
         chunks,
         table=TABLE,
         engine_version=ENGINE_VERSION,
         key_provider=key_provider(),
         chunk_result_sink=sink,
+        **chunked_entry_kwargs(entry_point, config, TABLE),
     )
     next(gen)
     with pytest.raises(Exception) as info:
@@ -856,7 +867,7 @@ def test_a_rebound_composite_name_is_reported_with_the_scalar_route() -> None:
     sink: list[Any] = []
     ev: list[Any] = []
     list(
-        run_mask_chunked_below_gate(
+        run_mask_chunked(
             config,
             [chunk],
             table=TABLE,
@@ -987,7 +998,7 @@ def test_writes_unknown_entries_are_refused_by_the_public_entries() -> None:
     source = _source({"a": ["x"] * N, "b": ["y"] * N, "c": ["z"] * N})
     unknown = {"tables": [{"name": TABLE, "columns": [{"name": "a", "strategy": "bogus"}]}]}
     for config in (bad_bundle, unknown):
-        for entry_point in (run_mask_chunked_below_gate, run_mask_pipeline_chunked_below_gate):
+        for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
             sink: list[Any] = []
             with pytest.raises(PlanCompileError) as info:
                 list(
@@ -998,6 +1009,7 @@ def test_writes_unknown_entries_are_refused_by_the_public_entries() -> None:
                         engine_version=ENGINE_VERSION,
                         key_provider=key_provider(),
                         chunk_result_sink=sink,
+                        **chunked_entry_kwargs(entry_point, config, TABLE),
                     )
                 )
             assert info.value.code == "strategy_not_chunk_safe"

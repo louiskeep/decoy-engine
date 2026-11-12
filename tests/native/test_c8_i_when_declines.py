@@ -24,7 +24,9 @@ from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._c8_i_support import (
     chunk_by_sizes,
     run_native,
+    run_native_below_gate,
     run_public_oracle,
+    run_public_oracle_below_gate,
     source_table,
 )
 from tests.native._chunked_entry_support import (
@@ -75,11 +77,11 @@ def _declined_equals_today(config: dict[str, Any], code: str) -> None:
     assert evidence and evidence[0].native_admitted is False
     reason = evidence[0].reroute_reason or ""
     assert reason.startswith(code), reason
-    today = _outcome(lambda: run_public_oracle(config, chunks))
+    today = _outcome(lambda: run_public_oracle_below_gate(config, chunks))
     assert entry[0] == today[0]
     if entry[0] == "ok":
         # The entry pins output types the public oracle infers; compare the values.
-        for g, w in zip(got, run_public_oracle(config, chunks), strict=True):
+        for g, w in zip(got, run_public_oracle_below_gate(config, chunks), strict=True):
             for name in g.schema.names:
                 assert g.column(name).to_pylist() == w.column(name).to_pylist()
     else:
@@ -156,12 +158,16 @@ def test_a_non_string_target_declines_with_the_legacy_code() -> None:
     # profiled entry point now rejects it at compile, before the native decline is reached
     # (the decline rule above is still asserted directly). The profile-less oracle skips
     # that check, so an execution guard rejects instead.
-    assert _outcome(lambda: run_native(config, chunk_by_sizes(source_table(), [11]))[0]) == (
+    assert _outcome(
+        lambda: run_native_below_gate(config, chunk_by_sizes(source_table(), [11]))[0]
+    ) == (
         "error",
         "PlanCompileError",
         "when_string_output_on_numeric_unsupported",
     )
-    assert _outcome(lambda: run_public_oracle(config, chunk_by_sizes(source_table(), [11]))) == (
+    assert _outcome(
+        lambda: run_public_oracle_below_gate(config, chunk_by_sizes(source_table(), [11]))
+    ) == (
         "error",
         "ExecutionError",
         "null_bearing_int_unsupported",
@@ -199,7 +205,10 @@ def test_a_raw_predicate_outside_the_grammar_is_rejected_by_both_entry_points(ex
 
     config = make_config([_when(redact("s"), expr), passthrough("p")])
     chunks = chunk_by_sizes(source_table(), [4, 4, 3])
-    for call in (lambda: run_native(config, chunks), lambda: run_public_oracle(config, chunks)):
+    for call in (
+        lambda: run_native_below_gate(config, chunks),
+        lambda: run_public_oracle_below_gate(config, chunks),
+    ):
         with pytest.raises(PlanCompileError) as info:
             call()
         assert info.value.code == "when_outside_closed_grammar"
@@ -309,9 +318,9 @@ def test_a_node_with_unknown_writes_declines_any_when_after_it() -> None:
 def test_a_numeric_reference_is_admitted_and_equals_the_chunked_oracle() -> None:
     config = make_config([_when(redact("s"), "n > 3"), passthrough("p")])
     chunks = chunk_by_sizes(source_table(), [4, 4, 3])
-    out, evidence = run_native(config, chunks)
+    out, evidence = run_native_below_gate(config, chunks)
     assert evidence.native_admitted is True, evidence.reroute_reason
-    want = run_public_oracle(config, chunks)
+    want = run_public_oracle_below_gate(config, chunks)
     assert [t.column("s").to_pylist() for t in out] == [t.column("s").to_pylist() for t in want]
 
 

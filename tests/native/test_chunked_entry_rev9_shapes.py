@@ -14,6 +14,7 @@ import pandas
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _pandas_adapter
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
@@ -36,7 +37,9 @@ from tests.native._rev9_support import (
     config_for,
     ipc_bytes,
     run_entry,
+    run_entry_below_gate,
     run_public,
+    run_public_below_gate,
     same_column,
     stream,
 )
@@ -57,11 +60,13 @@ def _entry(
     forced = route == "oracle"
     config = config_for(configured=configured, with_hash=forced)
     chunks = stream(shape, pos, with_hash=forced)
+    # An unconfigured `x` is refused at the public entry, so that half runs below the gate.
+    entry = run_entry if configured else run_entry_below_gate
     if forced:
         with companion_missing(monkeypatch):
-            out, sink, ev = run_entry(config, chunks)
+            out, sink, ev = entry(config, chunks)
     else:
-        out, sink, ev = run_entry(config, chunks)
+        out, sink, ev = entry(config, chunks)
     return out, sink, ev, chunks
 
 
@@ -105,12 +110,13 @@ def test_public_oracle_behavior_is_unchanged(shape: Shape, pos: int, configured:
     """The documented exception: what the public oracle still refuses or alters."""
     config = config_for(configured=configured)
     chunks = stream(shape, pos)
+    public = run_public if configured else run_public_below_gate
     if shape.public not in ("exact", "altered"):
         with pytest.raises(Exception) as info:
-            run_public(config, chunks)
+            public(config, chunks)
         assert type(info.value).__name__ == shape.public, PINNED_UNDER
         return
-    out = run_public(config, chunks)
+    out = public(config, chunks)
     for i, (got, src) in enumerate(zip(out, chunks, strict=True)):
         if shape.public == "exact" or i != pos:
             assert same_column(got.column("x"), src.column("x")), PINNED_UNDER
@@ -128,10 +134,12 @@ def test_min_int64_is_yielded_itself_and_the_oracle_nulls_it(kind: str, unit: st
     chunks = stream(shape, 1)
     for configured in (True, False):
         config = config_for(configured=configured)
-        out, *_ = run_entry(config, chunks)
+        entry = run_entry if configured else run_entry_below_gate
+        public = run_public if configured else run_public_below_gate
+        out, *_ = entry(config, chunks)
         stored = out[1].column("x").cast(pa.int64())
         assert stored[0].as_py() == I64MIN
-        assert run_public(config, chunks)[1].column("x").is_null().to_pylist() == [
+        assert public(config, chunks)[1].column("x").is_null().to_pylist() == [
             True,
             True,
             False,
@@ -282,7 +290,8 @@ def test_row_error_chunk_sink_result_carries_the_source_column(
     sink: list[Any] = []
     from tests.native._chunked_entry_support import key_provider
 
-    gen = run_mask_chunked_below_gate(
+    mask = run_mask_chunked if configured else run_mask_chunked_below_gate
+    gen = mask(
         _row_error_config(strategy, configured),
         chunks,
         table=TABLE,

@@ -9,6 +9,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
 
+from decoy_engine import run_mask_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
@@ -24,7 +25,14 @@ from tests.native._chunked_entry_support import (
     redact,
     truncate,
 )
-from tests.native._rev9_support import BY_NAME, companion_missing, run_entry, run_public
+from tests.native._rev9_support import (
+    BY_NAME,
+    companion_missing,
+    run_entry,
+    run_entry_below_gate,
+    run_public,
+    run_public_below_gate,
+)
 
 _INTS = pa.array([11, 22, 33], pa.int64())
 _STAMPS = pa.array([1, None, 3], pa.timestamp("us"))
@@ -91,7 +99,7 @@ def test_adapter_frame_has_the_source_column_names_and_order(
     # A hash column with the companion missing forces the oracle route, so the adapter
     # still runs; the unconfigured columns x, ts and z reach it as source-named columns.
     with companion_missing(monkeypatch):
-        _out, _sink, ev = run_entry(make_config([redact("s"), hash_col("h")]), chunks)
+        _out, _sink, ev = run_entry_below_gate(make_config([redact("s"), hash_col("h")]), chunks)
     assert ev[0].native_admitted is False
     assert ev[0].reroute_reason == "crypto_extension_unavailable"
     assert seen == [chunks[0].column_names] * 3
@@ -100,7 +108,7 @@ def test_adapter_frame_has_the_source_column_names_and_order(
 def test_undeclared_output_columns_error_is_raised_at_the_first_next() -> None:
     config = _config(configured=False, policy="error")
     with pytest.raises(ExecutionError) as oracle:
-        run_public(config, _chunks())
+        run_public_below_gate(config, _chunks())
     gen = run_mask_chunked_below_gate(
         config,
         _chunks(),
@@ -118,8 +126,8 @@ def test_warning_details_match_the_public_oracle_per_chunk() -> None:
     config = _config(configured=False, policy="warn")
     chunks = _chunks()
     oracle_sink: list[Any] = []
-    run_public(config, chunks, chunk_result_sink=oracle_sink)
-    _out, sink, _ev = run_entry(config, chunks)
+    run_public_below_gate(config, chunks, chunk_result_sink=oracle_sink)
+    _out, sink, _ev = run_entry_below_gate(config, chunks)
     assert len(sink) == len(oracle_sink) == 3
     for got, want in zip(sink, oracle_sink, strict=True):
         assert [(w.code, w.detail) for w in got.warnings] == [
@@ -141,12 +149,12 @@ def test_timing_records_have_the_oracles_structure(
         config = _config(configured=case == "configured", policy="warn")
         chunks = _chunks()
     oracle_sink: list[Any] = []
-    run_public(config, chunks, chunk_result_sink=oracle_sink)
+    run_public_below_gate(config, chunks, chunk_result_sink=oracle_sink)
     if case == "forced_oracle":
         with companion_missing(monkeypatch):
-            out, sink, ev = run_entry(config, chunks)
+            out, sink, ev = run_entry_below_gate(config, chunks)
     else:
-        out, sink, ev = run_entry(config, chunks)
+        out, sink, ev = run_entry_below_gate(config, chunks)
     assert ev[0].native_admitted is (case != "forced_oracle")
     if case != "forced_oracle":
         # Native route: one record per configured column and none for an unconfigured one.
@@ -229,7 +237,7 @@ def test_subclass_adapter_passthrough_refusal_propagates_raw(make: Any) -> None:
     config = make_config([truncate("s", 2), passthrough("x"), passthrough("t")])
     with pytest.raises(Exception) as oracle:
         run_public(config, chunks, adapter=make())
-    gen = run_mask_chunked_below_gate(
+    gen = run_mask_chunked(
         config,
         chunks,
         table=TABLE,
@@ -256,7 +264,7 @@ def test_row_errors_under_a_subclass_match_the_public_oracle() -> None:
         run_public(config, chunks, adapter=_Recorder())
     with pytest.raises(RowErrorsFailedError) as entry:
         list(
-            run_mask_chunked_below_gate(
+            run_mask_chunked(
                 config,
                 chunks,
                 table=TABLE,

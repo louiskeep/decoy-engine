@@ -459,7 +459,11 @@ class TestChunkedCompatibility:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked_below_gate(
-                    cfg, [], table="nope", engine_version=_ENGINE_VERSION
+                    cfg,
+                    [],
+                    table="nope",
+                    engine_version=_ENGINE_VERSION,
+                    source_schema=declared_schema(cfg, "nope"),
                 )
             )
         assert exc.value.code == "chunked_table_unknown"

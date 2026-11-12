@@ -100,6 +100,8 @@ def _assert_value_free(err: PipelineValidationError, code: str) -> None:
     for text in (str(err), repr(err)):
         assert MARK not in text
         assert "zz_" not in text
+    assert err.__cause__ is None
+    assert err.__context__ is None
 
 
 # AT-E2c-1 -----------------------------------------------------------------------------------
@@ -460,7 +462,29 @@ def test_chunked_refuses_undeclared_first_chunk_column_before_profile(
 
 
 @pytest.mark.parametrize("entry", ENTRIES)
-def test_chunked_refuses_a_column_that_first_appears_in_chunk_three(entry: str) -> None:
+def test_chunked_refuses_a_column_that_first_appears_in_chunk_three(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal comes before chunk three is masked: two chunks are masked, three are pulled.
+
+    Masking is counted on both routes (the oracle's adapter call and the native chunk step), so
+    a check placed after masking and before the yield would show three masked chunks.
+    """
+    from decoy_engine.execution.native import _chunked_entry
+
+    masked: list[str] = []
+
+    def count(owner: Any, name: str, label: str) -> None:
+        real = getattr(owner, name)
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            masked.append(label)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(owner, name, spy)
+
+    count(PandasExecutionAdapter, "run", "oracle")
+    count(_chunked_entry, "_mask_chunk_native", "native")
     chunks = SpyChunks(_table("id"), _table("id"), _table("id", "zz_late"))
     out = _run_entry(entry, _chunk_config("id"), chunks, _schema("id"))
     got: list[pa.Table] = []
@@ -468,7 +492,9 @@ def test_chunked_refuses_a_column_that_first_appears_in_chunk_three(entry: str) 
         for chunk in out:
             got.append(chunk)
     _assert_value_free(caught.value, COLUMN)
-    assert len(got) <= 2
+    assert len(got) == 2
+    assert len(masked) == 2, masked
+    assert chunks.nexts == 3
 
 
 def test_pipeline_entry_refuses_a_chunk_column_outside_source_schema() -> None:
@@ -485,6 +511,7 @@ def test_pipeline_entry_refuses_a_chunk_column_outside_source_schema() -> None:
             config, chunks, table="t", engine_version="e2d", source_schema=_schema("id")
         )
     assert caught.value.code == COLUMN
+    assert "add it to source_schema" in str(caught.value)
     assert chunks.nexts == 1
 
 

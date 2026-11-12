@@ -12,14 +12,21 @@ and the route each side took.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Iterator
+import functools
+import inspect
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any
+from unittest import mock
 
 import pyarrow as pa
 
-from decoy_engine.config._subset_run import refuse_unapplied_subset
-from decoy_engine.execution.native import _chunked_entry
+from decoy_engine.execution import _chunked
+from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution.native import _chunked_entry, _dispatch
+from decoy_engine.execution.native._chunked_entry import run_mask_chunked
+from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
 from decoy_engine.profile import (
     DeclarationRequest,
     PreparedDeclaredSources,
@@ -55,8 +62,9 @@ def below_gate(
     and the chunks to feed the layer below the gate.
 
     The B8 tests observe how an *unconfigured* column is carried, which the declaration gate
-    now refuses at the public entry. They call the layer below it with this capability; the
-    run config keeps the columns unconfigured, so the B8 carry is still what they observe.
+    now refuses at the public entry. They run the public entry with this capability standing in
+    for its gate; the run config keeps the columns unconfigured, so the B8 carry is still what
+    they observe.
     A list and a fixed-schema producer are declared from without being consumed. Any other
     iterable is wrapped so each chunk declares its columns just before it is handed on, which
     keeps "no chunk was pulled" assertions meaningful.
@@ -86,54 +94,30 @@ def below_gate(
     return capability, declaring()
 
 
-def run_mask_chunked_below_gate(
-    config: dict[str, Any], chunks: Iterable[pa.Table], *, table: str, **kw: Any
-) -> Any:
-    """`run_mask_chunked` minus the declaration gate: same subset and thread checks, then the
-    private body with a `below_gate` capability."""
-    refuse_unapplied_subset(config)
-    _chunked_entry._validate_native_threads(kw.get("native_threads", 1))
-    declared, fed = below_gate(config, table, chunks)
-    return _chunked_entry._run_chunked(config, fed, table=table, declared=declared, **kw)
+def _below_gate_entry(entry: Callable[..., Any], module: ModuleType) -> Callable[..., Any]:
+    """`entry` with the declaration gate answered by a `below_gate` capability.
 
-
-def run_native_or_oracle_chunked_below_gate(
-    config: dict[str, Any], chunks: Iterable[pa.Table], *, table: str, **kw: Any
-) -> Any:
-    """`run_native_or_oracle_chunked` minus the declaration gate (see `below_gate`)."""
-    from decoy_engine.execution.native._dispatch import reject_per_table_transforms
-
-    refuse_unapplied_subset(config)
-    reject_per_table_transforms(config, table=table, route="native chunked execution")
-    declared, fed = below_gate(config, table, chunks)
-    return _chunked_entry._run_chunked(
-        config,
-        fed,
-        table=table,
-        declared=declared,
-        enforce_schema_rule=False,
-        native_threads=kw.pop("native_threads", None),
-        **kw,
-    )
-
-
-def run_mask_pipeline_chunked_below_gate(
-    config: dict[str, Any], chunks: Iterable[pa.Table], *, table: str, **kw: Any
-) -> Any:
-    """The public oracle entry with its gate answered by a `below_gate` capability.
-
-    `run_mask_pipeline_chunked` has no private body to call, so the gate call it makes at
-    entry is replaced for the duration of the (eager) call; the iterator it returns keeps the
-    capability it was given.
+    The public entry itself runs, so its file-access binding, subset refusal, thread check,
+    progress accounting and signature are the production ones. Only the `prepare_declared_sources`
+    its module calls at entry is replaced, for the duration of the (eager) call; the iterator it
+    returns keeps the capability it was given. The arguments are bound against the entry's own
+    signature, so a call the entry would reject is rejected here too.
     """
-    from unittest import mock
+    signature = inspect.signature(entry)
 
-    from decoy_engine.execution import _chunked
+    @functools.wraps(entry)
+    def run(config: dict[str, Any], chunks: Iterable[pa.Table], **kw: Any) -> Any:
+        table = signature.bind(config, chunks, **kw).arguments["table"]
+        capability, fed = below_gate(config, table, chunks)
+        with mock.patch.object(module, "prepare_declared_sources", return_value=capability):
+            return entry(config, fed, **kw)
 
-    capability, fed = below_gate(config, table, chunks)
-    kw.setdefault("source_schema", pa.schema([]))
-    with mock.patch.object(_chunked, "prepare_declared_sources", return_value=capability):
-        return _chunked.run_mask_pipeline_chunked(config, fed, table=table, **kw)
+    return run
+
+
+run_mask_chunked_below_gate = _below_gate_entry(run_mask_chunked, _chunked_entry)
+run_native_or_oracle_chunked_below_gate = _below_gate_entry(run_native_or_oracle_chunked, _dispatch)
+run_mask_pipeline_chunked_below_gate = _below_gate_entry(run_mask_pipeline_chunked, _chunked)
 
 
 @dataclass
