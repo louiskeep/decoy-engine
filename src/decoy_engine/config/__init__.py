@@ -35,6 +35,7 @@ ships the real binding).
 
 from __future__ import annotations
 
+from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.config._generate_option_catalog import (
@@ -106,6 +107,7 @@ __all__ = [
     "UNIQUE_FAKER_ATTEMPTS",
     "ColumnConfig",
     "DedupeOp",
+    "DeliveryConfig",
     "DeriveOp",
     "Dismissal",
     "DpGenerateSettings",
