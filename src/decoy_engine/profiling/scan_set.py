@@ -67,7 +67,7 @@ _DESCRIPTOR: TypeAdapter[Any] = TypeAdapter(SourceDescriptor)
 
 # Errors the file-access and CSV layers already keep value-free; wrapping them would hide
 # their codes from the caller. Any other registered engine family passes through too
-# (`_is_coded`), so only an unclassified failure is wrapped.
+# (`passes_through`), so only an unclassified failure is wrapped.
 _PASS_THROUGH = (
     FileAccessDenied,
     FileAccessReadError,
@@ -294,10 +294,10 @@ def _integrity_facts(
     cause: str | None = None
     try:
         return _scan_integrity.relationship_facts(descriptors, declared, spill_dir=spill_dir)
-    except (*_PASS_THROUGH, PipelineConfigError):
+    except PipelineConfigError:
         raise
     except Exception as exc:
-        if _is_coded(exc):
+        if passes_through(exc):
             raise
         cause = safe_error_class(type(exc).__name__)
     raise ScanSourceError("relationships", cause or "Exception")
@@ -326,18 +326,18 @@ def _scan_one(
     cause: str | None = None
     try:
         return _read_and_profile(name, descriptor, sample_rows, strategy, file_access)
-    except _PASS_THROUGH:
-        raise
     except Exception as exc:
-        if _is_coded(exc):
+        if passes_through(exc):
             raise
         cause = safe_error_class(type(exc).__name__)
     raise ScanSourceError(name, cause or "Exception")
 
 
-def _is_coded(exc: BaseException) -> bool:
-    """True for a scan error or any engine error family the reason adapter classifies."""
-    return isinstance(exc, (ScanSourceError, *reason_adapter.registered_families()))
+def passes_through(exc: BaseException) -> bool:
+    """True when `exc` must reach the caller unchanged: the file-access and validation errors, a
+    scan error, or any engine error family the reason adapter classifies. Only an unclassified
+    failure is stripped to its class name."""
+    return isinstance(exc, (*_PASS_THROUGH, ScanSourceError, *reason_adapter.registered_families()))
 
 
 def _read_and_profile(
