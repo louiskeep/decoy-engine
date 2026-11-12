@@ -253,7 +253,9 @@ def test_declared_column_missing_from_source_refused(
 
         monkeypatch.setattr(_readers_csv.CsvFileSource, name, spy)
     with pytest.raises(PipelineValidationError) as caught:
-        prepare_declared_sources(DeclarationRequest.for_descriptors(config))
+        prepare_declared_sources(
+            DeclarationRequest.for_descriptors(config), created_targets=lambda _e, _c: frozenset()
+        )
     err = caught.value
     assert err.code == "source_file.declared_column_missing"
     assert str(err).startswith(
