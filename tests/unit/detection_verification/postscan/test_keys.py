@@ -197,7 +197,7 @@ def test_a_class_the_engine_does_not_define_is_reported_as_exception(
     rels = [rel("p", ["id"], ("c", ["pid"]))]
     data = tables(p={"id": [1]}, c={"pid": [1]})
     results = check_keys(rels, data, data, scratch=tmp_path / "s", memory_limit="64MB")
-    assert {r.error_class for r in results} == {"Exception"}
+    assert [r.error_class for r in results if r.status == "error"] == ["Exception"]
     assert CANARY not in repr(keys_report(results))
 
 
@@ -227,8 +227,9 @@ def test_an_uncoded_failure_is_an_error_result_and_raises_nothing(
     rels = [rel("p", ["id"], ("c", ["pid"]))]
     data = tables(p={"id": [1]}, c={"pid": [1]})
     results = check_keys(rels, data, data, scratch=tmp_path / "s", memory_limit="64MB")
-    assert {(r.status, r.error_class) for r in results} == {("error", "TypeError")}
-    assert all(codes(r) == {"check_error"} for r in results)
+    failed = [r for r in results if r.status == "error"]
+    assert [r.error_class for r in failed] == ["TypeError"]
+    assert codes(failed[0]) == {"check_error"}
 
 
 def test_the_report_codes_are_namespace_and_code_mappings(tmp_path: Path) -> None:

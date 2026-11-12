@@ -454,6 +454,7 @@ def _declared() -> list[dict[str, Any]]:
         {
             "parent": {"table": "p", "columns": ["id"]},
             "children": [{"table": "c", "columns": ["pid"]}],
+            "orphan_policy": "warn",
         }
     ]
 
