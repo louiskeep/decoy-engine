@@ -222,7 +222,7 @@ def slices(repo: Path, *slugs: str, version: str | None = None, merged: bool = T
     return m0
 
 
-# The pending-era --check (REG-RELEASE E2) refuses any numeric slice. A slice the numeric
+# The pending-era --check refuses any numeric slice. A slice the numeric
 # renumber left consistent fails with these keys only, so the older carrier checks still hold.
 PENDING_ERA = ("registry-version-bump ", "branch-added-fixture", "numeric-since ")
 
@@ -925,6 +925,37 @@ def test_to_unreleased_refuses_an_edit_to_an_existing_identity(repo, setup, keys
     commit(repo, "edit")
     res = run(repo, "--to-unreleased")
     assert res.returncode == 3 and all(k in out(res).split("\n") for k in keys), out(res)
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
+
+
+@pytest.mark.parametrize(
+    ("rel", "line"),
+    [("tests/unit/test_probe_v.py", 'assert manifest()["registry_version"] == "{v}"'),
+     ("tests/unit/test_probe_v.py", "PIN = dict(registry_version='{v}', since='{v}')"),
+     ("tests/fixtures/probe/v.json", '{{"registry_version": "{v}", "since": "{v}"}}')],
+)  # fmt: skip
+def test_to_unreleased_refuses_a_registry_version_value_it_cannot_reset(repo, rel, line):  # AT-10
+    # Only the two named anchors return to main's version; any other carrier of the registry
+    # version would become the pending string, which a registry version never is.
+    v = nxt(mver(repo))
+    _claimed_branch(repo, v)
+    (repo / rel).write_text(line.format(v=v) + "\n")
+    commit(repo, "registry version carrier")
+    res = run(repo, "--to-unreleased")
+    assert res.returncode == 3 and f"unconverted {rel}:1" in out(res).split("\n"), out(res)
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
+
+
+def test_to_unreleased_refuses_a_claim_that_is_not_above_main(repo):  # AT-10
+    # Main already holds the claimed minor, so a branch line naming it may mean main's version.
+    v = mver(repo)
+    git(repo, "checkout", "-q", "-b", "a", "main")
+    add_code(repo, CONF2, "probe_a", v)
+    (repo / "tests/unit/test_probe_v.py").write_text(f'MAIN_IS_AT = "{v}"\n')
+    regen_contract(repo)
+    commit(repo, "claims main's version")
+    res = run(repo, "--to-unreleased")
+    assert res.returncode == 3 and out(res).startswith(f"claim-not-above-main {v} "), out(res)
     assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
 
 

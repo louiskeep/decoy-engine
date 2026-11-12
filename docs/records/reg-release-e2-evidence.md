@@ -402,3 +402,163 @@ Paths: `tests/fileaccess/protected_dir/test_protected_dir.py` `tests/native/test
 - `release_checks.sh` with a real lock sync past the pin steps.
 - The `stamp_release.py` CLI on an unshallowed scratch clone (this checkout is shallow); its CLI
   parsing path runs in `test_stamp_release_compile.py`.
+
+## Review round 1, 2026-11-12
+
+Owner review of `44a27b12` on PR #506: GO-WITH-FIXES. `origin/main` `4bb95063` was merged first
+(merge commit `e6eaca8f`). Main had moved four commits (#498, #499, #504, #510); none touches the
+reason catalog, the fixtures under `tests/fixtures/f29`, `scripts/release` or the renumber tool,
+and main's `REGISTRY_VERSION` is still 1.24.0, so the ceiling, the pin and the migration
+assertions are unchanged.
+
+### Heads and environment
+
+- Red test commit: `81e47d09` (tests only, on the merge commit).
+- Final source head for every mutation and for T1: `34b6f862`. This section is added in a later
+  docs-only commit.
+- `python -V`: Python 3.10.20 (a fresh worktree venv from
+  `uv sync --frozen --extra dev --extra lint --extra vault --extra cloud`; the earlier rounds ran
+  on 3.11.18). PyArrow 24.0.0, DuckDB 1.5.4, ruff 0.15.22, mypy 2.3.0, pytest 9.1.1.
+
+### Item 1 (fix before merge): `registry_version` values and a claim at main's version
+
+Red first, on `81e47d09` with the tool unchanged
+(`pytest tests/unit/test_registry_renumber.py -k "registry_version_value or not_above_main"`:
+4 failed, each a wrong outcome):
+
+- `test_to_unreleased_refuses_a_registry_version_value_it_cannot_reset` (3 cases: a Python
+  subscript comparison, a Python keyword argument, a JSON member). The tool exited 0 and rewrote
+  the line: the branch's registry version value became the pending string.
+- `test_to_unreleased_refuses_a_claim_that_is_not_above_main` (a branch cut from main's tip whose
+  new identity copies main's version, plus a test line naming main's version). The tool exited 0
+  and rewrote the line that named main's own version.
+
+Fix (`a00404b8`), in `scripts/dev/registry_renumber.py`:
+
+- `plan_unreleased`: on a Python or JSON carrier, a quoted claimed version that is the value of a
+  `registry_version` key (`"registry_version": "X"`, `["registry_version"] == "X"`,
+  `registry_version="X"`) is refused as `unconverted path:line` before the candidate is built.
+  The operator sets that line to main's version and reruns.
+- `unreleased`: a claim at or below main's version is refused with
+  `claim-not-above-main X (main is at Y): renumber the slice above main first (run without a
+  mode), then convert it`. The decision is the policy's existing `since_window_violations`
+  (a `since` at or below the released version), so the policy module does not grow. The named
+  path was run by hand in a scratch clone: refuse, renumber, convert, `--check` passes.
+
+Each new case turns red on its mutation (`10i`, `10j` below). With `10i` applied and no `-x`, all
+three parameter cases fail.
+
+### Items 2 to 5 (log for later; all four were small)
+
+- 2, `df26092b`, `reason_manifest_policy.py::unreleased_violations`: the two numeric-bump
+  messages end with `; run scripts/dev/registry_renumber.py --to-unreleased`. The module stays at
+  600 lines: one comment above `VERSION_LITERAL` went from three lines to two.
+- 3, `1dfcd8d3`, `stamp_release.py::_preflight`: when owned paths hold untracked files the
+  dirty-tree message also names `rm -- <those files>`; `git restore` leaves them. The existing
+  dirty-tree test asserts it for the untracked case and its absence for tracked ones.
+- 4, `8769ea72`, `registry_renumber.py::stamp_source`: the unused `UNRELEASED` name is removed
+  from a one-line import wherever it sits (first, middle, last); a three-case test covers it.
+- 5, `34b6f862`: comments in `test_registry_renumber.py`, the minor-fixture sentry, the
+  single-source sentry and `reason_manifest_policy.py` no longer name a work item.
+
+### Mutations on `34b6f862`
+
+Each mutation was applied once in a detached worktree of that commit (two worktrees, removed
+afterwards), its test run, then `git checkout -- .`; the tree was confirmed clean before and after
+each. The 46 definitions are the ones of the previous rerun, unchanged.
+
+| ID | Row | Mutation | Result | First test that went red |
+|---|---|---|---|---|
+| 1a | AT-1 | remove the v2 format check | RED | `tests/unit/test_reason_manifest_policy.py::test_at1_the_strict_v2_reader_rejects_a_malformed_pin[format-1]` |
+| 1b | AT-1 | replace the identities array with a count | RED | `tests/unit/test_reason_release_pin.py::test_at1_one_entry_writer_output_is_the_normative_golden` |
+| 1c | AT-1 | accept an empty code | RED | `tests/unit/test_reason_manifest_policy.py::test_at1_the_strict_v2_reader_rejects_a_malformed_pin[empty-code]` |
+| 1d | AT-1 | ignore a wrong since_counts total | RED | `tests/unit/test_reason_manifest_policy.py::test_at1_the_strict_v2_reader_rejects_a_malformed_pin[counts-total]` |
+| 1e | AT-1 | baseline only identities at or below 1.22.0 | RED | `tests/unit/test_reason_manifest_policy.py::test_at1_migration_keeps_the_shipped_version_and_baselines_through_the_ceiling` |
+| 1f | AT-1 | hash pretty JSON instead of canonical bytes | RED | `tests/unit/test_reason_release_pin.py::test_at1_field_digests_are_sha256_over_canonical_json` |
+| 1g | AT-1 | flip one nibble of the golden summary digest | RED | `tests/unit/test_reason_release_pin.py::test_at1_one_entry_writer_output_is_the_normative_golden` |
+| 1h | AT-1 | skip the legacy preflight | RED | `tests/unit/test_reason_manifest_policy.py::test_at1_migration_refuses_a_v1_or_full_fixture_mismatch` |
+| 1b-a | AT-1b | exempt every field of a pending identity | RED | `tests/unit/test_reason_manifest_policy.py::test_at1b_every_other_field_stays_frozen_under_a_pending_edit[_deprecate-pending0-kind-warning]` |
+| 1b-b | AT-1b | allow a non-null tombstone baseline | RED | `tests/unit/test_reason_manifest_policy.py::test_at1b_a_numeric_tombstone_cannot_be_retargeted` |
+| 1b-c | AT-1b | route ordinary --check through release-ready refusal | RED | `tests/unit/test_reason_release_pin.py::test_at4_release_ready_refuses_each_pending_class_that_check_accepts[deprecation]` |
+| 1b-d | AT-1b | make release-ready pass before stamping | RED | `tests/unit/test_reason_manifest_policy.py::test_at1b_a_declared_pending_edit_passes_ordinary_gates_but_not_release_ready[_deprecate-pending0]` |
+| 1b-e | AT-1b/AT-8 | set baseline_ceiling to the live (shipped) version | RED | `tests/unit/test_reason_manifest_policy.py::test_at1b_a_patch_stamp_moves_the_registry_and_keeps_the_ceiling[_deprecate-pending0]` |
+| 1b-f | AT-1b | leave the summary marker after stamping | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_a_patch_release_moves_the_registry_and_keeps_the_ceiling[deprecation]` |
+| 2a | AT-2 | skip numeric entries in the checker | RED | `tests/unit/test_reason_manifest_policy.py::test_at2_numeric_fields_are_frozen_per_field_and_pending_additions_are_not` |
+| 2b | AT-2 | digest all entries including UNRELEASED | RED | `tests/unit/test_reason_manifest_policy.py::test_at2_numeric_fields_are_frozen_per_field_and_pending_additions_are_not` |
+| 2c | AT-2 | compare only field names without checking digests | RED | `tests/unit/test_reason_manifest_policy.py::test_at2_numeric_fields_are_frozen_per_field_and_pending_additions_are_not` |
+| 3a | AT-3 | remove unreleased_violations | RED | `tests/unit/test_reason_manifest_policy.py::test_at3_only_unreleased_additions_pass_the_ceiling` |
+| 3b | AT-3 | compute the allowed version from the pin alone | RED | `tests/unit/test_reason_manifest_policy.py::test_at3_the_allowed_version_is_the_shipped_version_or_the_last_per_pr_minor[1.22.0-1.24.0]` |
+| 4a | AT-4 | drop the --release-ready invocation | RED | `tests/unit/scripts/test_release_checks_fragments.py::test_at4_release_checks_refuses_a_pending_registry[add_pending_identity]` |
+| 4b | AT-4 | release-ready ignores pending identities | RED | `tests/unit/test_reason_release_pin.py::test_at4_release_ready_refuses_each_pending_class_that_check_accepts[identity]` |
+| 4c | AT-4 | release-ready ignores pending deprecations | RED | `tests/unit/test_reason_release_pin.py::test_at4_release_ready_refuses_each_pending_class_that_check_accepts[deprecation]` |
+| 4d | AT-4 | release-ready ignores pending summary markers | RED | `tests/unit/test_reason_release_pin.py::test_at4_release_ready_refuses_each_pending_class_that_check_accepts[summary]` |
+| 4e | AT-4 | bypass the central policy with shell parsing | RED | `tests/sentry/test_reason_policy_single_source.py::test_release_checks_asks_the_policy_and_parses_no_registry_state` |
+| 5a | AT-5 | remove the pending-code fragment check | RED | `tests/sentry/test_reason_minor_fixtures.py::test_at5_no_other_spelling_names_a_pending_identity[Adds config/code in prose.]` |
+| 5b | AT-5 | search only CHANGELOG.md | RED | `tests/sentry/test_reason_minor_fixtures.py::test_at5_claims_are_read_from_changelog_d_fragments_only` |
+| 5c | AT-5 | substring matching | RED | `tests/sentry/test_reason_minor_fixtures.py::test_at5_no_other_spelling_names_a_pending_identity[Adds ` config/code`.]` |
+| 5d | AT-5 | accept a dotted spelling | RED | `tests/sentry/test_reason_minor_fixtures.py::test_at5_no_other_spelling_names_a_pending_identity[Adds `config.code`.]` |
+| 8a | AT-8 | make deprecation-only unchanged | RED | `tests/unit/test_reason_manifest_policy.py::test_at1b_a_patch_stamp_moves_the_registry_and_keeps_the_ceiling[_deprecate-pending0]` |
+| 8b | AT-8 | force the patch component to 1 | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_a_patch_release_moves_the_registry_and_keeps_the_ceiling[deprecation]` |
+| 8c | AT-8 | remove the explicit-minor equality and state restriction | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_the_cli_accepts_only_the_automatic_registry_minor[identity-1.26.0-False]` |
+| 8d | AT-8 | leave the ceiling at the per-PR minor after stamping new identities | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor` |
+| 8e | AT-8 | use the dotted package version as the fixture slug | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor` |
+| 8f | AT-8 | rewrite every matching string | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor` |
+| 8g | AT-8 | omit no-op pin capture | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_a_release_with_nothing_pending_recaptures_the_pin` |
+| 8h | AT-8 | disable rollback for the created fixture | RED | `tests/unit/scripts/test_stamp_release_compile.py::test_at8_a_failure_while_applying_restores_every_owned_path[5]` |
+| 10a | AT-10 | emit JSON value "UNRELEASED" | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_converts_an_identity_addition_branch` |
+| 10b | AT-10 | emit quoted catalog since="unreleased" | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_converts_an_identity_addition_branch` |
+| 10c | AT-10 | emit bare uppercase UNRELEASED in Markdown | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_converts_an_identity_addition_branch` |
+| 10d | AT-10 | omit changelog.d/*.md | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_converts_an_identity_addition_branch` |
+| 10e | AT-10 | allow a marked existing-identity edit through conversion | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_refuses_an_edit_to_an_existing_identity[_marked_summary-keys1]` |
+| 10f | AT-10 | copy main's contract | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_converts_an_identity_addition_branch` |
+| 10g | AT-10 | skip constant-import insertion | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_converts_an_identity_addition_branch` |
+| 10h | AT-10 | apply before candidate verification | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_converts_an_identity_addition_branch` |
+| 10i | AT-10 | convert a registry_version value like any other carrier | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_refuses_a_registry_version_value_it_cannot_reset[tests/unit/test_probe_v.py-assert manifest()["registry_version"] == "{v}"]` |
+| 10j | AT-10 | accept a claim that is not above main's version | RED | `tests/unit/test_registry_renumber.py::test_to_unreleased_refuses_a_claim_that_is_not_above_main` |
+| G1 | guard | add a deprecation-only branch to stamp_release.py | RED | `tests/sentry/test_reason_policy_single_source.py::test_no_manifest_validator_lives_outside_the_policy_module` |
+| G2 | guard | fixture sentry accepts a plain-text or prefix-collision claim | RED | `tests/sentry/test_reason_minor_fixtures.py::test_at5_no_other_spelling_names_a_pending_identity[Adds config/code in prose.]` |
+
+All 48 mutations turned their tests red; none stayed green. `10i` and `10j` are the mutations for
+the two new AT-10 cases: `10i` disables the `registry_version` value refusal in
+`plan_unreleased`, `10j` disables the claim refusal in `unreleased`.
+
+### T1 on `34b6f862`
+
+```
+scripts/dev/gates.sh --keep-going --baseline --steps ruff,format,mypy,sentry,layers,licenses,tests <46 paths>
+```
+
+The 46 paths are the list under "T1 on `4af6b39c`"; the round adds no test file. ruff PASS;
+format PASS; mypy PASS; sentry 5103 passed, 0 failed, 2 skipped; layers 15 passed; licenses 63
+passed; tests 1235 passed, 0 failed, 200 skipped.
+
+Failure sets, branch against `origin/main` `4bb95063`: branch none, so the baseline was not rerun
+and there is no branch-only failure. The mypy `tomli` error of the earlier rounds
+(`dp_provenance.py:517`) belongs to a Python 3.11 venv; it does not appear under 3.10.20, and it
+was not rechecked on main in this round.
+
+### CLI paths
+
+- `reason_release_pin.py --check`: "reason release pin current", exit 0 (`34b6f862`).
+- `reason_release_pin.py --release-ready`: "reason release pin release-ready", exit 0
+  (`34b6f862`).
+- `registry_renumber.py --check --main origin/main`, run on the commit that carries this record:
+  "registry consistent", exit 0.
+- `scripts/dev/check_fragment.py --base origin/main`: exit 0.
+
+### Not run
+
+- The full default suite (the orchestrator runs it on the merge head).
+- `release_checks.sh` with a real lock sync, and the `stamp_release.py` CLI on an unshallowed
+  clone; both paths run in their test files, which are in T1.
+- The docs build, the ML, NER, packaging, DP and determinism CI lanes.
+- T1 was not repeated on the docs-only commit that adds this section; the sentry step was.
+
+### V2-LOG
+
+- The `registry_version` value refusal reads one line: a key and its value split over two lines,
+  or a comparison written value-first, is still converted.
+- The `rm` hint lists every untracked file under the owned paths, a hand-written fragment
+  included; the message says the leftovers of a killed stamp are meant.
+- A test's whole temporary tree stays on disk for the session; `test_registry_renumber.py` alone
+  holds several hundred MB while it runs.

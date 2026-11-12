@@ -290,9 +290,12 @@ def _preflight(root: Path, version: str, date: str, owned: list[str]) -> None:
         raise FragmentError("date must be a real YYYY-MM-DD date")
     dirty = _dirty(root, owned)
     if dirty:
+        # `git restore` leaves untracked files alone; a stamp that died mid-write can leave some.
+        new = _git(root, "ls-files", "--others", "--exclude-standard", "--", *owned).split()
+        rm = f"; a killed stamp's untracked leftovers go with: rm -- {' '.join(new)}" * bool(new)
         raise FragmentError(
             f"uncommitted changes in {', '.join(dirty)}; restore them with: git restore "
-            f"--source=HEAD --staged --worktree -- {' '.join(owned)}"
+            f"--source=HEAD --staged --worktree -- {' '.join(owned)}{rm}"
         )
 
 
