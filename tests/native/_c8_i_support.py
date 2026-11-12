@@ -15,8 +15,12 @@ from typing import Any
 import pyarrow as pa
 from hypothesis import strategies as st
 
-from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -116,7 +120,7 @@ def run_native(
 ) -> tuple[list[pa.Table], NativeRouteEvidence]:
     evidence: list[NativeRouteEvidence] = []
     out = list(
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config,
             list(chunks),
             table=TABLE,
@@ -156,10 +160,11 @@ def _columns(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def run_public_oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
     return list(
-        run_mask_pipeline_chunked(
+        run_mask_pipeline_chunked_below_gate(
             config,
             list(chunks),
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )

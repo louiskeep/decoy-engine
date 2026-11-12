@@ -263,7 +263,7 @@ def test_full_frame_unrepresentable_value_is_value_free(tmp_path: Any) -> None:
 
 
 def test_chunked_read_passthrough_unrepresentable_value_is_value_free() -> None:
-    from decoy_engine import run_mask_chunked
+    from tests.native._b8_support import run_mask_chunked_below_gate
     from tests.native._chunked_entry_support import (
         ENGINE_VERSION,
         FORCE_ORACLE_VALUE,
@@ -285,7 +285,7 @@ def test_chunked_read_passthrough_unrepresentable_value_is_value_free() -> None:
     with pytest.raises(ExecutionError) as caught:
         next(
             iter(
-                run_mask_chunked(
+                run_mask_chunked_below_gate(
                     config,
                     chunks,
                     table=TABLE,

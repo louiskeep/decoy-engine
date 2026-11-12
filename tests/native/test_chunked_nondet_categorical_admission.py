@@ -19,7 +19,6 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution.native import _chunked_entry, _dispatch
@@ -33,7 +32,11 @@ from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import run_one
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+    run_one,
+)
 from tests.native._chunked_categorical_support import (
     FORCE,
     cat_col,
@@ -169,7 +172,11 @@ def test_a_non_admissible_config_fails_before_any_chunk_and_never_reaches_the_or
             consumed.append(1)
             yield chunk
 
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     ev: list[Any] = []
     kwargs: dict[str, Any] = {"route_evidence_sink": ev} if entry == "run_mask_chunked" else {}
     with pytest.raises(PlanCompileError) as info:
@@ -432,7 +439,11 @@ def test_the_when_rejection_fires_before_any_chunk_on_both_entries(entry: str) -
             consumed.append(1)
             yield chunk
 
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     with pytest.raises(PlanCompileError) as info:
         list(
             run(

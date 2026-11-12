@@ -18,7 +18,14 @@ from decoy_engine import run_pipeline
 from decoy_engine.errors import ConfigError, PipelineValidationError
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.execution import _isolated_run as isolated_mod
+from decoy_engine.execution import _pipeline_auto_chunk as auto_chunk
+from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution._chunked_input import fixed_schema_chunks_from_resident
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
+from decoy_engine.execution.native import _chunked_entry
+from decoy_engine.execution.native._chunked_entry import run_mask_chunked
+from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
+from decoy_engine.execution.physical.drivers._chunked import MaskPipelineChunkedAdapter
 from decoy_engine.profile import (
     DeclarationRequest,
     PreparedDeclaredSources,
@@ -331,3 +338,217 @@ def test_missing_has_header_refuses_before_rows(
         else:
             run_pipeline(config, engine_version="e2c-test")
     assert spies.calls == []
+
+
+# AT-E2d-1, -2, -4 and the capture guard: the three chunked entries -------------------------
+
+ENTRIES = ("pipeline", "mask", "native_or_oracle")
+
+
+class SpyChunks:
+    """An iterable of chunks that counts how far the entry pulled it."""
+
+    def __init__(self, *tables: pa.Table) -> None:
+        self.tables = tables
+        self.iters = 0
+        self.nexts = 0
+        self._it = iter(tables)
+
+    def __iter__(self) -> SpyChunks:
+        self.iters += 1
+        return self
+
+    def __next__(self) -> pa.Table:
+        self.nexts += 1
+        return next(self._it)
+
+
+def _chunk_config(*columns: str, table: str = "t") -> dict[str, Any]:
+    return {
+        "version": 2,
+        "global_settings": {"seed": 1},
+        "sources": {table: {"type": "file", "format": "csv", "path": "unused.csv"}},
+        "tables": [{"name": table, "columns": [_col(c) for c in columns]}],
+        "relationships": [],
+    }
+
+
+def _run_entry(
+    entry: str, config: dict[str, Any], chunks: Any, schema: pa.Schema | None = None, table="t"
+) -> Any:
+    if entry == "pipeline":
+        return run_mask_pipeline_chunked(
+            config, chunks, table=table, engine_version="e2d", source_schema=schema
+        )
+    if entry == "mask":
+        return run_mask_chunked(config, chunks, table=table, engine_version="e2d")
+    return run_native_or_oracle_chunked(config, chunks, table=table, engine_version="e2d")
+
+
+def _schema(*columns: str) -> pa.Schema:
+    return pa.schema([pa.field(c, pa.string()) for c in columns])
+
+
+class DeepSpies:
+    """What must stay at zero when a chunked entry refuses: profile, compile and the adapter."""
+
+    def __init__(self, mp: pytest.MonkeyPatch) -> None:
+        import decoy_engine.plan as plan_mod
+        from decoy_engine.execution import _chunked_profile
+
+        self.calls: list[str] = []
+        self._wrap(mp, _chunked_profile, "first_chunk_profile")
+        self._wrap(mp, plan_mod, "compile_plan")
+        self._wrap(mp, PandasExecutionAdapter, "run")
+
+    def _wrap(self, mp: pytest.MonkeyPatch, owner: Any, name: str) -> None:
+        real = getattr(owner, name)
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            self.calls.append(name)
+            return real(*args, **kwargs)
+
+        mp.setattr(owner, name, spy)
+
+
+def test_chunked_requires_source_schema() -> None:
+    """AT-E2d-1: the pipeline entry has no default for `source_schema`."""
+    chunks = SpyChunks(_table("id"))
+    with pytest.raises(TypeError):
+        run_mask_pipeline_chunked(  # type: ignore[call-arg]
+            _chunk_config("id"), chunks, table="t", engine_version="e2d"
+        )
+    assert chunks.iters == 0
+    assert chunks.nexts == 0
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_chunked_refuses_undeclared_table_before_rows(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _chunk_config("id")
+    chunks = SpyChunks(_table("id"))
+    spies = DeepSpies(monkeypatch)
+    with pytest.raises(PipelineValidationError) as caught:
+        _run_entry(entry, config, chunks, _schema("id"), table="ghost")
+    assert caught.value.code == TABLE
+    assert (chunks.iters, chunks.nexts, spies.calls) == (0, 0, [])
+
+
+def test_pipeline_entry_refuses_undeclared_source_schema_before_any_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunks = SpyChunks(_table("id"))
+    spies = DeepSpies(monkeypatch)
+    with pytest.raises(PipelineValidationError) as caught:
+        _run_entry("pipeline", _chunk_config("id"), chunks, _schema("id", "zz_secret"))
+    _assert_value_free(caught.value, COLUMN)
+    assert (chunks.iters, chunks.nexts, spies.calls) == (0, 0, [])
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_chunked_refuses_undeclared_first_chunk_column_before_profile(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks = SpyChunks(_table("id", "zz_secret"), _table("id", "zz_secret"))
+    spies = DeepSpies(monkeypatch)
+    with pytest.raises(PipelineValidationError) as caught:
+        _run_entry(entry, _chunk_config("id"), chunks, _schema("id"))
+    _assert_value_free(caught.value, COLUMN)
+    assert chunks.nexts == 1
+    assert spies.calls == []
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_chunked_refuses_a_column_that_first_appears_in_chunk_three(entry: str) -> None:
+    chunks = SpyChunks(_table("id"), _table("id"), _table("id", "zz_late"))
+    out = _run_entry(entry, _chunk_config("id"), chunks, _schema("id"))
+    got: list[pa.Table] = []
+    with pytest.raises(PipelineValidationError) as caught:
+        for chunk in out:
+            got.append(chunk)
+    _assert_value_free(caught.value, COLUMN)
+    assert len(got) <= 2
+
+
+def test_pipeline_entry_refuses_a_chunk_column_outside_source_schema() -> None:
+    """The column is declared in config but the caller's `source_schema` does not list it."""
+    config = _chunk_config("id", "extra")
+    chunks = SpyChunks(_table("id", "extra"))
+    out = run_mask_pipeline_chunked(
+        config, chunks, table="t", engine_version="e2d", source_schema=_schema("id", "extra")
+    )
+    assert len(list(out)) == 1
+    chunks = SpyChunks(_table("id", "extra"))
+    with pytest.raises(PipelineValidationError) as caught:
+        run_mask_pipeline_chunked(
+            config, chunks, table="t", engine_version="e2d", source_schema=_schema("id")
+        )
+    assert caught.value.code == COLUMN
+    assert chunks.nexts == 1
+
+
+def test_a_declared_chunked_run_still_masks() -> None:
+    config = _chunk_config("id", "name")
+    chunk = pa.table({"id": ["1", "2"], "name": ["a", "b"]})
+    for entry in ENTRIES:
+        out = list(_run_entry(entry, config, [chunk, chunk], _schema("id", "name")))
+        assert [c.num_rows for c in out] == [2, 2]
+
+
+def test_auto_chunk_legacy_passes_source_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AT-E2d-4: the resident legacy lane hands its table's schema to the gate."""
+    from decoy_engine.providers_v2 import get_default_registry
+
+    source = pa.table({"id": ["1"], "zz_secret": ["x"]})
+    spies = DeepSpies(monkeypatch)
+    with pytest.raises(PipelineValidationError) as caught:
+        auto_chunk._run_legacy(
+            _chunk_config("id"),
+            source,
+            table="t",
+            engine_version="e2d",
+            registry=get_default_registry(),
+            adapter=None,
+            vault_writer=None,
+            chunk_size_rows=10,
+            key_provider=None,
+            chunk_results=[],
+        )
+    _assert_value_free(caught.value, COLUMN)
+    assert spies.calls == []
+
+
+def test_chunked_adapter_forwards_source_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return iter(())
+
+    monkeypatch.setattr("decoy_engine.execution._chunked.run_mask_pipeline_chunked", spy)
+    schema = _schema("id")
+    MaskPipelineChunkedAdapter().run(
+        _chunk_config("id"), [], table="t", engine_version="e2d", source_schema=schema
+    )
+    assert seen["source_schema"] is schema
+
+
+def test_fixed_schema_capture_survives(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `_FixedSchemaChunks` input still reaches admission with its captured schema, and a
+    stored pandas index field is not an undeclared column."""
+    frame = pd.DataFrame({"id": ["1", "2"]}, index=pd.Index([10, 20], name="ix"))
+    resident = pa.Table.from_pandas(frame)
+    assert resident.schema.names != ["id"]
+    seen: dict[str, Any] = {}
+    real = _chunked_entry._route_chunked
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen["captured"] = kwargs["captured_schema"]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_chunked_entry, "_route_chunked", spy)
+    producer = fixed_schema_chunks_from_resident(resident, 1)
+    out = list(run_mask_chunked(_chunk_config("id"), producer, table="t", engine_version="e2d"))
+    assert sum(c.num_rows for c in out) == 2
+    assert seen["captured"].equals(resident.schema, check_metadata=True)

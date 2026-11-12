@@ -13,7 +13,6 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _chunked_dgrn
 from decoy_engine.execution._chunked import check_chunked_compatibility
@@ -21,6 +20,11 @@ from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter, collect_vault_entries
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
@@ -55,7 +59,7 @@ def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
     forcing column, proves the table stayed on the oracle for the exact reason."""
     kw.setdefault("key_provider", key_provider())
     sink = kw.setdefault("route_evidence_sink", [])
-    out = run_mask_chunked(
+    out = run_mask_chunked_below_gate(
         config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw
     )
     for column in _forced_columns(config):
@@ -67,8 +71,10 @@ def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
 
 def _oracle(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
     kw.setdefault("key_provider", key_provider())
-    return run_mask_pipeline_chunked(
-        config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw
+    table = kw.pop("table", TABLE)
+    kw.setdefault("source_schema", declared_schema(config, table))
+    return run_mask_pipeline_chunked_below_gate(
+        config, chunks, table=table, engine_version=ENGINE_VERSION, **kw
     )
 
 

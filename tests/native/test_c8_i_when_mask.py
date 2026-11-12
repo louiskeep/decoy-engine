@@ -23,6 +23,7 @@ from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._when_gate import _eval_predicate
 from decoy_engine.execution.native._when_mask import WhenSpec, when_mask
 from decoy_engine.expressions._when_parser import parse_when, when_column_refs
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._c8_i_support import (
     identifiers,
     predicates,
@@ -200,7 +201,6 @@ def _t64_stream() -> list[pa.Table]:
 
 
 def _leg_error(config: dict[str, Any], chunks: list[pa.Table], *, forced: bool, mp: Any) -> Any:
-    from decoy_engine import run_mask_chunked
     from tests.native._c8_i_support import companion_missing
     from tests.native._chunked_entry_support import ENGINE_VERSION, TABLE, hash_col, key_provider
 
@@ -208,7 +208,7 @@ def _leg_error(config: dict[str, Any], chunks: list[pa.Table], *, forced: bool, 
         config = make_config([*config["tables"][0]["columns"], hash_col("h")])
         chunks = [c.append_column("h", pa.array(["h0", "h1", "h2"])) for c in chunks]
         with companion_missing(mp):
-            gen = run_mask_chunked(
+            gen = run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,
@@ -216,7 +216,7 @@ def _leg_error(config: dict[str, Any], chunks: list[pa.Table], *, forced: bool, 
                 key_provider=key_provider(),
             )
             return _drain(gen)
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
     )
     return _drain(gen)

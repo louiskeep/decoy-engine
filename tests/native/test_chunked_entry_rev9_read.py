@@ -13,7 +13,6 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine import run_mask_chunked
 from decoy_engine.execution import _pandas_adapter
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
@@ -21,6 +20,7 @@ from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
@@ -167,7 +167,7 @@ def test_unicode_predicate_names_are_rejected_at_compile(name: str, configured: 
     chunks = [_chunk(**{name: good}), _chunk(**{name: bad})]
     with pytest.raises(PlanCompileError) as info:
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,
@@ -189,7 +189,7 @@ def test_predicate_the_tokenizer_rejects_is_rejected_at_compile_and_reads_every_
     assert info.value.code == "when_outside_closed_grammar"
     with pytest.raises(PlanCompileError):
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,
@@ -256,7 +256,7 @@ def test_refused_value_in_chunk_two_is_coded(
         )
         chunks = [t.append_column("h", pa.array(["p", "q", "r"])) for t in chunks]
         monkeypatch.setitem(__import__("sys").modules, "decoy_engine_native", None)
-    gen = run_mask_chunked(config, chunks, **kwargs)
+    gen = run_mask_chunked_below_gate(config, chunks, **kwargs)
     first, second = next(gen), next(gen)
     assert first.num_rows == second.num_rows == 3
     with pytest.raises(ExecutionError) as info:
@@ -271,7 +271,7 @@ def test_refused_value_in_chunk_zero_is_coded_at_call_time() -> None:
     chunks = [_chunk(x=_T64.bad), _chunk(x=_T64.good)]
     oracle_exc = _public_error(config, chunks)
     with pytest.raises(ExecutionError) as info:
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
         )
     _expect_coded(info, "x", 0)
@@ -285,7 +285,7 @@ def test_two_read_columns_the_error_names_the_one_that_holds_the_value() -> None
         _chunk(a=_T64.good, b=_T64.good),
         _chunk(a=_T64.good, b=_T64.bad),
     ]
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
     )
     next(gen)
@@ -652,7 +652,7 @@ def test_masked_column_conversion_failure_is_not_wrapped() -> None:
         _chunk(m=_T64.bad, x=ints, c=forced),
     ]
     oracle_exc = _public_error(config, chunks)
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
     )
     next(gen)
@@ -671,7 +671,7 @@ def test_strategy_handler_failure_is_the_same_object(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(RedactHandler, "run", run)
     # The forced-oracle column sends the table through the pandas handlers.
     chunks = [_chunk(x=pa.array([1, 2, 3]), c=pa.array([FORCE_ORACLE_VALUE] * 3))]
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         _read_x_config(force_oracle("c")),
         chunks,
         table=TABLE,
@@ -693,7 +693,7 @@ class _Raises:
 
 def test_custom_adapter_failure_is_the_same_object() -> None:
     boom = ValueError("adapter failed")
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         _read_x_config(),
         [_chunk(x=pa.array([1, 2, 3]))],
         table=TABLE,
@@ -710,7 +710,7 @@ def test_custom_adapter_converting_a_refused_passthrough_raises_raw() -> None:
     config = _read_x_config()
     chunks = [_chunk(x=_T64.good), _chunk(x=_T64.bad)]
     oracle_exc = _public_error(config, chunks)
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         chunks,
         table=TABLE,
@@ -731,7 +731,7 @@ def test_stock_adapter_subclass_is_not_wrapped_either() -> None:
 
     config = _read_x_config()
     chunks = [_chunk(x=_T64.good), _chunk(x=_T64.bad)]
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         chunks,
         table=TABLE,
@@ -758,7 +758,7 @@ def test_read_nested_passthrough_is_coded_at_chunk_zero(name: str) -> None:
     oracle_exc = _public_error(config, chunks)
     assert isinstance(oracle_exc, TypeError)
     with pytest.raises(ExecutionError) as info:
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
         )
     _expect_coded(info, "tags", 0)
@@ -777,7 +777,7 @@ def test_masked_profile_failure_next_to_a_valid_read_column_is_not_wrapped() -> 
     chunks = [_chunk(m=_LIST, x=pa.array([1, 2, 3]))]
     oracle_exc = _public_error(config, chunks)
     with pytest.raises(TypeError) as info:
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config, chunks, table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
         )
     assert not isinstance(info.value, ExecutionError)
@@ -789,7 +789,7 @@ def test_identical_profile_failures_are_attributed_in_source_order() -> None:
     config = make_config([redact("m"), _when("s", "t != 'q'"), passthrough("t")])
     masked_first = [pa.table({"s": _S, "m": _LIST, "t": _LIST})]
     with pytest.raises(TypeError) as info:
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config,
             masked_first,
             table=TABLE,
@@ -799,7 +799,7 @@ def test_identical_profile_failures_are_attributed_in_source_order() -> None:
     assert not isinstance(info.value, ExecutionError)
     read_first = [pa.table({"s": _S, "t": _LIST, "m": _LIST})]
     with pytest.raises(ExecutionError) as coded:
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config,
             read_first,
             table=TABLE,

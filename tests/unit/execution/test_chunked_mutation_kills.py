@@ -47,6 +47,8 @@ from decoy_engine.keyprovider import KeyedStrategyRequiresSecret
 from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import run_mask_pipeline_chunked_below_gate
 
 _EV = "chunked-mutkill"
 
@@ -689,7 +691,13 @@ class TestRunMaskKeyedGate:
         full = run_pipeline(cfg, sources={"accounts": tbl}, engine_version=_EV).outputs["accounts"]
         chunked = pa.concat_tables(
             list(
-                run_mask_pipeline_chunked(cfg, _chunks(df, 7), table="accounts", engine_version=_EV)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    _chunks(df, 7),
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_EV,
+                )
             )
         )
         assert chunked.to_pylist() == full.to_pylist()
@@ -793,7 +801,15 @@ class TestRunMaskChunkedCallSites:
         config = _passthrough_fk_config()
         chunk = pa.table({"id": pa.array([1, None, 9007199254740993], type=pa.int64())})
         with pytest.raises(ExecutionError) as exc:
-            list(run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    config,
+                    [chunk],
+                    table="customers",
+                    source_schema=declared_schema(config, "customers"),
+                    engine_version=_EV,
+                )
+            )
         assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
         assert "customers" in exc.value.message
 
@@ -836,7 +852,11 @@ class TestRunMaskChunkedCallSites:
             {"email": pa.array(["a@x.com", "b@x.com"]), "note": pa.array(["n1", "n2"])}
         )
         with pytest.raises(ExecutionError) as exc:
-            list(run_mask_pipeline_chunked(cfg, [chunk], table="accounts", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked_below_gate(
+                    cfg, [chunk], table="accounts", engine_version=_EV
+                )
+            )
         assert exc.value.code == "undeclared_output_columns"
 
     @pytest.mark.no_default_secret
@@ -852,4 +872,12 @@ class TestRunMaskChunkedCallSites:
         monkeypatch.setattr(release, "RELEASE_PHASE", "ga")
         cfg = _config(tmp_path, [{"name": "email", "strategy": "hash", "namespace": "e"}])
         with pytest.raises(KeyedStrategyRequiresSecret):
-            list(run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_EV,
+                )
+            )

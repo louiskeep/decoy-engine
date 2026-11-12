@@ -17,7 +17,6 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked import (
     _conditional_admission_failures,
     check_chunked_compatibility,
@@ -30,7 +29,12 @@ from decoy_engine.generation.pool import PoolCapacityError
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import run_one, with_force
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+    run_one,
+    with_force,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -272,7 +276,11 @@ def test_a_non_admissible_config_fails_before_any_chunk_and_never_reaches_the_or
             consumed.append(1)
             yield chunk
 
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     with pytest.raises(PlanCompileError) as info:
         list(
             run(
@@ -540,7 +548,11 @@ def test_the_when_rejection_fires_before_any_chunk_on_both_entries(entry: str) -
             consumed.append(1)
             yield chunk
 
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     with pytest.raises(PlanCompileError) as info:
         list(
             run(

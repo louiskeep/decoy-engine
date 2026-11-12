@@ -22,11 +22,18 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import FORCE, FORCE_REASON, Run, identical, run_pair
+from tests.native._b8_support import (
+    FORCE,
+    FORCE_REASON,
+    Run,
+    identical,
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+    run_pair,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -196,7 +203,11 @@ def test_1a_numeric_reference_is_rejected_on_both_chunked_entries(
     build: Any, code: str, entry: str
 ) -> None:
     source = _int_ref_source(6)
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     cfg = make_config([build(when="p == 9007199254740992"), passthrough("p")])
     with pytest.raises(PlanCompileError) as info:
         list(
@@ -264,7 +275,11 @@ def _null_later_chunks() -> list[pa.Table]:
 def test_1b_later_chunk_numeric_drift_is_rejected_before_it_runs(
     build: Any, code: str, entry: str, chunks_fn: Any
 ) -> None:
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     cfg = make_config([build(when="keep == 'A'"), passthrough("keep")])
     produced: list[int] = []
     chunks = chunks_fn()
@@ -384,7 +399,11 @@ def test_4_numeric_source_faker_with_when_declines_via_the_schema_guard(entry: s
     source = pa.table(
         {"c": pa.array([1, 2, 3, 4], pa.int64()), "keep": pa.array(["A"] * 4, pa.string())}
     )
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     cfg = make_config([pos_faker(when="keep == 'A'"), passthrough("keep")])
     with pytest.raises(PlanCompileError) as info:
         list(

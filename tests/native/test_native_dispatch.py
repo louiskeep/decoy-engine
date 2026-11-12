@@ -21,11 +21,11 @@ from decoy_engine.execution.native._dispatch import (
     NativeChunkSchemaDriftError,
     NativeRouteEvidence,
     plan_native_route,
-    run_native_or_oracle_chunked,
 )
 from decoy_engine.keyprovider import SecretKeyProvider, key_provider_from_ref
 from decoy_engine.profile import ColumnProfile, Profile, Relationship, TableProfile
 from decoy_engine.providers_v2 import get_default_registry
+from tests.native._b8_support import run_native_or_oracle_chunked_below_gate
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _NEEDS_COMPANION = pytest.mark.skipif(
@@ -120,7 +120,7 @@ def test_all_admitted_table_routes_every_node_to_native_kernel() -> None:
     source = _all_admitted_source()
     sink: list[NativeRouteEvidence] = []
     chunks = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source.slice(0, 2), source.slice(2, 2)],
             table="w",
@@ -151,7 +151,7 @@ def test_job_success_alone_is_not_route_proof() -> None:
     source = _all_admitted_source()
     sink: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source],
             table="w",
@@ -171,7 +171,7 @@ def test_compiled_kernel_executed_flag_proves_the_compiled_kernel_ran() -> None:
     source = _all_admitted_source()
     sink: list[NativeRouteEvidence] = []
     evidence_before_consumption = None
-    it = run_native_or_oracle_chunked(
+    it = run_native_or_oracle_chunked_below_gate(
         config,
         [source],
         table="w",
@@ -214,7 +214,7 @@ def test_non_admitted_column_reroutes_the_whole_table_not_just_that_column() -> 
     )
     sink: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source],
             table="w",
@@ -473,7 +473,7 @@ def test_extension_absent_reroutes_whole_table_at_preflight(
     source = _all_admitted_source()
     sink: list[NativeRouteEvidence] = []
     chunks = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source],
             table="w",
@@ -555,7 +555,7 @@ def test_uncovered_column_reroutes_to_oracle() -> None:
     source = pa.table({"p": [1, 2], "unconfigured": ["x", "y"]})
     sink: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config, [source], table="w", engine_version="test", route_evidence_sink=sink
         )
     )
@@ -571,7 +571,7 @@ def test_empty_chunk_stream_delegates_cleanly() -> None:
     }
     sink: list[NativeRouteEvidence] = []
     out = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config, [], table="w", engine_version="test", route_evidence_sink=sink
         )
     )
@@ -592,7 +592,7 @@ def test_evidence_table_field_is_pinned_on_every_producing_path() -> None:
     source = _all_admitted_source()
     sink: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source],
             table="w",
@@ -626,7 +626,7 @@ def test_evidence_table_field_is_pinned_on_every_producing_path() -> None:
     # Empty-input path.
     sink3: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             {"global_settings": {"seed": 42}, "tables": [{"name": "w", "columns": []}]},
             [],
             table="w",
@@ -652,7 +652,7 @@ def test_downgrade_to_oracle_preserves_column_and_strategy_identity(
 
     monkeypatch.setattr(_dispatch, "load_compiled_crypto_kernel", _unavailable)
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source],
             table="w",
@@ -997,7 +997,7 @@ def test_provider_config_values_reach_the_kernels_not_just_the_defaults() -> Non
     source = pa.table({"r": ["secret1"], "t": ["ABCDEFGH"], "h": ["a@x.com"]})
     sink: list[NativeRouteEvidence] = []
     chunks = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source],
             table="w",
@@ -1036,7 +1036,7 @@ def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
     chunk1 = pa.table({"h": ["a@x.com"]})
     chunk2 = pa.table({"h": ["b@x.com"]})
     sink: list[NativeRouteEvidence] = []
-    it = run_native_or_oracle_chunked(
+    it = run_native_or_oracle_chunked_below_gate(
         config,
         [chunk1, chunk2],
         table="w",
@@ -1091,7 +1091,7 @@ def test_mask_native_resolves_key_provider_from_config_mask_secret_ref(
 
     sink: list[NativeRouteEvidence] = []
     auto_chunks = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config, [source], table="w", engine_version="test", route_evidence_sink=sink
         )
     )
@@ -1101,7 +1101,7 @@ def test_mask_native_resolves_key_provider_from_config_mask_secret_ref(
 
     explicit_provider = key_provider_from_ref("env:DECOY_T5_TEST_MASK_SECRET")
     explicit_chunks = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [source],
             table="w",
@@ -1129,7 +1129,7 @@ def test_empty_chunk_stream_with_keyed_strategy_and_explicit_key_provider_succee
     }
     sink: list[NativeRouteEvidence] = []
     out = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [],
             table="w",
@@ -1168,7 +1168,7 @@ def test_configured_column_missing_from_first_chunk_reroutes_and_reports_both_si
     source = pa.table({"p": [1, 2]})  # "q" is configured but absent from this chunk.
     sink: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config, [source], table="w", engine_version="test", route_evidence_sink=sink
         )
     )
@@ -1197,7 +1197,7 @@ def test_second_chunk_introducing_an_unconfigured_column_fails_coded_after_first
     chunk1 = pa.table({"p": [1, 2]})
     chunk2 = pa.table({"p": [3, 4], "surprise": ["a", "b"]})
     sink: list[NativeRouteEvidence] = []
-    it = run_native_or_oracle_chunked(
+    it = run_native_or_oracle_chunked_below_gate(
         config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
@@ -1237,7 +1237,7 @@ def test_second_chunk_missing_a_configured_column_fails_coded_not_silently_dropp
     chunk1 = pa.table({"p": [1, 2], "q": [10, 20]})
     chunk2 = pa.table({"p": [3, 4]})  # "q" absent on this later chunk only.
     sink: list[NativeRouteEvidence] = []
-    it = run_native_or_oracle_chunked(
+    it = run_native_or_oracle_chunked_below_gate(
         config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
@@ -1261,7 +1261,7 @@ def test_second_chunk_column_type_change_fails_coded() -> None:
     chunk1 = pa.table({"p": pa.array([1, 2], type=pa.int64())})
     chunk2 = pa.table({"p": pa.array([3.0, 4.0], type=pa.float64())})
     sink: list[NativeRouteEvidence] = []
-    it = run_native_or_oracle_chunked(
+    it = run_native_or_oracle_chunked_below_gate(
         config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
@@ -1286,7 +1286,7 @@ def test_stable_schema_across_many_chunks_never_trips_the_drift_sentry() -> None
     chunks = [pa.table({"p": pa.array([i, i + 1], type=pa.int64())}) for i in range(5)]
     sink: list[NativeRouteEvidence] = []
     out = list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config, chunks, table="w", engine_version="test", route_evidence_sink=sink
         )
     )

@@ -37,6 +37,10 @@ from decoy_engine.generation.composite._name_email import CompositeNameEmail
 from decoy_engine.generation.composite._person import CompositePerson
 from decoy_engine.generation.composite._provider import CompositeProvider
 from decoy_engine.providers_v2 import get_default_registry
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 
 REG = get_default_registry()
 _FIXED_CLASSES = {
@@ -743,7 +747,6 @@ def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> 
     code on both; otherwise column names, Arrow types and values are equal (the public
     oracle adds pandas metadata, so metadata is not compared; none of the corpus columns
     changes type in the pandas round trip)."""
-    from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
     from tests.native._chunked_entry_support import TABLE, make_config
 
     columns, data, _required = _corpus()[case]
@@ -751,8 +754,8 @@ def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> 
     chunks = [table.slice(0, 5), table.slice(5, 4), table.slice(9)]
     config = make_config(columns, global_settings={"unconfigured_column_policy": "warn"})
     assert TABLE
-    oracle = _outcome_of(run_mask_pipeline_chunked, config, chunks)
-    ours = _outcome_of(run_mask_chunked, config, chunks)
+    oracle = _outcome_of(run_mask_pipeline_chunked_below_gate, config, chunks)
+    ours = _outcome_of(run_mask_chunked_below_gate, config, chunks)
     assert ours[0] == oracle[0], (case, ours, oracle)
     if oracle[0] == "error":
         assert ours[1] == oracle[1]

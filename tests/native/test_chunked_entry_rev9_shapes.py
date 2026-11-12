@@ -18,6 +18,7 @@ from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _pandas_adapter
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.profile import _walk
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -279,10 +280,9 @@ def test_row_error_chunk_sink_result_carries_the_source_column(
         pa.table({"age": pa.array([good, bad, good]), "x": shape.bad}),
     ]
     sink: list[Any] = []
-    from decoy_engine import run_mask_chunked
     from tests.native._chunked_entry_support import key_provider
 
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         _row_error_config(strategy, configured),
         chunks,
         table=TABLE,

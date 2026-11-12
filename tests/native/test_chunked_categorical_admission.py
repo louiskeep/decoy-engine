@@ -14,7 +14,6 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution.native import _dispatch
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
@@ -23,7 +22,12 @@ from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import identical, run_one
+from tests.native._b8_support import (
+    identical,
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+    run_one,
+)
 from tests.native._chunked_categorical_support import (
     FORCE,
     cat_col,
@@ -99,7 +103,11 @@ def test_a_non_deterministic_categorical_without_a_namespace_still_gets_the_dist
 def test_non_deterministic_categorical_fails_before_any_chunk_is_read(entry: str) -> None:
     consumed: list[int] = []
     chunks = split(source(["a", "b", "c", "a"]), 2)
-    run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    run = (
+        run_mask_chunked_below_gate
+        if entry == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
+    )
     with pytest.raises(PlanCompileError) as info:
         run(
             make_config([cat_col(mode=None, namespace=None), passthrough("p")]),
@@ -137,7 +145,7 @@ def test_a_deterministic_categorical_without_a_namespace_is_still_an_eager_failu
 def test_missing_namespace_fails_eagerly_on_both_entries() -> None:
     consumed: list[int] = []
     chunks = split(source(["a", "b", "c", "a"]), 2)
-    for run in (run_mask_chunked, run_mask_pipeline_chunked):
+    for run in (run_mask_chunked_below_gate, run_mask_pipeline_chunked_below_gate):
         with pytest.raises(PlanCompileError) as info:
             run(
                 make_config([cat_col(namespace=None), passthrough("p")]),
@@ -400,7 +408,7 @@ def test_cdf_build_count_does_not_scale_with_the_chunk_count(
         calls.clear()
         evidence: list[NativeRouteEvidence] = []
         out = list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 split(source(values), size),
                 table=TABLE,

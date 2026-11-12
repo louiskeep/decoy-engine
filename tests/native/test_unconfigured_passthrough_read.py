@@ -12,12 +12,17 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_carry import plan_carry, read_set
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan import compile_plan
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import assert_same_as_oracle, run_pair
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    assert_same_as_oracle,
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+    run_pair,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
@@ -130,7 +135,7 @@ def test_an_out_of_grammar_reader_is_rejected_at_compile(case: str, configured: 
     chunks = _read_chunks("x")
     for call in (
         lambda: list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 make_config(columns, global_settings=_WARN),
                 chunks,
                 table=TABLE,
@@ -171,7 +176,7 @@ def test_genuine_reader_keeps_its_route_listing_and_coded_error(
         config = make_config([*columns, hash_col("h")], global_settings=_WARN)
         src = [t.append_column("h", pa.array(["p", "q", "r"])) for t in chunks]
         monkeypatch.setitem(__import__("sys").modules, "decoy_engine_native", None)
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         src,
         table=TABLE,
@@ -255,7 +260,7 @@ def test_sibling_reading_strategy_keeps_its_listing_and_coded_error(
         monkeypatch.setitem(__import__("sys").modules, "decoy_engine_native", None)
     sink: list[Any] = []
     ev: list[Any] = []
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         chunks,
         table=TABLE,
@@ -413,7 +418,7 @@ def test_composite_route_and_reason_on_run_mask_chunked_are_unchanged(
         with pytest.raises(Exception) as info:
             if runner == "entry":
                 list(
-                    run_mask_chunked(
+                    run_mask_chunked_below_gate(
                         config,
                         [src],
                         table=TABLE,
@@ -424,10 +429,11 @@ def test_composite_route_and_reason_on_run_mask_chunked_are_unchanged(
                 )
             else:
                 list(
-                    run_mask_pipeline_chunked(
+                    run_mask_pipeline_chunked_below_gate(
                         config,
                         [src],
                         table=TABLE,
+                        source_schema=declared_schema(config, TABLE),
                         engine_version=ENGINE_VERSION,
                         key_provider=key_provider(),
                         chunk_result_sink=sink,

@@ -9,11 +9,11 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
 
-from decoy_engine import run_mask_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -101,7 +101,7 @@ def test_undeclared_output_columns_error_is_raised_at_the_first_next() -> None:
     config = _config(configured=False, policy="error")
     with pytest.raises(ExecutionError) as oracle:
         run_public(config, _chunks())
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         _chunks(),
         table=TABLE,
@@ -229,7 +229,7 @@ def test_subclass_adapter_passthrough_refusal_propagates_raw(make: Any) -> None:
     config = make_config([truncate("s", 2), passthrough("x"), passthrough("t")])
     with pytest.raises(Exception) as oracle:
         run_public(config, chunks, adapter=make())
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         chunks,
         table=TABLE,
@@ -256,7 +256,7 @@ def test_row_errors_under_a_subclass_match_the_public_oracle() -> None:
         run_public(config, chunks, adapter=_Recorder())
     with pytest.raises(RowErrorsFailedError) as entry:
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,

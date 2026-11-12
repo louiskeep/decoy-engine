@@ -20,6 +20,7 @@ from decoy_engine.execution.native._when_admission import (
     when_native_rejection,
 )
 from decoy_engine.providers_v2 import get_default_registry
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._c8_i_support import (
     chunk_by_sizes,
     run_native,
@@ -50,7 +51,6 @@ def _outcome(call: Any) -> Any:
 
 
 def _declined_equals_today(config: dict[str, Any], code: str) -> None:
-    from decoy_engine import run_mask_chunked
     from tests.native._chunked_entry_support import ENGINE_VERSION, key_provider
 
     chunks = chunk_by_sizes(source_table(), [4, 4, 3])
@@ -59,7 +59,7 @@ def _declined_equals_today(config: dict[str, Any], code: str) -> None:
 
     def run_entry() -> list[pa.Table]:
         out = list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 list(chunks),
                 table=TABLE,

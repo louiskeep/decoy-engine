@@ -27,6 +27,10 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -261,12 +265,10 @@ def same_column(a: Any, b: Any) -> bool:
 def run_entry(
     config: dict[str, Any], chunks: list[pa.Table], **kw: Any
 ) -> tuple[list[pa.Table], list[Any], list[Any]]:
-    from decoy_engine import run_mask_chunked
-
     sink: list[Any] = []
     ev: list[Any] = []
     out = list(
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config,
             list(chunks),
             table=TABLE,
@@ -281,10 +283,8 @@ def run_entry(
 
 
 def run_public(config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> list[pa.Table]:
-    from decoy_engine import run_mask_pipeline_chunked
-
     return list(
-        run_mask_pipeline_chunked(
+        run_mask_pipeline_chunked_below_gate(
             config,
             list(chunks),
             table=TABLE,
