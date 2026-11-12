@@ -41,7 +41,7 @@ from tests.unit.subset._fixtures_inputs import (
     request,
     text_tables,
 )
-from tests.unit.subset.conftest import JOB_SEED, make_parquet, rel
+from tests.unit.subset.conftest import JOB_SEED, JOB_SEED_CONFIG, make_parquet, rel
 
 
 def _open_policy(tmp_path: Path) -> RootedFileAccess:
@@ -81,7 +81,7 @@ def _ids(selection, name: str, col: str, data: dict) -> list[str]:  # type: igno
 
 def test_resident_selection_equals_the_parquet_run(tmp_path: Path) -> None:
     req = request()
-    sel = select_subset(req, text_tables(), job_seed=JOB_SEED)
+    sel = select_subset(req, text_tables(), config=JOB_SEED_CONFIG)
     kept = _kept_ids(tmp_path, req)
     assert _ids(sel, "parent", "id", PARENT) == kept["parent"] == ["b", "c"]
     assert _ids(sel, "child", "cid", CHILD) == kept["child"] == ["3", "4"]
@@ -95,7 +95,7 @@ def test_csv_text_keys_select_the_same_rows_as_text_parquet(tmp_path: Path) -> N
         "parent": csv_source(tmp_path, "parent", PARENT),
         "child": csv_source(tmp_path, "child", CHILD),
     }
-    sel = select_subset(req, lazy, job_seed=JOB_SEED)
+    sel = select_subset(req, lazy, config=JOB_SEED_CONFIG)
     kept = _kept_ids(tmp_path, req)
     assert _ids(sel, "parent", "id", PARENT) == kept["parent"]
     assert _ids(sel, "child", "cid", CHILD) == kept["child"]
@@ -115,7 +115,7 @@ def test_only_key_columns_are_read(tmp_path: Path) -> None:
     pq.write_table(pa.table(CHILD), tmp_path / "c.parquet")
     p = _Recording(tmp_path / "p.parquet")
     c = _Recording(tmp_path / "c.parquet")
-    select_subset(request(), {"parent": p, "child": c}, job_seed=JOB_SEED)
+    select_subset(request(), {"parent": p, "child": c}, config=JOB_SEED_CONFIG)
     assert p.calls and c.calls
     assert all(cols is not None and "label" not in cols for cols in p.calls)
     assert all(cols is not None for cols in c.calls)
@@ -145,12 +145,12 @@ def test_int_literal_seed_on_csv_text_key_refuses(tmp_path: Path) -> None:
         policy=FanOutPolicy(),
     )
     with pytest.raises(SubsetConfigError) as exc:
-        select_subset(req, lazy, job_seed=JOB_SEED)
+        select_subset(req, lazy, config=JOB_SEED_CONFIG)
     assert exc.value.code == reasons.config.SUBSET_SEED_KEY_TYPE
 
 
 def test_unlinked_table_is_whole_with_no_survivor_entry() -> None:
-    sel = select_subset(request(), text_tables(), job_seed=JOB_SEED)
+    sel = select_subset(request(), text_tables(), config=JOB_SEED_CONFIG)
     assert sel.scope.whole == frozenset({"lonely"})
     assert "lonely" not in sel.survivors
     assert sel.counts["lonely"] == (2, 2)
@@ -186,10 +186,10 @@ def test_file_access_rules(tmp_path: Path) -> None:
         "child": LazySource(tmp_path / "c.parquet", deny),
     }
     with pytest.raises(FileAccessDenied):
-        select_subset(req, inputs, job_seed=JOB_SEED, file_access=rec)
+        select_subset(req, inputs, config=JOB_SEED_CONFIG, file_access=rec)
     assert rec.requests == []
     # (d) resident inputs open nothing
-    select_subset(req, text_tables(), job_seed=JOB_SEED, file_access=rec)
+    select_subset(req, text_tables(), config=JOB_SEED_CONFIG, file_access=rec)
     assert rec.requests == []
 
 
@@ -233,7 +233,7 @@ def test_two_table_cycle_closes_with_every_kept_fk_resolved() -> None:
         seeds=(SeedSpec(table="a", mode="keys", key_columns=("id",), keys=((1,),)),),
         policy=FanOutPolicy(),
     )
-    sel = select_subset(req, {"a": a, "b": b}, job_seed=JOB_SEED)
+    sel = select_subset(req, {"a": a, "b": b}, config=JOB_SEED_CONFIG)
     a_ids = {a["id"][i].as_py() for i in sel.survivors["a"]}
     b_ids = {b["id"][i].as_py() for i in sel.survivors["b"]}
     assert all(a["b_id"][i].as_py() in b_ids for i in sel.survivors["a"])
@@ -249,7 +249,7 @@ def test_upward_only_child_is_in_scope_with_no_rows_not_whole() -> None:
         seeds=base.seeds,
         policy=FanOutPolicy(edge_directions=((edge.edge_id, "upward"),), allow_dangling=True),
     )
-    sel = select_subset(req, text_tables(), job_seed=JOB_SEED)
+    sel = select_subset(req, text_tables(), config=JOB_SEED_CONFIG)
     assert "child" in sel.scope.tables
     assert "child" not in sel.scope.whole
     assert sel.survivors["child"] == frozenset()
@@ -275,7 +275,7 @@ def test_generate_kind_edge_is_dropped_and_listed_not_refused() -> None:
     }
     req = subset_request_from_config(config)
     assert req is not None and req.relationships == ()
-    sel = select_subset(req, {"parent": text_tables()["parent"]}, job_seed=JOB_SEED)
+    sel = select_subset(req, {"parent": text_tables()["parent"]}, config=JOB_SEED_CONFIG)
     assert sel.excluded_edges == ("parent.id -> gen.pid",)
     assert sel.counts["parent"] == (5, 1)
 
@@ -307,7 +307,7 @@ def test_generate_child_is_dropped_per_edge_and_the_mask_child_stays_in_scope() 
     assert req.excluded_edges == ("parent.id -> gen.pid",)
     tables = text_tables()
     sel = select_subset(
-        req, {"parent": tables["parent"], "child": tables["child"]}, job_seed=JOB_SEED
+        req, {"parent": tables["parent"], "child": tables["child"]}, config=JOB_SEED_CONFIG
     )
     assert "child" in sel.scope.tables and "child" not in sel.scope.whole
     kept_parents = set(_ids(sel, "parent", "id", PARENT))

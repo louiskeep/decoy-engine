@@ -18,7 +18,7 @@ from decoy_engine.subset import (
     subset_request_from_config,
 )
 from decoy_engine.subset._edges import build_subset_edges
-from tests.unit.subset.conftest import JOB_SEED, make_parquet
+from tests.unit.subset.conftest import JOB_SEED_CONFIG, make_parquet
 
 IDS = ["a", "b", "c", "d", "e"]
 
@@ -103,7 +103,7 @@ def test_selection_lists_the_union_of_generate_and_none_edges_sorted() -> None:
     (edge,) = build_subset_edges(base.relationships)
     req = _request(config, edge_directions=((edge.edge_id, "none"),), allow_dangling=True)
     tables = {"z": _table("zid"), "a": _table("aid"), "b": _table("aid")}
-    sel = select_subset(req, tables, job_seed=JOB_SEED)
+    sel = select_subset(req, tables, config=JOB_SEED_CONFIG)
     assert sel.excluded_edges == ("a.id -> b.aid", "z.id -> g.zid")
 
 
@@ -113,7 +113,7 @@ def test_none_direction_child_stays_in_scope_with_no_rows() -> None:
     assert base is not None
     (edge,) = build_subset_edges(base.relationships)
     req = _request(config, edge_directions=((edge.edge_id, "none"),), allow_dangling=True)
-    sel = select_subset(req, {"a": _table("aid"), "b": _table("aid")}, job_seed=JOB_SEED)
+    sel = select_subset(req, {"a": _table("aid"), "b": _table("aid")}, config=JOB_SEED_CONFIG)
     assert "b" in sel.scope.tables and "b" not in sel.scope.whole
     assert sel.survivors["b"] == frozenset()
     assert sel.counts["b"] == (5, 0)
@@ -130,7 +130,7 @@ def test_a_repeated_generate_relationship_is_excluded_once() -> None:
     req = _request(config)
     assert req.excluded_edges == ("gen.id -> c.gid",)
     tables = {"p": _table("pid"), "d": _table("pid"), "c": _table("gid")}
-    sel = select_subset(req, tables, job_seed=JOB_SEED)
+    sel = select_subset(req, tables, config=JOB_SEED_CONFIG)
     assert sel.excluded_edges == ("gen.id -> c.gid",)
 
 
@@ -144,6 +144,6 @@ def test_generate_parent_with_a_mask_child_drops_the_edge_and_passes_the_child_w
     assert [e.edge_id for e in build_subset_edges(req.relationships)] == ["p.id -> d.pid"]
     assert req.excluded_edges == ("gen.id -> c.gid",)
     tables = {"p": _table("pid"), "d": _table("pid"), "c": _table("gid")}
-    sel = select_subset(req, tables, job_seed=JOB_SEED)
+    sel = select_subset(req, tables, config=JOB_SEED_CONFIG)
     assert "c" in sel.scope.whole and sel.counts["c"] == (5, 5)
     assert sel.excluded_edges == ("gen.id -> c.gid",)

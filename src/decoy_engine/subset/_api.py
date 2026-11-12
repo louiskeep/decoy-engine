@@ -22,6 +22,7 @@ from decoy_engine import reasons
 from decoy_engine.config import classify_table_kinds
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.fileaccess.adapters import serial
+from decoy_engine.plan import job_seed_for_config
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.profile import LazySource
 from decoy_engine.release import __version__
@@ -225,46 +226,44 @@ def select_subset(
     request: SubsetRequest,
     inputs: Mapping[str, pa.Table | LazySource],
     *,
-    job_seed: bytes,
+    config: dict[str, Any],
     file_access: FileAccess | None = None,
 ) -> SubsetSelection:
     """Pick the subset rows of resident or lazy tables. Reads key columns only and writes
-    nothing. `file_access` governs path inputs; a lazy source reads under the policy it
-    captured when it was built, and a resident table reads nothing."""
-    try:
-        plan, key_frames, edges, directions, closure = _compute(
-            sources=inputs,
-            relationships=request.relationships,
-            seeds=request.seeds,
-            policy=request.policy,
-            job_seed=job_seed,
-            engine_version=__version__,
+    nothing. `config` is the validated pipeline config dump; the sampling seed is the one
+    `global_settings.seed` resolves to, so this entry never takes or holds seed bytes.
+    `file_access` governs path inputs; a lazy source reads under the policy it captured
+    when it was built, and a resident table reads nothing."""
+    plan, key_frames, edges, directions, closure = _compute(
+        sources=inputs,
+        relationships=request.relationships,
+        seeds=request.seeds,
+        policy=request.policy,
+        job_seed=job_seed_for_config(config),
+        engine_version=__version__,
+    )
+    scope = scope_for(request, key_frames)
+    counts = {
+        name: (
+            frame.height,
+            len(closure.survivors[name]) if name in scope.tables else frame.height,
         )
-        scope = scope_for(request, key_frames)
-        counts = {
-            name: (
-                frame.height,
-                len(closure.survivors[name]) if name in scope.tables else frame.height,
+        for name, frame in key_frames.items()
+    }
+    return SubsetSelection(
+        survivors={name: closure.survivors[name] for name in sorted(scope.tables)},
+        counts=counts,
+        scope=scope,
+        excluded_edges=tuple(
+            sorted(
+                {
+                    *request.excluded_edges,
+                    *(e.edge_id for e in edges if directions[e.edge_id] == "none"),
+                }
             )
-            for name, frame in key_frames.items()
-        }
-        return SubsetSelection(
-            survivors={name: closure.survivors[name] for name in sorted(scope.tables)},
-            counts=counts,
-            scope=scope,
-            excluded_edges=tuple(
-                sorted(
-                    {
-                        *request.excluded_edges,
-                        *(e.edge_id for e in edges if directions[e.edge_id] == "none"),
-                    }
-                )
-            ),
-            estimate=plan,
-        )
-    except BaseException:
-        del job_seed
-        raise
+        ),
+        estimate=plan,
+    )
 
 
 def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
