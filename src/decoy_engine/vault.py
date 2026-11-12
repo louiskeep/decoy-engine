@@ -156,19 +156,16 @@ _WEAK_KEY_MESSAGE = (
 )
 
 
-def _require_vault_key(mask_key: bytes) -> bytes:
-    """Return `mask_key` as immutable `bytes`, or refuse it with `weak_mask_secret`.
+def _require_vault_key(key: OpaqueBox) -> None:
+    """Refuse the boxed key with `weak_mask_secret` unless it is bytes at the floor or longer.
 
     The floor is `SecretKeyProvider`'s (`MIN_SECRET_BYTES`); the exact-type check keeps a
-    32-character `str` or a caller-held view from passing `len`. The refusal text is fixed.
+    32-character `str` or a caller-held view from passing `len`. The key is read from the box
+    and never bound to a name, so a traceback of this frame shows only the box's fixed repr. The
+    refusal text is fixed.
     """
-    try:
-        if not isinstance(mask_key, (bytes, bytearray)) or len(mask_key) < MIN_SECRET_BYTES:
-            raise VaultError(code=reasons.runtime.WEAK_MASK_SECRET, message=_WEAK_KEY_MESSAGE)
-        return bytes(mask_key)
-    except BaseException:
-        del mask_key  # a traceback keeps this frame: the key must not be among its locals
-        raise
+    if not isinstance(key.open()[0], (bytes, bytearray)) or len(key.open()[0]) < MIN_SECRET_BYTES:
+        raise VaultError(code=reasons.runtime.WEAK_MASK_SECRET, message=_WEAK_KEY_MESSAGE)
 
 
 def _fernet(mask_key: OpaqueBox) -> Any:
@@ -185,10 +182,9 @@ def _fernet(mask_key: OpaqueBox) -> Any:
                 f"vault extra: {_INSTALL_HINT}"
             ),
         ) from exc
+    _require_vault_key(mask_key)
     return Fernet(
-        base64.urlsafe_b64encode(
-            derive(_require_vault_key(mask_key.open()[0]), VAULT_NAMESPACE, VAULT_KEY_LABEL)
-        )
+        base64.urlsafe_b64encode(derive(mask_key.open()[0], VAULT_NAMESPACE, VAULT_KEY_LABEL))
     )
 
 
@@ -260,7 +256,8 @@ class VaultWriter:
         # Stored as a `bytes` copy so a caller-held buffer cannot change the key after
         # admission. The policy lookup below can raise; this frame must not hold the key then.
         try:
-            self._mask_key = _require_vault_key(mask_key)
+            _require_vault_key(OpaqueBox(mask_key))
+            self._mask_key = bytes(mask_key)
             self._entries: set[tuple[str, str, str]] = set()
             # The writer writes after the entry point that built it returned, so it keeps the
             # policy it was built under and never looks one up later.
@@ -284,8 +281,8 @@ class VaultWriter:
         code a weak writer gets, not as a key mismatch.
         """
         try:
-            _require_vault_key(self._mask_key)
-            _require_vault_key(mask_key)
+            _require_vault_key(OpaqueBox(self._mask_key))
+            _require_vault_key(OpaqueBox(mask_key))
             if not hmac.compare_digest(self._mask_key, mask_key):
                 raise VaultError(
                     code=reasons.runtime.VAULT_KEY_MISMATCH,
