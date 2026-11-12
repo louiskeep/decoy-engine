@@ -441,3 +441,33 @@ def _relation_survives(root: ScratchArena, base: Path, cell: str) -> None:
     ) as joiner:
         out, orphans = joiner.join_batch(child)
     assert out.column(0).to_pylist() == ["m2", "m1", "x"] and orphans == 1
+
+
+# -- connections on the arena (T05, arm (c); S2a-1c) -------------------------------------------
+
+
+@pytest.mark.parametrize("arm", ["path", "arena"])
+def test_connect_duckdb_spills_into_its_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arm: str
+) -> None:
+    """`temp_directory` is the handed arena child, or (arm (c)) the adopted path: 0700 under
+    umask 0777, made before DuckDB is asked to spill there."""
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+
+    if os.geteuid() == 0:
+        pytest.fail("run as a non-root user: root ignores directory modes, so this is vacuous")
+    (tmp_path / "tmp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
+    with ScratchArena.open() as root:
+        spill = Path(root.local_path()) / "joins" / "duckdb"
+        old = os.umask(0o777)
+        try:
+            where = root.create_dir("joins").create_dir("duckdb") if arm == "arena" else spill
+            conn = connect_duckdb(temp_dir=where, memory_limit="64MB")
+        finally:
+            os.umask(old)
+        try:
+            (setting,) = conn.execute("SELECT current_setting('temp_directory')").fetchone()
+        finally:
+            conn.close()
+        assert Path(setting) == spill and _mode(spill) == 0o700, (setting, oct(_mode(spill)))
