@@ -1,6 +1,6 @@
 """The generated-parent rule leaves no refused config in shipped examples or current docs (AT-23b).
 
-Four test fixture files declared a generated relationship parent whose key the plan cannot show
+Five test fixture files declared a generated relationship parent whose key the plan cannot show
 is unique. They moved to provable keys with the rule; the suites that build their configs are the
 red-before, green-after evidence. This file pins the rest of the census: the files exist under
 the names the census lists, and no shipped example or docs snippet declares a refused parent.
@@ -24,6 +24,7 @@ FIXTURE_CENSUS = (
     "tests/parity/test_phase_f_f2_mixed_parity.py",
     "tests/parity/test_phase_f_f2_mixed_sweep.py",
     "tests/parity/test_phase_f_f2_mixed_admission.py",
+    "tests/parity/test_numeric_typing_readers.py",
 )
 
 _FENCE = re.compile(r"```ya?ml\n(.*?)```", re.DOTALL)
@@ -44,9 +45,10 @@ def _docs_configs() -> list[tuple[str, dict[str, Any]]]:
     return found
 
 
-def test_the_census_names_four_files_that_declare_a_provable_parent() -> None:
-    # A file that lost its fix would drop every proof token the rule accepts.
-    assert len(set(FIXTURE_CENSUS)) == 4
+def test_the_census_names_five_files_that_declare_a_provable_parent() -> None:
+    # Whole-file token match: it shows the file still mentions a proof, not that the proof sits
+    # on the generated parent; the suites that build these configs carry that evidence.
+    assert len(set(FIXTURE_CENSUS)) == 5
     for name in FIXTURE_CENSUS:
         text = (ROOT / name).read_text(encoding="utf-8")
         assert re.search(r'"unique":\s*True|"type":\s*"sequence"|unique_together', text), name

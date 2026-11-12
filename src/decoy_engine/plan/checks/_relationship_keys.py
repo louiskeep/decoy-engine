@@ -17,27 +17,25 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.config._generate_unique import declares_unique
 from decoy_engine.plan._errors import PlanCompileError
 
 __all__ = ["check_generated_parent_keys"]
-
-
-def _proves_unique(column: dict[str, Any]) -> bool:
-    if column.get("unique") is True:
-        return True
-    return column.get("type") == "sequence" and column.get("step", 1) != 0
 
 
 def _key_is_provable(table: dict[str, Any], keys: list[str], generated: dict[str, Any]) -> bool:
     rows = table.get("row_count")
     if isinstance(rows, int) and rows <= 1:
         return True
-    if any(_proves_unique(generated[name]) for name in keys if name in generated):
+    if any(declares_unique(generated[name]) for name in keys if name in generated):
         return True
+    pairs = table.get("unique_together")
+    if not isinstance(pairs, list):
+        return False
     wanted = set(keys)
     return any(
         isinstance(pair, list) and all(isinstance(m, str) for m in pair) and set(pair) == wanted
-        for pair in table.get("unique_together") or []
+        for pair in pairs
     )
 
 

@@ -190,6 +190,16 @@ def test_raw_dict_with_unhashable_names_is_skipped_not_raised() -> None:
     assert_refused(cfg)
 
 
+@pytest.mark.parametrize("together", [1, True, 1.5, "ab", {"a": 1}])
+def test_a_non_list_unique_together_proves_nothing_and_does_not_crash(together: Any) -> None:
+    cfg = config([key_col("faker")])
+    cfg["tables"][0]["unique_together"] = together
+    for site in SITES:
+        with pytest.raises(PlanCompileError) as info:
+            site(cfg)
+        assert info.value.code == CODE, site.__name__
+
+
 def test_the_lenient_paths_keep_the_rule_on(lenient_generate_checks: None) -> None:
     with pytest.raises(PlanCompileError) as info:
         _compile(config([key_col("faker")]))
