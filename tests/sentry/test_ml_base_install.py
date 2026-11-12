@@ -38,7 +38,12 @@ def test_classifier_stack_is_a_base_dependency_with_the_same_exact_pins() -> Non
 def test_the_ml_extra_is_gone() -> None:
     assert "ml" not in PYPROJECT["project"]["optional-dependencies"]
     markers = PYPROJECT["tool"]["pytest"]["ini_options"]["markers"]
-    assert not [m for m in markers if m.startswith("ml:") and "[ml] extra" in m]
+    ml_marker = [m for m in markers if m.startswith("ml:")]
+    assert len(ml_marker) == 1
+    # Fail on any wording that points at an extra, not just the old literal.
+    text = ml_marker[0].lower()
+    assert "extra" not in text, ml_marker[0]
+    assert "[ml]" not in text and "base dependencies" in text
 
 
 def test_ml_gate_needs_no_ml_extra() -> None:
@@ -49,6 +54,10 @@ def test_base_install_lane_installs_no_extras_and_runs_the_smoke() -> None:
     assert _lock_env_extras("base-install") == ""
     run = "\n".join(str(s.get("run", "")) for s in CI["base-install"]["steps"])
     assert "scripts/dev/base_install_smoke.py" in run
+    # `bootstrap: "true"` would quietly install extras and void the no-extras proof.
+    for step in CI["base-install"]["steps"]:
+        if "lock-env" in step.get("uses", ""):
+            assert str(step.get("with", {}).get("bootstrap", "false")).lower() != "true"
 
 
 def test_wheel_still_force_includes_the_model_pack() -> None:

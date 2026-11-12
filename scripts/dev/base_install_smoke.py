@@ -25,7 +25,7 @@ def main() -> int:
     if pack is None:
         print("classifier pack did not load")
         return 1
-    from decoy_engine.profiling.model_pack.classify import classify_frame
+    from decoy_engine.profiling.model_pack import classify_frame
 
     frame = pd.DataFrame({"email": ["a@example.com", "b@example.org"], "n": ["1", "2"]})
     result = classify_frame(pack, frame)
