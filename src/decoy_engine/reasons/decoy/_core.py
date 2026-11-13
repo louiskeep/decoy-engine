@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, RetryClass, Severity
+from decoy_engine.reasons._types import Kind, Outcome, RetryClass, Severity
 
 __all__ = [
     "CLEANUP_FAILED",
@@ -136,7 +136,7 @@ PROCESS_OUT_OF_MEMORY = _d(
     "process_out_of_memory",
     "The process ran out of memory.",
     retry=RetryClass.ENVIRONMENT_REPAIR,
-    since=UNRELEASED,
+    since="1.25.0",
 )
 ROW_ERRORS_FAILED = _d(
     "row_errors_failed", "Row-level strategy errors failed the run.", retry=RetryClass.NEVER

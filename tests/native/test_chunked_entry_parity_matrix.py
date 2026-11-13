@@ -31,6 +31,9 @@ from decoy_engine.execution.native._dispatch import (
     NativeChunkSchemaDriftError,
     NativeRouteEvidence,
 )
+
+# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.vault import VaultWriter
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -409,7 +412,7 @@ def _drive_with_state(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[O
     out: list[pa.Table] = []
     caught: Exception | None = None
     try:
-        for t in run_mask_chunked(
+        for t in _run_mask_chunked(
             config,
             list(chunks),
             table=TABLE,

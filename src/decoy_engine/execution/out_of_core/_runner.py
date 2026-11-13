@@ -52,6 +52,7 @@ from decoy_engine.declared_casting import _stream as _declared
 from decoy_engine.declared_casting._boundary import seal_evidence
 from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._errors import vault_requires_resident_output
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
 )
@@ -86,6 +87,7 @@ from decoy_engine.execution.out_of_core._stream_driver_support import (  # noqa:
 )
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.progress import get_active_channel
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -120,7 +122,7 @@ def run_fk_out_of_core(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     vault_writer: Any = None,
-    config: Mapping[str, Any] | None = None,
+    config: Mapping[str, Any],
     native_threads: int = 1,
     file_access: FileAccess | None = None,
     cast_run: Any = None,
@@ -174,7 +176,17 @@ def run_fk_out_of_core(
     pairs to the writer at their mask step. Routing admits only jobs whose vaulted columns
     are route-stable (`_vault_collect.vault_ooc_safe`); persisting is the caller's, after a
     successful return.
+
+    `config` is the raw pipeline config and is required: this route runs no post-scan, so a
+    model post-scan config is refused before any source is read (`PostScanRouteError`).
+
+    A `vault_writer` with a `sink` is refused before any read (`vault_requires_resident_output`,
+    B-6 rule B0): the sink commits inside this call, so the vault could only follow the output
+    it reverses.
     """
+    if sink is not None and vault_writer is not None:
+        raise vault_requires_resident_output()
+    refuse_unchecked_route(config, "out_of_core")
     declared_route_guard("out_of_core", plan=plan, raise_on_decline=True)
     if cast_run is not None and not _staged and cast_run.tables() & set(sources):
         # F06: declared sources are cast once into typed sources (see `run_staged`), then this
@@ -230,6 +242,9 @@ def run_fk_out_of_core(
         for index, table_name in enumerate(_table_order(plan, relationship_graph, sources)):
             if table_name not in sources:
                 continue
+            _pg = get_active_channel()
+            # Before the load step so a table that fails there reads failed, not not_run.
+            _pg_started = _pg.phase_start("mask", table=table_name)
             # The merge runs before any joiner opens, so it takes the undivided build cap.
             table_incoming_edges = resolve_incoming(
                 incoming[table_name],
@@ -238,8 +253,8 @@ def run_fk_out_of_core(
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
-            _pg = get_active_channel()
-            _pg_started = _pg.phase_start("mask", table=table_name)
+            # Read once, before the driver: a lazy source reopens its file for the count.
+            _pg_rows = sources[table_name].num_rows if _pg.active else None
             # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
             validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
             route = decide_route(
@@ -289,7 +304,8 @@ def run_fk_out_of_core(
             else:
                 _stream_table(**table_kwargs, mask_key=key_box.open()[0])
             _pg.flush(table_name)
-            _pg.phase_finish("mask", _pg_started, table=table_name)
+            # This route drops no row, so the source count is the written count.
+            _pg.phase_finish("mask", _pg_started, table=table_name, rows_out=_pg_rows)
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and

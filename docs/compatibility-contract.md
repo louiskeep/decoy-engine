@@ -65,6 +65,16 @@ logging config has no `file`; a caller that wants a log file passes `file`.
 Path | None = None)` is keyword-only (44 frozen parameters). Relative config paths resolve against it;
 `None` leaves every path as written (today's behavior).
 
+**Pre-GA correction (vault key floor, 2026-11-12).** Breaking, no shim: `VaultWriter`, `load_vault` and
+the run-entry vault key-match guard refuse a key that is not the 32-byte mask root with
+`weak_mask_secret`, and `vault_writer_for_config` raises `keyed_strategy_requires_secret` when no secret
+is admitted, for every config. Seed-keyed vaults written by older engines no longer open and are
+regenerated with their masked output under a secret; there is no migration. The section 3.2
+forever-readable freeze takes effect at the first real `decoy-vault/v2` vault, which after slice 0 can
+only be written under a secret of at least 32 bytes; from that vault on, the v2 reader, the
+32-byte vault key length and `VAULT_KEY_LABEL` are permanent, per this contract's own pre-GA to GA rule
+(section 1).
+
 **Pre-GA additive keyword with SUB-RUN E2 (2026-11-12).** `run_pipeline(..., subset_request:
 SubsetRequest | Literal["config", "skip"] = "config")` is keyword-only (46 frozen parameters). `"config"`
 applies a `subset:` block, `"skip"` runs the full sources, a `SubsetRequest` replaces the block; any other
@@ -72,6 +82,12 @@ value raises `ExecutionError` (`invalid_execution_knob`) before any read. `decoy
 `split_subset_config`, `SubsetSplit` and the E1 names, and `SubsetSelection` gains the opaque
 `materialization_check` stage-transfer field (never an output). A config with no `subset:` block behaves
 exactly as before.
+
+**Pre-GA additive fields with SAMPLE SE2 (2026-11-12).** `ExecutionResult.sample_source_rows: dict[str, pa.Table] | None`
+(default `None`, hidden from `repr`, not compared) holds the first kept source rows per table, only for a sample
+request with `display_rows > 0`. `RunResult.sample: SampleMarker | None` (`rows`, `roots`, `head_tables`,
+`scratch`) is optional under `decoy-run-result/v1`; it is left out of the written payload when unset, so an old
+record reads unchanged. A sample stamps `quality_metrics["subset"]["sample"]`. `run_pipeline` is unchanged.
 
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
@@ -176,6 +192,28 @@ the guard cannot recognise (a person name, an address) is the stated limit. The 
 cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
 the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
+`post-scan-integrity/v2` is the report `run_post_mask` returns. Recorded pre-GA semantic change
+(POSTSCAN-STREAM PS-4, 2026-11-12): each `fk_preservation[]` finding now derives from the declared
+keys' facts (`verification/postmask/_keys.py`) and no longer from an orphan rate. `fail` means the run
+introduced orphans; `warning` means every output orphan was already in the source, or the key carries
+only warning codes; `info` means no orphan; `error` means the key has no counts (an output that could
+not be read, a missing key column, or a type mismatch over a comparable source). The 0.1% and 1%
+thresholds and the `orphan_policy: skip` demotion are gone, so one introduced orphan in a large table
+now fails where it used to be `info`. A child tuple declared under several parents is counted once
+against their union, and each of its edges carries those counts. `parent_column` and `child_column`
+join composite names with `", "` (was `","`). Added optional fields: `parent_columns` and
+`child_columns` (the names one by one) and `source_orphan_count` (`null` when the source side was not
+counted). `run_post_mask` gains the keyword-only `keys=` (the facts a caller has already counted);
+without it the facts are counted from the two frame dicts, over the edges whose tables are all in the
+output frames, as before. A relationship entry that does not parse now raises
+`PipelineConfigError` (names only). An `error` finding carries `total_child_rows` 0, because a key
+with no counts has none. With `keys=`, an edge that has no key fact reads `error`. Without `keys=`, a
+float key column, NumPy or nullable `Float32`/`Float64`, with at least one non-null value, all of
+them whole numbers in the Int64 range (pandas' reading of a nullable integer column, such as a
+self-reference with a null root), is compared as an integer key. A column with any fraction stays
+float, so against an integer parent it is still a type mismatch, and so is an all-null float column.
+The tag stays `v2`; the field set only grew.
+
 **Rules:**
 
 - **Never mutate the shape under an existing tag.** If you change what
@@ -216,6 +254,12 @@ by `decoy-vault/v2` without a v1 reader. This is legal only pre-GA because no
 vaults exist in the wild. The forever-readable rule begins at the first
 in-the-wild `decoy-vault/v2` vault. From that point forward, a v2 reader is
 permanent and any future format bump must add a v3 alongside a kept v2 reader.
+
+**GA-flip checklist (vault key floor, 2026-11-12).** The section 3.2 forever-readable freeze takes effect
+at the first real `decoy-vault/v2` vault, which after slice 0 can only be written under a secret of at
+least 32 bytes; from that vault on, the v2 reader, the 32-byte vault key length and `VAULT_KEY_LABEL` are
+permanent, per this contract's own pre-GA to GA rule (section 1). Before that vault, narrowing which keys
+open a v2 file was a legal pre-GA hard delete: seed-keyed vaults stopped opening and are regenerated.
 
 ### 3.3 The determinism guarantee (the silent one)
 
@@ -675,6 +719,19 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   an installed model only when it is an installed distribution that ships a spaCy `meta.json`; a
   plain importable module (`os`, `json`) is refused with `provider.ner_model_not_installed` and is
   never imported. `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
+  SCAN-ML M5 (2026-11) adds `PostScanRouteError` and one coordinated pre-GA break. The entries
+  that mask without running the post-scan, `run_sequential`, `run_fk_out_of_core`,
+  `run_mask_pipeline_chunked`, `run_mask_chunked` and `run_native_or_oracle_chunked`, now refuse a
+  config whose `post_scan.integrity` is true and whose `post_scan.detectors` holds a model detector
+  or whose `post_scan.ner_findings` is `fail`, before any source is read. The error carries
+  `route.post_scan_models_unsupported` (registry unreleased); `str(error)` and `message` are the fixed
+  registry summary, `route` and `setting` name the route and the config field, and the exception
+  chain is empty. Regex-only `integrity: true` behaves as before on these routes. `run_sequential`
+  and `run_fk_out_of_core` take a required keyword-only `config` (the raw pipeline config), as do
+  the wrappers that forward to them (`PandasExecutionAdapter.run_sequential`, the physical
+  `SequentialAdapter.run` and `OutOfCoreAdapter.run`); a caller that passed none must now pass
+  it. `run_pipeline` is unchanged: its resident auto-chunk lane calls guard-free cores and runs the
+  post-scan itself.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and
@@ -698,6 +755,27 @@ namespaces would collapse to one token. tokenize is an always-keyed strategy,
 so at GA it requires a resolved >=32-byte secret like every other keyed
 surface (`keyed_strategy_requires_secret`); it never derives tokens from the
 public job seed.
+
+A file-vault `vault_writer` is accepted only where the engine holds every output
+row until the caller can publish the vault first (B-6 boundary rule B0, 2026-11-01;
+breaking, pre-GA): `run_pipeline(sink=..., vault_writer=...)` with both set,
+`run_mask_chunked` and `run_mask_pipeline_chunked` with any `vault_writer`, and
+`run_fk_out_of_core` with both a `sink` and a `vault_writer` raise
+`ExecutionError(code="vault_requires_resident_output")` before any source or chunk
+is read. The parameters stay in the signatures (so the refusal is explicit, not a
+`TypeError`); `vault_writer=None` is unchanged. A vault job runs through
+`run_pipeline` without a sink; its auto-chunk lane still bounds masking memory.
+
+`TokenVaultWriter` gained a required `derivation_scope: bytes` attribute on
+2026-11-01 (B-6 D2; a breaking protocol change, legal pre-GA only): a non-secret,
+vault-unique 16-to-64-byte value the vault owner mints once and stores with the
+vault. Tokens are derived under it (`tokenize-key/v1` subkey), so two vaults never
+mint the same token for one plaintext and a token payload is never a `hash`
+output. Tokens minted before this change cannot be reproduced: a writer without a
+scope is refused with `token_vault_derivation_unsupported`, and a malformed one
+with `tokenize_vault_scope_required`, before any source is read. There is no
+compatibility derivation and no migration (hard cut); an old vault stays readable
+only by the release that wrote it.
 
 `keyed_columns_for_config` and `KeyedColumn` joined the public API on 2026-11-08
 (init wizard part E3), additive under §4.1. `keyed_columns_for_config(config)`

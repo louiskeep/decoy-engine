@@ -320,18 +320,18 @@ class TestByteIdentityMatrix:
 
 class TestRoutingMechanics:
     def test_eligible_job_routes_through_chunked_entrypoint(self, tmp_path, monkeypatch):
-        from decoy_engine.execution import _chunked
+        from decoy_engine.execution import _chunked_oracle
 
         cfg, sources = _single_column_job(tmp_path, "hash")
         calls: list[dict[str, Any]] = []
-        real = _chunked.run_mask_pipeline_chunked
+        real = _chunked_oracle._mask_pipeline_chunked
 
         def spy(config, chunks, **kwargs):
             chunk_list = list(chunks)
             calls.append({"n_chunks": len(chunk_list), **kwargs})
             return real(config, chunk_list, **kwargs)
 
-        monkeypatch.setattr(_chunked, "run_mask_pipeline_chunked", spy)
+        monkeypatch.setattr(_chunked_oracle, "_mask_pipeline_chunked", spy)
         # Today's lane: the dispatcher lane (B2) runs `run_mask_chunked` instead, which
         # acceptance test 2 covers.
         auto, _forced = _run_pair(cfg, sources, monkeypatch, chunked_dispatcher_enabled=False)
@@ -389,12 +389,12 @@ class TestFailClosed:
         also nondeterministic across runs, so identity is asserted on the
         PATH (chunked entrypoint must never run) rather than on output
         bytes; the output is still checked to be a permutation."""
-        from decoy_engine.execution import _chunked
+        from decoy_engine.execution import _chunked_oracle
 
         def bomb(*args, **kwargs):
             raise AssertionError("chunked entrypoint ran for a non-chunk-safe strategy")
 
-        monkeypatch.setattr(_chunked, "run_mask_pipeline_chunked", bomb)
+        monkeypatch.setattr(_chunked_oracle, "_mask_pipeline_chunked", bomb)
         df = pd.DataFrame({"val": [f"v{i}" for i in range(_ROWS)]})
         df.to_csv(tmp_path / "in.csv", index=False)
         cfg = _config(tmp_path, [{"name": "val", "strategy": "shuffle"}])
@@ -1173,14 +1173,14 @@ class TestRoutedResultSurface:
 
 class TestKillSwitch:
     def test_auto_chunk_false_forces_full_frame_with_reason(self, tmp_path, monkeypatch):
-        from decoy_engine.execution import _chunked
+        from decoy_engine.execution import _chunked_oracle
 
         cfg, sources = _single_column_job(tmp_path, "hash")
 
         def bomb(*args, **kwargs):
             raise AssertionError("chunked entrypoint ran despite auto_chunk=False")
 
-        monkeypatch.setattr(_chunked, "run_mask_pipeline_chunked", bomb)
+        monkeypatch.setattr(_chunked_oracle, "_mask_pipeline_chunked", bomb)
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         result = run_pipeline(
             cfg,

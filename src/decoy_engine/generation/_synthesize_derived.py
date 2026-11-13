@@ -11,7 +11,7 @@ import random
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
-from decoy_engine.config import value_key
+from decoy_engine.config import per_parent_bounds, value_key
 from decoy_engine.generation.relational import check_fitted_bounds, check_reference_pool
 from decoy_engine.generation.statistical import (
     FanoutSpec,
@@ -196,8 +196,7 @@ def _reference(
     ref_table = col["reference_table"]
     ref_column = col["reference_column"]
     distribution = col.get("distribution", "random")
-    min_per = int(col.get("min_per_parent") or 0)
-    max_per = int(col.get("max_per_parent") or 0)
+    min_per, max_per = per_parent_bounds(col)
 
     ref_vals = parent_keys(pools, ref_table, ref_column)
 

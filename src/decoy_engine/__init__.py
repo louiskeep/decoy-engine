@@ -42,11 +42,9 @@ Public exceptions (also in decoy_engine.errors):
 
 Anything not in __all__, and anything under decoy_engine.internal, is private.
 
-V2 NOTE: the V1 surface (``Masker``, ``DataGenerator``, ``run_graph``) was removed
-in S22 (2026-05-30). The engine is plan-first: validate a ``PipelineConfig``, profile
-the source, ``compile_plan``, then run the plan through an ``ExecutionAdapter`` (MASK)
-or ``generation.synthesize.generate_tables`` (GENERATE). See
-``tests/integration/golden/test_execution_e2e.py`` for the end-to-end call shape.
+V2 NOTE: the V1 surface (``Masker``, ``DataGenerator``, ``run_graph``) was removed in S22; the
+engine is plan-first (``PipelineConfig``, profile, ``compile_plan``, then an ``ExecutionAdapter``
+or ``generate_tables``). ``tests/integration/golden/test_execution_e2e.py`` shows the call shape.
 """
 
 import logging
@@ -339,6 +337,7 @@ from decoy_engine.validation_result import (
     ValidationResult,
 )
 from decoy_engine.vault import VaultError, VaultWriter, load_vault, vault_writer_for_config
+from decoy_engine.verification.postmask._route_guard import PostScanRouteError
 
 # F9: names trimmed from __all__ but kept as module bindings so attribute access
 # (decoy_engine.EinValidator, ...) stays non-breaking; anchoring them here marks the
@@ -460,6 +459,7 @@ __all__ = [
     "PoolBuilder",
     "PoolCapacityError",
     "PoolSampler",
+    "PostScanRouteError",
     "PostValidationRunner",
     "PreScanConfig",
     "PreparedDeclaredSources",

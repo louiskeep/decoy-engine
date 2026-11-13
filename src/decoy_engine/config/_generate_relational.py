@@ -47,6 +47,7 @@ from decoy_engine.config._tables import generate_columns_of
 __all__ = [
     "is_exact_sequence_key",
     "is_self_reference",
+    "per_parent_bounds",
     "per_parent_problems",
     "self_reference_problems",
 ]
@@ -64,8 +65,18 @@ _UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
 
 
 def _positive(value: Any) -> int:
-    """A bound as a positive int, or 0 for absent, zero, or anything the registry refuses."""
     return value if type(value) is int and value > 0 else 0
+
+
+def per_parent_bounds(col: Mapping[str, Any]) -> tuple[int, int]:
+    """`(min_per_parent, max_per_parent)` of a generate column, 0 meaning unset.
+
+    The one reader of the bounds: validate, the capacity probe, admission and both reference
+    draws all ask here. A bound is an int above zero; absent, None and 0 are unset. A value the
+    registry refuses (a negative, bool, float or string) also reads as unset, so a raw dict that
+    skipped validation can never turn one into a bound by coercion.
+    """
+    return _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
 
 
 def _row_count(table: Mapping[str, Any] | None) -> int | None:
@@ -81,7 +92,7 @@ def _column_problem(
     col: Mapping[str, Any], rows: int | None, parent_rows: int | None
 ) -> tuple[str, str] | None:
     """The first `(option, code)` problem of one reference column, or None."""
-    lo, hi = _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
+    lo, hi = per_parent_bounds(col)
     if not lo and not hi:
         return None
     if lo > hi > 0:
@@ -163,7 +174,7 @@ def _tree_problem(
         return ("reference_column", _KEY_INVALID)
     if col.get("distribution") not in (None, "random"):
         return ("distribution", _OPTION_UNSUPPORTED)
-    if _positive(col.get("min_per_parent")):
+    if per_parent_bounds(col)[0]:
         return ("min_per_parent", _OPTION_UNSUPPORTED)
     if _nulls_on(col.get("null_probability")):
         return ("null_probability", _OPTION_UNSUPPORTED)

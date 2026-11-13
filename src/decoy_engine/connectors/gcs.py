@@ -159,21 +159,26 @@ class GCSFileSource(FileSource[GCSConfig]):
         raise err
 
     def open(self, path: str) -> Iterator[bytes]:
-        try:
-            blob = self._bucket_or_build().blob(path)
-            # Blob.open returns a file-like wrapping an HTTPS stream;
-            # iterate in chunks for bounded memory use.
-            with _clients.gcs_open(blob, "rb") as remote:
-                while True:
-                    chunk = remote.read(_DEFAULT_CHUNK_BYTES)
-                    if not chunk:
-                        return
-                    yield chunk
-        except ConnectorError:
-            raise
-        except Exception as exc:
-            err = _clients.gcs_error(exc)
-        raise err
+        yield from _stream_blob(self._bucket_or_build, path)
+
+
+def _stream_blob(get_bucket, path: str) -> Iterator[bytes]:
+    """The one GCS object read loop, shared by the source and the object store."""
+    try:
+        blob = get_bucket().blob(path)
+        # Blob.open returns a file-like wrapping an HTTPS stream;
+        # iterate in chunks for bounded memory use.
+        with _clients.gcs_open(blob, "rb") as remote:
+            while True:
+                chunk = remote.read(_DEFAULT_CHUNK_BYTES)
+                if not chunk:
+                    return
+                yield chunk
+    except ConnectorError:
+        raise
+    except Exception as exc:
+        err = _clients.gcs_error(exc)
+    raise err
 
 
 class GCSFileSink(FileSink[GCSConfig]):

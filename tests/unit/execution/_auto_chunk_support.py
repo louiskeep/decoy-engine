@@ -276,10 +276,11 @@ def check_contract(
 def spy_lanes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     """Count calls into every lane entry point; each wrapper forwards to the real one.
 
-    `auto_chunk_module` only exists once B2 is implemented, so it is patched when present."""
-    from decoy_engine.execution import _chunked
+    `auto_chunk_module` only exists once B2 is implemented, so it is patched when present. The
+    lane calls each entry's guard-free core, so the `entry.` and `oracle.` keys count those."""
+    from decoy_engine.execution import _chunked_oracle
     from decoy_engine.execution import _pipeline_route_exec as rx
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
 
     calls: dict[str, list[Any]] = {
         "route_exec.run_mask_chunked": [],
@@ -299,14 +300,14 @@ def spy_lanes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
         rx, "run_mask_chunked", wrap("route_exec.run_mask_chunked", rx.run_mask_chunked)
     )
     monkeypatch.setattr(
-        _chunked_entry,
-        "run_mask_chunked",
-        wrap("entry.run_mask_chunked", _chunked_entry.run_mask_chunked),
+        _native_core,
+        "mask_chunked",
+        wrap("entry.run_mask_chunked", _native_core.mask_chunked),
     )
     monkeypatch.setattr(
-        _chunked,
-        "run_mask_pipeline_chunked",
-        wrap("oracle.run_mask_pipeline_chunked", _chunked.run_mask_pipeline_chunked),
+        _chunked_oracle,
+        "_mask_pipeline_chunked",
+        wrap("oracle.run_mask_pipeline_chunked", _chunked_oracle._mask_pipeline_chunked),
     )
     if importlib.util.find_spec("decoy_engine.execution._pipeline_auto_chunk") is not None:
         from decoy_engine.execution import _pipeline_auto_chunk as ac

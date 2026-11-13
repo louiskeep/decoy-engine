@@ -51,6 +51,9 @@ READER_FILES = (
     "generators/derivation.py",
     "generators/_formula.py",
     "generation/statistical/_spec.py",
+    "generation/relational/_cardinality.py",
+    # The one reader of the per-parent bounds every generation route goes through.
+    "config/_generate_relational.py",
 )
 # Transform parsers read the column dict as `cfg`, but only inside `from_dict`.
 FROM_DICT_FILES = (
@@ -185,3 +188,97 @@ def test_every_registry_key_is_read_somewhere() -> None:
 
 def test_internal_key_list_starts_empty() -> None:
     assert not INTERNAL_KEYS
+
+
+# Packages that read a generate column. A per-parent bound is read only through
+# `config.per_parent_bounds`, so validate, the probe, admission and both draws agree on what counts
+# as a bound.
+BOUND_READER_ROOTS = ("config", "generation", "generators", "execution")
+BOUND_KEYS = frozenset({"min_per_parent", "max_per_parent"})
+# (file, top-level definition) that may name the keys: the one reader and the registry entries.
+BOUND_KEY_OWNERS = frozenset(
+    {
+        ("config/_generate_relational.py", "per_parent_bounds"),
+        ("config/_generate_options.py", "_BASE_OPTIONS"),
+        ("config/_generate_options.py", "_NONE_MEANS_ABSENT"),
+    }
+)
+
+
+def _top_level_names(stmt: ast.stmt) -> set[str]:
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {stmt.name}
+    targets = stmt.targets if isinstance(stmt, ast.Assign) else []
+    if isinstance(stmt, ast.AnnAssign):
+        targets = [stmt.target]
+    return {t.id for t in targets if isinstance(t, ast.Name)}
+
+
+def _bound_key_uses(tree: ast.Module, owners: frozenset[str] = frozenset()) -> list[int]:
+    """Lines where a bound key, outside `owners`, is used to read a column.
+
+    A read passes the key to a call (`col.get(k)`, a helper), subscripts with it, compares with
+    it, or lists it in a container that is iterated or named (a key tuple read in a loop). A key
+    that only labels a problem location, or is the target of a write, reads nothing.
+    """
+    skipped: set[int] = set()
+    for stmt in tree.body:
+        if _top_level_names(stmt) & owners:
+            skipped |= {id(node) for node in ast.walk(stmt)}
+    keys: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            keys += [*node.args, *(kw.value for kw in node.keywords)]
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+            keys.append(node.slice)
+        elif isinstance(node, ast.Compare):
+            keys += [node.left, *node.comparators]
+        elif isinstance(node, (ast.For, ast.comprehension)) and isinstance(
+            node.iter, (ast.Tuple, ast.List, ast.Set)
+        ):
+            keys += node.iter.elts
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(
+            node.value, (ast.Tuple, ast.List, ast.Set)
+        ):
+            keys += node.value.elts
+    return sorted(
+        key.lineno
+        for key in keys
+        if isinstance(key, ast.Constant) and key.value in BOUND_KEYS and id(key) not in skipped
+    )
+
+
+def _owners_of(rel: str) -> frozenset[str]:
+    return frozenset(name for path, name in BOUND_KEY_OWNERS if path == rel)
+
+
+def test_per_parent_bounds_are_read_only_through_the_config_helper() -> None:
+    found = set()
+    for root in BOUND_READER_ROOTS:
+        for path in sorted((SRC / root).rglob("*.py")):
+            rel = path.relative_to(SRC).as_posix()
+            for line in _bound_key_uses(ast.parse(path.read_text()), _owners_of(rel)):
+                found.add(f"{rel}:{line}")
+    assert not found, f"read the bounds through config.per_parent_bounds instead: {sorted(found)}"
+
+
+def test_every_bound_key_owner_names_a_real_definition() -> None:
+    for rel, name in sorted(BOUND_KEY_OWNERS):
+        tree = ast.parse((SRC / rel).read_text())
+        assert any(name in _top_level_names(stmt) for stmt in tree.body), f"{rel}: no {name}"
+
+
+def test_the_bound_scan_sees_a_direct_read() -> None:
+    tree = ast.parse(
+        'lo = col.get("min_per_parent")\n'
+        'col["max_per_parent"] = 3\n'
+        'f(c, "max_per_parent")\n'
+        'KEYS = ("min_per_parent",)\n'
+        'def g():\n    return ("max_per_parent", 1)\n'
+        'def h():\n    return col["min_per_parent"], 0\n'
+        'for k in ("max_per_parent",):\n    pass\n'
+        'p.append((("min_per_parent",), 1))\n'
+        'b = k == "max_per_parent"\n'
+    )
+    assert _bound_key_uses(tree) == [1, 3, 4, 8, 9, 12]
+    assert _bound_key_uses(tree, frozenset({"KEYS", "h"})) == [1, 3, 9, 12]

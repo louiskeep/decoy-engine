@@ -289,7 +289,9 @@ class TestOutOfCoreRunner:
         plan, sources, graph = _fk_job(fmt, values)
         sink = _SpySink()
         with pytest.raises(StrategyError) as exc:
-            run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph, sink=sink)  # type: ignore[arg-type]
+            run_fk_out_of_core(
+                plan, sources, config={}, registry=_REG, relationship_graph=graph, sink=sink
+            )  # type: ignore[arg-type]
         assert exc.value.code == CODE
         assert sink.writes == []
         assert not sink.committed
@@ -299,7 +301,9 @@ class TestOutOfCoreRunner:
         plan, sources, graph = _fk_job("mixed", ["2024-01-15", "2024-03-02"], parent_fmt="%Y-%m-%d")
         sink = _SpySink()
         with pytest.raises(StrategyError) as exc:
-            run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph, sink=sink)  # type: ignore[arg-type]
+            run_fk_out_of_core(
+                plan, sources, config={}, registry=_REG, relationship_graph=graph, sink=sink
+            )  # type: ignore[arg-type]
         assert exc.value.code == CODE
         assert sink.writes == []
         assert not sink.committed

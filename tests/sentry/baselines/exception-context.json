@@ -80,12 +80,6 @@
   "decoy_engine/execution/_sequential_composite_chain.py::decline_composite_chain::0": {
    "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
   },
-  "decoy_engine/execution/_strategies/_tokenize.py::TokenizeStrategyHandler.run::0": {
-   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
-  },
-  "decoy_engine/execution/_strategies/_tokenize.py::TokenizeStrategyHandler.run::1": {
-   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
-  },
   "decoy_engine/execution/native/_capabilities.py::capabilities_for::0": {
    "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
   },

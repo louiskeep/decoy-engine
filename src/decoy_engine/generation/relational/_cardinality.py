@@ -34,7 +34,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from decoy_engine import _capacity, reasons, relationships
-from decoy_engine.config import generate_columns_of, value_key
+from decoy_engine.config import generate_columns_of, per_parent_bounds, value_key
 from decoy_engine.generation.pool import GenerationError, QualityWarning, emit_generation_warning
 from decoy_engine.generators.derivation import TABLE_KEY
 
@@ -65,11 +65,6 @@ def _infeasible(table: Any, column: Any) -> GenerationError:
         code=reasons.runtime.GENERATE_PER_PARENT_INFEASIBLE,
         message=_text(reasons.runtime.GENERATE_PER_PARENT_INFEASIBLE, table, column),
     )
-
-
-def _bound(col: dict[str, Any], key: str) -> int:
-    """A per-parent bound; zero, absent and null all mean unset."""
-    return max(int(col.get(key) or 0), 0)
 
 
 def _feasible(lo: int, hi: int, parents: int, rows: int) -> bool:
@@ -163,7 +158,7 @@ def check_reference_pool(
                 on_warning,
             )
         return
-    lo, hi = _bound(col, "min_per_parent"), _bound(col, "max_per_parent")
+    lo, hi = per_parent_bounds(col)
     if not _feasible(lo, hi, len(keys), n):
         raise _infeasible(table, column)
     weights = col.get("weights")
@@ -184,7 +179,7 @@ def check_fitted_bounds(col: dict[str, Any], keys: Sequence[Any]) -> None:
     Fitted degrees come from the pinned fan-out, so a bound would be dropped without a word.
     An empty pool is left to the fitted allocator, whose refusal has precedence.
     """
-    if keys and (_bound(col, "min_per_parent") or _bound(col, "max_per_parent")):
+    if keys and any(per_parent_bounds(col)):
         raise GenerationError(
             code=reasons.runtime.GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT,
             message=_text(

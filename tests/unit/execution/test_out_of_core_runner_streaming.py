@@ -79,6 +79,7 @@ def test_lazy_source_sink_run_matches_resident_run_and_oracle(tmp_path) -> None:
     in_memory = run_fk_out_of_core(
         plan,
         resident,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work-mem",
@@ -87,6 +88,7 @@ def test_lazy_source_sink_run_matches_resident_run_and_oracle(tmp_path) -> None:
     streamed = run_fk_out_of_core(
         plan,
         lazy_sources(paths),
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -152,6 +154,7 @@ def test_streaming_runner_reads_lazy_sources_in_bounded_batches(tmp_path, monkey
     run_fk_out_of_core(
         make_plan(),
         lazy_sources(paths),
+        config={},
         registry=_REG,
         relationship_graph=make_graph(OrphanPolicy.FAIL),
         sink=ParquetTransactionalSink(target),
@@ -208,6 +211,7 @@ def test_all_null_redact_batch_publishes_fixed_type(tmp_path, monkeypatch) -> No
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -216,6 +220,7 @@ def test_all_null_redact_batch_publishes_fixed_type(tmp_path, monkeypatch) -> No
     in_memory = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work-mem",
@@ -279,13 +284,19 @@ def test_bool_orphan_publishes_int_not_bool(tmp_path, monkeypatch) -> None:
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
         temp_dir=tmp_path / "work-sink",
     )
     in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
     pandas = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
@@ -347,13 +358,19 @@ def test_large_whole_float_orphan_sink_matches_oracle(tmp_path, monkeypatch) -> 
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
         temp_dir=tmp_path / "work-sink",
     )
     in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
     pandas = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
@@ -414,6 +431,7 @@ def test_bool_orphan_and_match_cross_batch_casts_to_int(tmp_path) -> None:
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -499,12 +517,18 @@ def test_shared_key_chain_with_orphan_matches_oracle_and_preserves_ri(tmp_path) 
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
     target = tmp_path / "published"
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -540,12 +564,18 @@ def test_shared_key_chain_namespace_mismatch_matches_oracle(tmp_path) -> None:
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
     target = tmp_path / "published"
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -616,12 +646,18 @@ def test_overlapping_child_edges_join_from_raw_and_publish_no_source_value(tmp_p
     }
 
     in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
     target = tmp_path / "published"
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -681,7 +717,12 @@ def test_zero_row_table_no_sink_matches_whole_table_output(tmp_path) -> None:
     }
 
     in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
 
     expected = pa.table(
@@ -722,7 +763,12 @@ def test_all_null_redact_parent_key_with_int_child_accepted(tmp_path) -> None:
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
 
     for name in ("customers", "orders"):
@@ -734,6 +780,7 @@ def test_all_null_redact_parent_key_with_int_child_accepted(tmp_path) -> None:
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -784,12 +831,18 @@ def test_leading_all_null_key_window_keeps_aligned_cursor_in_sync(tmp_path) -> N
         plan, resident, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     in_memory = run_fk_out_of_core(
-        plan, resident, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+        plan,
+        resident,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-mem",
     )
     target = tmp_path / "published"
     run_fk_out_of_core(
         plan,
         lazy_sources({name: src_dir / f"{name}.parquet" for name in ("customers", "orders")}),
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -845,6 +898,7 @@ def test_zero_row_parent_sink_publishes_oracle_values(tmp_path) -> None:
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -882,6 +936,7 @@ def test_float64_all_orphan_preserve_narrowing_parity_and_sink_type(tmp_path) ->
     in_memory = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work-mem",
@@ -897,6 +952,7 @@ def test_float64_all_orphan_preserve_narrowing_parity_and_sink_type(tmp_path) ->
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),

@@ -92,6 +92,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.quality.dp_budget", "DpBudgetError", "quality"),
     ("decoy_engine.quality.dp_provenance", "ProvenanceError", "quality"),
     ("decoy_engine.quality.snapshot", "DistributionSnapshotError", "quality"),
+    ("decoy_engine.verification.postmask._blocked", "PostScanBlockedError", "post_scan"),
     ("decoy_engine.connectors.postgres_snapshot", "PostgresSnapshotError", "connector"),
     ("decoy_engine.execution.physical._shadow_diff_codes", "ShadowDifference", "physical"),
 )
@@ -110,6 +111,11 @@ _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
     ("decoy_engine.sdk", "PermanentError", reasons.decoy.CONNECTOR_PERMANENT_FAILURE),
     ("decoy_engine.fileaccess._types", "FileAccessDenied", reasons.decoy.FILE_ACCESS_DENIED),
     ("decoy_engine.profiling.scan_set", "ScanSourceError", reasons.runtime.SCAN_SOURCE_FAILED),
+    (
+        "decoy_engine.verification.postmask._route_guard",
+        "PostScanRouteError",
+        reasons.route.POST_SCAN_MODELS_UNSUPPORTED,
+    ),
 )
 
 
@@ -227,6 +233,17 @@ def _count_of(report: Any, name: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
+def report_unavailable(report: Any) -> bool:
+    """Whether a verification report says its check could not complete: the whole pass failed
+    (``pass_failed_with`` set; its text is never read) or a per-check error was counted."""
+    failed_with = (
+        report.get("pass_failed_with")
+        if isinstance(report, Mapping)
+        else getattr(report, "pass_failed_with", None)
+    )
+    return failed_with is not None or _count_of(report, "error_count") > 0
+
+
 def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[ReasonRecord, ...]:
     """The reasons a verification report supports, without serializing the report.
 
@@ -236,15 +253,10 @@ def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[Reason
     findings and is listed first; findings are ``findings_reported`` when the check only reports,
     and ``verification_failed`` when ``enforcing`` made the negative verdict binding.
     A clean report yields no reasons. Accepts the `PostMaskReport` object or its dict form."""
-    failed_with = (
-        report.get("pass_failed_with")
-        if isinstance(report, Mapping)
-        else getattr(report, "pass_failed_with", None)
-    )
     errors = _count_of(report, "error_count")
     findings = _count_of(report, "fail_count")
     out: list[ReasonRecord] = []
-    if failed_with is not None or errors > 0:
+    if report_unavailable(report):
         out.append(
             ReasonRecord.for_reason(
                 reasons.decoy.VERIFICATION_UNAVAILABLE,

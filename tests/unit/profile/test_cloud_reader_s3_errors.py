@@ -51,3 +51,51 @@ def test_profiler_s3_errors_are_fixed_text_and_unchained(
     for marker in ("zz_marker", "zz-marker-host", "123456789012"):
         assert marker not in str(err) + repr(err)
     assert err.__cause__ is None and err.__context__ is None
+
+
+class _ReadFailing:
+    """A client whose object body fails on read, like a connection dropped mid-transfer."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def head_object(self, **_kw: Any) -> dict:
+        return {"ContentLength": 10}
+
+    def get_object(self, **_kw: Any) -> dict:
+        exc = self._exc
+
+        class Body:
+            def __enter__(self) -> Body:
+                return self
+
+            def __exit__(self, *_a: Any) -> None:
+                return None
+
+            def read(self, *_a: Any) -> bytes:
+                raise exc
+
+        return {"Body": Body()}
+
+
+_STREAM = [
+    (botocore_exc.ReadTimeoutError(endpoint_url="https://zz-marker-host"), "transient"),
+    (botocore_exc.ResponseStreamingError(error="zz_marker broke"), "transient"),
+    (botocore_exc.IncompleteReadError(actual_bytes=1, expected_bytes=2), "unexpected"),
+]
+
+
+@pytest.mark.parametrize(("exc", "kind"), _STREAM, ids=lambda v: type(v).__name__)
+@pytest.mark.parametrize("read", ["range", "full"])
+def test_profiler_body_read_failures_are_classified_and_unchained(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException, kind: str, read: str
+) -> None:
+    monkeypatch.setattr(_clients, "s3_client", lambda **_kw: _ReadFailing(exc))
+    source = S3CsvSource({"bucket": "zz_marker_bkt", "key": "zz_marker_key", "format": "csv"})
+    with pytest.raises((PermanentError, TransientError)) as info:
+        source.row_count() if read == "range" else source.to_frame()
+    err = info.value
+    assert err.kind == kind  # type: ignore[attr-defined]
+    for marker in ("zz_marker", "zz-marker-host"):
+        assert marker not in str(err) + repr(err)
+    assert err.__cause__ is None and err.__context__ is None

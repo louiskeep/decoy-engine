@@ -108,15 +108,17 @@ emitted as `.hex()[:truncate]`. Joinability-preserving. Null/NaN rows emit null
 and consume no derivation.
 
 ### mask.tokenize
-`execution/_strategies/_tokenize.py:126` (MG-5 reversible tokenization). V0 is
+`execution/_strategies/_tokenize.py:124` (MG-5 reversible tokenization). V0 is
 string-only: a coded, value-free `tokenize_requires_string_dtype` preflight rejects
 any source column that is not string/object dtype, which sidesteps every OTHER
 `mask.hash` canonicalization branch (int-null-widening, float, tz-naive datetime)
 entirely -- none of those dtypes ever reaches this handler. Within that string-only
 domain, the fresh surrogate is drawn from an NFC-normalized value, like `mask.hash`'s
 own string branch (`_canonicalize_source`), not a raw `str(value)`:
-`derive(mask_key, namespace, nfc_normalize(str(value)).encode())`, emitted as
-`'tok_' + .hex()[:32]`. The `(plaintext, token)` pair -- `plaintext` is the SAME
+`derive(K_tok, namespace, nfc_normalize(str(value)).encode())`, emitted as
+`'tok_' + .hex()[:32]`, where `K_tok = derive(mask_key, namespace, b'tokenize-key/v1'
+|| len(scope) || scope)` binds the vault's own `derivation_scope` (B-6 D2: two vaults
+tokenize apart, and a token payload is never a `mask.hash` output). The `(plaintext, token)` pair -- `plaintext` is the SAME
 NFC-normalized string the token derives from -- is then recorded in the platform
 token vault; the vault is EXTERNAL STATE and its `lookup_existing` may override the
 freshly drawn token with a previously stored one (the vault is the identity

@@ -68,7 +68,12 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.config import generate_columns_of, is_exact_sequence_key, is_self_reference
+from decoy_engine.config import (
+    generate_columns_of,
+    is_exact_sequence_key,
+    is_self_reference,
+    per_parent_bounds,
+)
 
 __all__ = [
     "DEFAULT_PROBE_FLOOR_ROWS",
@@ -141,10 +146,6 @@ def downscale_config(
     return scaled
 
 
-def _positive(value: Any) -> int:
-    return value if type(value) is int and value > 0 else 0
-
-
 def _loosened_bounds(lo: int, hi: int, rows: int, parent_rows: int, exact: bool) -> tuple[int, int]:
     """Per-parent bounds that `rows` children over `parent_rows` parents can always meet.
 
@@ -171,7 +172,7 @@ def _loosen_per_parent_bounds(scaled: dict[str, Any]) -> None:
         for col in generate_columns_of(table):
             if not isinstance(col, dict) or col.get("type") != "reference":
                 continue
-            lo, hi = _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
+            lo, hi = per_parent_bounds(col)
             parent = by_name.get(col.get("reference_table"))
             parent_rows = parent.get("row_count") if parent else None
             if not (lo or hi) or type(rows) is not int or type(parent_rows) is not int:

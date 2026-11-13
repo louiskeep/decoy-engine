@@ -18,7 +18,7 @@ Namespaces: `config`, `plan`, `runtime`, `provider`, `quality`, `connector`, `su
 
 ### Versioning
 
-`registry_version` (`1.24.0`), `reason_schema_version` (`1`) and `event_schema_version` (`1`) are independent.
+`registry_version` (`1.25.0`), `reason_schema_version` (`1`) and `event_schema_version` (`1`) are independent.
 
 Codes are append-only: a code never disappears or changes meaning. A retired code stays as a tombstone with its replacement link.
 

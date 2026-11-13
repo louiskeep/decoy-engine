@@ -143,6 +143,7 @@ def _timed_run(
             relationship_graph=graph,
             sink=sink,
             temp_dir=work_root / "work",
+            config={},
             **kwargs,
         )
         return time.monotonic() - start

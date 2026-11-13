@@ -115,6 +115,7 @@ class TestMemoryPreflightWiring:
 
         with pytest.raises(_ReachedDispatchError):
             route_exec_mod.run_out_of_core_route(
+                config={},
                 plan=object(),
                 sources=sources,
                 registry=object(),
@@ -137,6 +138,7 @@ class TestMemoryPreflightWiring:
         }
 
         result = route_exec_mod.run_out_of_core_route(
+            config={},
             plan=_tiny_plan(),
             sources=sources,
             registry=_tiny_registry(),
@@ -179,6 +181,7 @@ class TestMemoryPreflightWiring:
 
         with pytest.raises(ExecutionError) as excinfo:
             route_exec_mod.run_out_of_core_route(
+                config={},
                 plan=object(),
                 sources=sources,
                 registry=object(),
@@ -220,6 +223,7 @@ class TestMemoryPreflightWiring:
 
         with pytest.raises(_ReachedDispatchError):
             route_exec_mod.run_out_of_core_route(
+                config={},
                 plan=object(),
                 sources=sources,
                 registry=object(),

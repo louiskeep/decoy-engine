@@ -517,3 +517,36 @@ def test_any_other_rate_may_hold_nulls_so_the_key_is_not_exact(rate: Any) -> Non
 )
 def test_only_a_sequence_is_an_exact_key(column: dict[str, Any]) -> None:
     assert config_api.is_exact_sequence_key(column) is False
+
+
+# ---- the one reader of a per-parent bound -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, (0, 0)),
+        ({"min_per_parent": None, "max_per_parent": None}, (0, 0)),
+        ({"min_per_parent": 0, "max_per_parent": 0}, (0, 0)),
+        ({"min_per_parent": 2}, (2, 0)),
+        ({"max_per_parent": 5}, (0, 5)),
+        ({"min_per_parent": 2, "max_per_parent": 5}, (2, 5)),
+        ({"min_per_parent": 7, "max_per_parent": 3}, (7, 3)),
+    ],
+)
+def test_per_parent_bounds_reads_every_value_a_valid_config_carries(
+    options: dict[str, Any], expected: tuple[int, int]
+) -> None:
+    assert config_api.per_parent_bounds({"name": "pid", "type": "reference", **options}) == expected
+
+
+@pytest.mark.parametrize("value", [-1, True, False, 2.5, 2.0, "3", "abc", [2]])
+def test_per_parent_bounds_never_coerces_a_value_the_registry_refuses(value: Any) -> None:
+    # Only an int above zero is a bound, so a refused value can never become one by coercion.
+    col = {"min_per_parent": value, "max_per_parent": value}
+    assert config_api.per_parent_bounds(col) == (0, 0)
+
+
+def test_per_parent_bounds_reads_each_bound_from_its_own_key() -> None:
+    assert config_api.per_parent_bounds({"min_per_parent": 1, "max_per_parent": 9}) == (1, 9)
+    assert config_api.per_parent_bounds({"min_per_parent": 9, "max_per_parent": 1}) == (9, 1)

@@ -247,6 +247,7 @@ _WORKER_SCRIPT = textwrap.dedent(
             temp_disk_budget_bytes=big_disk_bytes,
             out_of_core_reorder_threshold_rows=0,
             key_provider=_KEY_PROVIDER,
+            config={},
         )
 
         child_out = pq.read_table(sink_target / "child.parquet")
