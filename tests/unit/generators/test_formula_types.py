@@ -176,6 +176,40 @@ def test_formula_reads_a_reference_to_a_sequence_parent(null_p: float) -> None:
     assert table.schema.field("col").type == pa.int64()
 
 
+def test_reference_with_nulls_and_a_co_reader_stays_text_and_the_formula_sees_a_number() -> None:
+    parent = {"name": "p", "row_count": 5, "generate_columns": [seq("id")]}
+    child = {
+        "name": "t",
+        "row_count": 30,
+        "generate_columns": [
+            {
+                "name": "r",
+                "type": "reference",
+                "reference_table": "p",
+                "reference_column": "id",
+                "null_probability": 0.4,
+            },
+            {"name": "g", "type": "group_key", "group_by": "r", "length": 8},
+            fml("f", "r * 10", ["r"]),
+        ],
+    }
+    config = {
+        "version": 2,
+        "global_settings": {"seed": 1},
+        "sources": {},
+        "tables": [parent, child],
+    }
+    table = compile_and_generate(config)["t"]
+    refs, outs = table.column("r").to_pylist(), table.column("f").to_pylist()
+    assert any(r is None for r in refs) and any(r is not None for r in refs)
+    for r, o in zip(refs, outs, strict=True):
+        if r is None:
+            assert o is None
+        else:
+            assert o == int(r) * 10
+    assert table.schema.field("r").type == pa.string()
+
+
 # AT-4 --------------------------------------------------------------------------------------
 
 

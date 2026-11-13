@@ -529,6 +529,7 @@ def test_name_bound_in_an_inner_scope_is_still_unknown_outside_it(expr: str) -> 
         ("len([w for v in [[1, 2]] for w in v])", [2] * 5),
         ("len({a, b})", [1] * 5),
         ("i + index", [0, 2, 4, 6, 8]),
+        ("round(a / 3)", [0, 1, 1, 1, 2]),
     ],
 )
 def test_scoped_shapes_are_accepted_and_generate_values(expr: str, expected: list[int]) -> None:

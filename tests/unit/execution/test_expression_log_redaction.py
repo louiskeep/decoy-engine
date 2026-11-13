@@ -95,10 +95,22 @@ def test_formula_errors_fail_the_run_without_cell_values(caplog) -> None:
     }
     from decoy_engine.generation.pool import GenerationError
 
+    # The failing run yields no table, so draw the same names from the config without "bad".
+    names_cfg = {
+        **cfg,
+        "tables": [
+            {**cfg["tables"][0], "generate_columns": cfg["tables"][0]["generate_columns"][:1]}
+        ],
+    }
+    names = compile_and_generate(names_cfg)["t"].column("first_name").to_pylist()
+    assert names and all(names)
     with caplog.at_level(logging.DEBUG), pytest.raises(GenerationError) as info:
         compile_and_generate(cfg)
     assert info.value.code == "generate_formula_evaluation_failed"
     assert info.value.__cause__ is None and info.value.__context__ is None
+    for name in names:
+        assert name not in caplog.text
+        assert name not in str(info.value)
     # Fixed text only: a faker name in the message would break this equality.
     assert info.value.message == (
         "formula column evaluation failed at table 't', column 'bad', row 0: "

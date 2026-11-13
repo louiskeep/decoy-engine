@@ -312,8 +312,6 @@ TIMEZONE_NAIVE_DATETIME = _d("timezone_naive_datetime", "Timezone naive datetime
 UNIQUENESS_IMPOSSIBLE = _d("uniqueness_impossible", "Uniqueness impossible.")
 UNKNOWN_CARDINALITY_MODE = _d("unknown_cardinality_mode", "Unknown cardinality mode.")
 
-_d = _catalog.runtime("GenerationError")
-
 GENERATE_FORMULA_EVALUATION_FAILED = _d(
     "generate_formula_evaluation_failed",
     "A generate formula could not be evaluated for a row.",
