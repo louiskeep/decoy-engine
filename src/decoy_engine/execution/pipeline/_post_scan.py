@@ -16,6 +16,7 @@ from typing import Any, Final
 import pyarrow as pa
 
 from decoy_engine import fileaccess
+from decoy_engine._memory_limit import parse_megabytes
 from decoy_engine.config import (
     parse_relationship_config,
     post_scan_gate_applies,
@@ -42,10 +43,6 @@ __all__ = ["PostScanGate"]
 _NOT_RUN: Final = "PostScanGateNotRun"
 
 
-def _megabytes(limit: str) -> int:
-    return int(limit.removesuffix("MB"))
-
-
 class PostScanGate:
     """One run's gate. `ran` is set once a check completes; every later call is a no-op. After a
     run, `report` is the value-free report and `verdict` the decision on it."""
@@ -62,7 +59,7 @@ class PostScanGate:
     def memory_limit(self) -> str:
         """The key scan's DuckDB cap: its own fixed cap or the run's budget, whichever is less."""
         budget = resolve_ooc_memory_limit(self._budget_bytes).memory_limit
-        return min(MEMORY_LIMIT, budget, key=_megabytes)
+        return min(MEMORY_LIMIT, budget, key=lambda limit: parse_megabytes(limit) or 0)
 
     def run_resident(
         self,

@@ -18,7 +18,6 @@ hook catches that + writes a JobPostScanIntegrityReport with
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from decimal import Decimal
@@ -29,6 +28,8 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine import fileaccess
+from decoy_engine._memory_limit import parse_megabytes
+from decoy_engine.internal.pandas_missing import is_null_cell
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.verification.postmask._blocked import severity_counts
 from decoy_engine.verification.postmask._column_facts import ColumnFacts, column_facts
@@ -126,10 +127,9 @@ def run_post_mask_tables(
 
 
 def _megabytes(limit: str) -> int:
-    match = re.fullmatch(r"(\d+)MB", limit)
-    if match is None:
+    limit_mb = parse_megabytes(limit)
+    if limit_mb is None:
         raise ValueError("run_post_mask_tables: memory_limit must look like '512MB'")
-    limit_mb = int(match.group(1))
     if limit_mb == 0:
         raise ValueError("run_post_mask_tables: memory_limit must be above zero")
     return limit_mb
@@ -145,7 +145,9 @@ def _native(series: pd.Series) -> pa.Array | None:
 
 
 def _text(series: pd.Series) -> pa.Array:
-    return pa.array([None if _null(v) else _key(v) for v in series.tolist()], type=pa.string())
+    return pa.array(
+        [None if is_null_cell(v) else _key(v) for v in series.tolist()], type=pa.string()
+    )
 
 
 def _key(value: object) -> str:
@@ -165,13 +167,6 @@ def _key(value: object) -> str:
             return str(int(value))
         return format(value.normalize(), "f")
     return str(value)
-
-
-def _null(value: object) -> bool:
-    """True for every null family pandas holds in an object cell: None, float NaN, pd.NA, pd.NaT,
-    numpy NaT and Decimal NaN. It is taken before `_key`, which would turn each into a string
-    that reads as a real value. An array-like cell is not a null."""
-    return bool(pd.api.types.is_scalar(value) and pd.isna(value))
 
 
 def _frame_table(name: str, frame: pd.DataFrame, other: pd.DataFrame | None) -> TableBatches:
