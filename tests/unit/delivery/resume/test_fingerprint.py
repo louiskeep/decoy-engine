@@ -8,6 +8,8 @@ import hmac
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from decoy_engine.delivery.resume import RunFingerprint, binding_digest, build_fingerprint
 
 _COMPONENTS = (
@@ -67,6 +69,7 @@ def test_fields() -> None:
     variants = {
         "config_hash": _fp(changed_cfg),
         "key_check": _fp(provider=other_key),
+        "key_version": _fp(provider=_Provider(bytes(range(32)), "v2")),
         "chunk_size": _fp(chunk_size=500),
     }
     for i in range(len(_COMPONENTS)):
@@ -85,6 +88,17 @@ def test_fields() -> None:
     assert binding_digest({**src, "path": "in/other.csv"}, tgt) != binding_digest(src, tgt)
     assert binding_digest(src, {**tgt, "format": "parquet"}) != binding_digest(src, tgt)
     assert binding_digest(src, tgt) != binding_digest(tgt, src)
+
+
+def test_digests_are_tagged() -> None:
+    src, tgt = _config()["sources"]["t1"], _config()["targets"]["t1"]
+    assert _fp().fingerprint_digest.startswith("sha256:")
+    assert binding_digest(src, tgt).startswith("sha256:")
+
+
+def test_empty_components_refused() -> None:
+    with pytest.raises(ValueError, match="component"):
+        _fp(components=())
 
 
 def test_components_are_sorted_and_order_free() -> None:
