@@ -102,6 +102,60 @@ class TestPostRunStepsClassified:
         assert envelope["outcome"] == "crashed"
 
 
+# --- 2b. an interrupt that wraps a memory error ------------------------------------------
+
+
+def _interrupt_from(cause: BaseException) -> KeyboardInterrupt:
+    try:
+        raise cause
+    except BaseException:
+        try:
+            raise KeyboardInterrupt
+        except KeyboardInterrupt as exc:  # implicit __context__ is `cause`
+            return exc
+
+
+def _interrupt_raised_from(cause: BaseException) -> KeyboardInterrupt:
+    try:
+        raise KeyboardInterrupt from cause
+    except KeyboardInterrupt as exc:
+        return exc
+
+
+class TestInterruptWrappingMemoryError:
+    """Native code at the cap can surface exhaustion as KeyboardInterrupt (Arrow cancel)."""
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: _interrupt_raised_from(MemoryError()),
+            lambda: _interrupt_from(pa.lib.ArrowMemoryError("injected")),
+        ],
+        ids=["cause", "context"],
+    )
+    def test_chained_memory_error_is_oom_killed_via_the_worker(self, tmp_path, monkeypatch, make):
+        exc = make()
+        monkeypatch.setattr(_isolated_worker, "run_pipeline", _raising(exc))
+        envelope = _isolated_worker._run(_payload(tmp_path))
+        assert envelope["outcome"] == "oom_killed"
+        assert envelope["error"] == "KeyboardInterrupt"
+
+    def test_bare_interrupt_stays_crashed_via_the_worker(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_isolated_worker, "run_pipeline", _raising(KeyboardInterrupt()))
+        envelope = _isolated_worker._run(_payload(tmp_path))
+        assert envelope["outcome"] == "crashed"
+
+    def test_interrupt_wrapping_a_non_memory_error_stays_crashed(self):
+        assert not is_memory_failure(_interrupt_raised_from(ValueError("bug")))
+
+    def test_a_chain_cycle_terminates(self):
+        a, b = RuntimeError("a"), RuntimeError("b")
+        a.__context__, b.__context__ = b, a
+        assert not is_memory_failure(a)
+        b.__cause__ = MemoryError()
+        assert is_memory_failure(a)
+
+
 # --- 3. main()'s outer handler -------------------------------------------------------------
 
 

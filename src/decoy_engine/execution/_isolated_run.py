@@ -535,7 +535,14 @@ def _spawn_and_classify(
         )
     ):
         result = _result_from_envelope(envelope, output_dir, proc.pid, staging_output_dir)
-        return replace(result, memory_evidence=evidence_of(finished, abnormal=False))
+        # A self-reported `crashed` names an exception, not its cause. Native code at the cap
+        # can surface exhaustion as an unrelated type (an Arrow cancellation reaches Python as
+        # KeyboardInterrupt), so a crash that sat at its cap carries the pressure suspicion.
+        # `oom_killed` already names the cause and `completed` is not a failure.
+        return replace(
+            result,
+            memory_evidence=evidence_of(finished, abnormal=envelope["outcome"] == "crashed"),
+        )
 
     # The child died too hard to self-report (a harder rlimit trip the
     # kernel turned into a signal, or an external SIGKILL -- the governor

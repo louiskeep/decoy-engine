@@ -161,6 +161,27 @@ class TestLifecycle:
         assert result.memory_evidence is not None
         assert result.memory_evidence.suspected_memory_pressure is False
 
+    @pytest.mark.serial
+    def test_self_reported_crash_at_the_cap_carries_the_pressure_flag(self, tmp_path, monkeypatch):
+        # Native code that hits the cap can surface exhaustion as an unrelated exception type
+        # (an Arrow cancellation arrives in Python as KeyboardInterrupt). The worker reports it
+        # as `crashed` with exit 0, so only the driver's samples can say the child sat at its cap.
+        worker = (
+            "import json, sys, time\n"
+            "from pathlib import Path\n"
+            "time.sleep(0.3)\n"
+            "p = Path(sys.argv[1]).parent / 'result.json'\n"
+            "p.write_text(json.dumps({'outcome': 'crashed', 'peak_rss_mb': 3.0,"
+            " 'error': 'KeyboardInterrupt'}))\n"
+        )
+        _install(tmp_path, monkeypatch, "interrupt_worker", worker)
+        # Cap below any live interpreter, so every sample is within the margin of the cap.
+        result = _run(mem_cap_bytes=8 * _MIB)
+        assert result.outcome == "crashed"
+        assert result.error == "KeyboardInterrupt"
+        assert result.memory_evidence is not None
+        assert result.memory_evidence.suspected_memory_pressure is True
+
     def test_thread_start_failure_leaves_the_run_unaffected(self, tmp_path, monkeypatch):
         _install(tmp_path, monkeypatch, "silent_worker", _SILENT)
         monkeypatch.setattr(
