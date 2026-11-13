@@ -43,6 +43,7 @@ from decoy_engine.execution._strategies._tokenize import TokenizeStrategyHandler
 from decoy_engine.execution._strategies._top_code import TopCodeStrategyHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.execution._strategies._windowed_date import WindowedDateStrategyHandler
+from decoy_engine.plan.checks import REQUIREMENTS_BY_STRATEGY, StrategyRequirement, requirements_for
 
 SCALAR_HANDLERS: dict[str, StrategyHandler] = {
     handler.name: handler
@@ -98,12 +99,21 @@ def _catalog_row(handler: StrategyHandler) -> StrategyInfo:
     names = [o.name for o in options]
     if len(set(names)) != len(names):
         raise TypeError(f"strategy handler {handler.name!r}: duplicate option names")
+    requirements = requirements_for(handler.name)
+    if not all(isinstance(r, StrategyRequirement) for r in requirements):
+        raise TypeError(f"strategy handler {handler.name!r}: requirements must be descriptors")
+    needs_namespace = any(r.path == ("namespace",) for r in requirements)
+    if needs_namespace and not declared["namespace_required"]:
+        raise TypeError(
+            f"strategy handler {handler.name!r}: requires a namespace it does not declare"
+        )
     return StrategyInfo(
         name=handler.name,
         namespace_required=declared["namespace_required"],
         join_safe=declared["join_safe"],
         options=options,
         offer_in_wizard=declared["offer_in_wizard"],
+        requirements=requirements,
     )
 
 
@@ -115,6 +125,9 @@ def strategy_catalog() -> tuple[StrategyInfo, ...]:
     may set on it, so a front end can prompt, validate and test from this data instead of
     keeping a parallel table.
     """
+    unknown = sorted(set(REQUIREMENTS_BY_STRATEGY) - set(SCALAR_HANDLERS))
+    if unknown:
+        raise TypeError(f"required settings name unknown strategies: {unknown}")
     return tuple(sorted((_catalog_row(h) for h in SCALAR_HANDLERS.values()), key=lambda r: r.name))
 
 
