@@ -2,8 +2,10 @@
 
 Status: built on `feat/gen-rel-e3b`. The owner question of "Plan notes and deviations", item 1
 (per-parent aggregation of a text-typed numeric child column), is closed by the owner ruling of
-2026-11-13 (option (c)); see "Owner ruling (2026-11-13)" at the end. No census number,
-threshold, pin, baseline or allowlist rose.
+2026-11-13 (option (c)); see "Owner ruling (2026-11-13)". Slice 3 was merged forward and the
+review round 1 fix built; see "Forward merge (2026-11-13)" and "Review round 1 (2026-11-13)" at
+the end, which supersede the earlier sections for the final head. No census number, threshold,
+pin, baseline or allowlist rose.
 
 Spec: `docs/plans/gen-rel.md` on `origin/plan/gen-rel` (`26a83542`), slice row 4 (per-parent
 `derived_aggregate` with `from_table` and `via`, every op, childless identity). The plan stays
@@ -589,7 +591,7 @@ cells, `assert True is False`: `test_a_child_column_that_is_not_numeric_is_refus
 `test_a_date_output_type_is_not_numeric`;
 `test_a_reference_child_column_is_judged_by_the_column_it_copies`;
 `test_the_verdict_matches_the_type_numeric_typing_gives_an_aggregate_input` [sequence],
-[faker-int], [categorical-text]. Green on the base by design (the accepted cells): 
+[faker-int], [categorical-text]. Green on the base by design (the accepted cells):
 `test_a_numeric_child_column_is_accepted_and_aggregated`,
 `test_a_childless_parent_sums_to_zero_over_an_accepted_column` and the verdict cell, each for
 [distribution], [categorical-number], [constant-number], [output_type]; all twelve are red
@@ -680,3 +682,280 @@ On the docs-only record commit only `ruff`, `format` and `sentry` were rerun.
   to 3. No second guard was built (the plan does not require one).
 - A `derived` child column with a numeric expression now needs a numeric `output_type` to be
   aggregated per parent; `statistical` and `windowed_date` cannot be per-parent inputs.
+
+## Forward merge (2026-11-13)
+
+Each total in this section and the next belongs to the head named beside it. These two sections
+supersede the sections above for the final head.
+
+`origin/feat/gen-rel-e3a` at `ed340c07` (slice 3 with its review round 1; it holds slices 1 and
+2 and `origin/main` `c86ca58d`, 0.23.0 released) merged as `df2b9ba5` (parents `16b2fcde`,
+`ed340c07`). Main is not merged into this branch directly. The venv was resynced
+(`uv sync --frozen --python 3.10 --extra dev --extra lint --extra vault --extra cloud`, the
+worktree's own `.venv`) and `decoy_engine.__file__` is
+`/home/user/wt-e3b/src/decoy_engine/__init__.py`.
+
+Conflicts, each resolved as a union:
+
+- `CODEMAP.md` (the `config/` row): this slice's "per-parent aggregates" beside slice 3's
+  "an input read through a foreign key carries its parent table and key, `source_table` and
+  `source_key`".
+- `config/__init__.py` (imports and `__all__`): both sides' names (`aggregate_problems`,
+  `generated_arrow_type`, `is_per_parent_aggregate`, `reference_root` beside
+  `is_exact_sequence_key`, `per_parent_bounds`).
+- `config/_generate_relational.py` (`__all__`): both sides' names.
+- `generation/_admission.py` (one import line): `categorical_arrow_type`, `is_self_reference`,
+  `per_parent_bounds`.
+
+Adaptations required by the slice 1 to 3 guards (in the merge commit):
+
+- One `via` resolver (slice 3, scan 8). `_aggregate_problem` followed the aggregate's `via`
+  column itself (`via.get("reference_table")`, `via.get("reference_column")`) while calling
+  `parent_key_problem`, which scan 8 flags. The run's `_per_parent_values` re-read the same
+  column's `reference_column` from the child's config. Both now ask one new public function,
+  `config.aggregate_via_target(tables, col)`, which is `_via_target` over the `from_table`
+  child's columns. The check judges its answer: a parent equal to `from_table` is the
+  self-lookup (`generate_parent_lookup_self_reference`), an empty or other parent is
+  `generate_parent_lookup_key_not_unique`, and the key goes through `parent_key_problem` over
+  the earlier parent columns. Every validated config reads the same; every refusal code and
+  location in `test_aggregate.py` is unchanged. The run takes the key from the same answer, so
+  validation and the run match a child row to its parent by one rule.
+  `GenerateInputRef.source_key` stays empty for the aggregate's edges: they are
+  `column_in_named_table` edges, and the resolver sees one table only, so it cannot follow a
+  column of the named child table.
+- Scan 8 itself (`tests/sentry/defects/test_generate_input_edges.py`): the per-parent `via` is
+  a `column_in_named_table` option, not a `column_via_reference` one, so the registry-derived
+  lookup keys (`["anchor_via"]`) did not mark it and the run's re-read was invisible to the
+  scan. The scan now also treats the literal `via` (`AGGREGATE_VIA`) as a lookup marker; a new
+  cell pins that `derived_aggregate.via` is the `column_in_named_table` option keyed by
+  `from_table`, and a fourth meta shape (a run re-reads the aggregate's key from the child's
+  columns) must be seen. `VIA_CALLERS` gains `aggregate_via_target`. This adds checks; nothing
+  was loosened.
+- Sequence-key guard: the aggregate's key check already went through `parent_key_problem`,
+  which slice 3 built on `is_exact_sequence_key`; no other restatement exists (the guard is
+  green).
+- Per-parent bounds guard: no E3b code reads `min_per_parent` or `max_per_parent`.
+- Column-reference extractor guard: no E3b code walks a parse tree.
+- Numeric decision of the owner ruling (`numeric_as_text_read`, `generated_arrow_type`,
+  `reference_root` in config): kept as is.
+- `UNRELEASED` imports: every reason module that still declares a `since=UNRELEASED` code keeps
+  the import (`reasons/config/_part2.py`, `reasons/runtime/_part1.py`, `_part2.py`, `_part3.py`,
+  `reasons/plan/_part3.py`, `reasons/warning/_part1.py`).
+
+Silent-merge checks (each function both sides edited, read on the merge head):
+
+- `tests/sentry/defects/test_generate_option_reads.py`: both sides added
+  `config/_generate_relational.py` to `READER_FILES` (this slice bare, slice 1 with a comment),
+  and git kept both lines without a conflict. The bare duplicate is removed; the scanned set is
+  unchanged.
+- `config/_generate_relational.py`: `_key_is_valid` / `_tree_problem` (slice 2's output_type
+  refusal, restored by slice 3) and `parent_key_problem` are slice 3's text; `_lookup_problem`,
+  `parent_lookup_problems`, `_source_table` and `iter_generate_input_refs` are slice 3's;
+  `_aggregate_problem`, `aggregate_problems`, `_reads_aggregate`, `reference_root` and
+  `_input_numeric` are this slice's. No refusal of either side was dropped.
+- `config/_pipeline.py`: `_parent_lookups_valid` (this slice: both lookup and aggregate
+  problems, no early return) and `_per_parent_bounds_valid` (slice 1: through
+  `per_parent_bounds`) merged in separate functions.
+- `generation/_admission.py`: `classify_reference` reads bounds through `per_parent_bounds`
+  (slice 1); `classify_plan` calls `categorical_arrow_type` (this slice).
+- `plan/checks/_generate_columns.py`: `_check_input_edges` keeps this slice's docstring;
+  `_check_reference_weights` uses slice 2's `is_exact_sequence_key`.
+
+`generation/synthesize.py` is 600 lines (slice 3 did not touch it after `e91b848c`, so the merged
+file is this slice's; no block moved, no census entry). `config/_generate_options.py` is 571
+(slice 3 did not touch it either). The draw-site scan is green on the merge head and the final
+head (`test_static_scan_finds_no_uncatalogued_draw_site` passed; the per-parent aggregate draws
+nothing). No digest, golden or snapshot moved.
+
+## Review round 1 (2026-11-13)
+
+Review of `16b2fcde`: GO-WITH-FIXES, one V1, built; six V2-LOG items, recorded below. Commits:
+
+| Commit | Subject |
+| --- | --- |
+| `df2b9ba5` | `Merge feat/gen-rel-e3a into feat/gen-rel-e3b` |
+| `ac1b9ae2` | `test(generation): add red per-parent aggregate type cells` (red first) |
+| `fe5373b7` | `fix(generation): type a per-parent aggregate from its op and input` (final source head) |
+
+### V1: the aggregate's Arrow type follows its op and input, not its values
+
+Before: with no `output_type`, `_with_column` built the column through `arrow_table`, which
+leaves an undeclared column to Arrow's inference, so the schema followed the data. Measured on
+`df2b9ba5`: `mean`, `min` and `max` over any child gave Arrow `null` when every parent was
+childless; a childless `sum` over a `distribution` or `decimal(2)` child gave `int64`; and a
+`sum`, `min` or `max` over a `decimal(2)` child with children gave `decimal128(3, 2)` (the
+precision of the values seen), not the child's `decimal128(38, 2)`.
+
+After (`generation/relational/_aggregate.py`): `_result_type` derives the type and
+`_with_column` passes it to `pa.array` when the aggregate declares no `output_type`. A declared
+`output_type` still goes through `arrow_table`, unchanged.
+
+| Op | int child (`categorical` of ints) | float child (`distribution`) | `decimal(2)` child | `reference` to a `distribution` |
+| --- | --- | --- | --- | --- |
+| `count` | `int64` | `int64` | `int64` | `int64` |
+| `mean` | `float64` | `float64` | `float64` | `float64` |
+| `sum` | `int64` | `float64` | `decimal128(38, 2)` | `float64` |
+| `min` | `int64` | `float64` | `decimal128(38, 2)` | `float64` |
+| `max` | `int64` | `float64` | `decimal128(38, 2)` | `float64` |
+
+Where the child type comes from: the config, not the emitted child table. The emitted child
+column is itself inferred when the child table has no rows (on `df2b9ba5` a zero-row
+`categorical` or `distribution` child column is Arrow `null`), so it cannot type the parent.
+`_result_type` follows `config.reference_root` from `(from_table, column)` and takes the root
+column's declared `output_type` (`kinds.output_arrow_type`), else `config.generated_arrow_type`.
+This is numeric typing's `planned()` for a column that is not a candidate, and an aggregate
+input never is (`READERS["derived_aggregate.column"]` is numeric-unsafe); it is also the rule
+`numeric_as_text_read` judges at validate, so every input validation accepts gets an integer,
+floating or decimal type here. A raw config that skipped validation and names a column whose
+type the config does not fix falls back to inference (`_result_type` returns None).
+
+Values are unchanged: the cells compare the childless identities (0, 0, None, None, None) and
+the existing AT-12 oracle cells pass unchanged. A childless `sum` is now `0.0` in a float column
+and `Decimal("0.00")` in a decimal one, the same number in the column's type. No digest, golden
+or snapshot moved: no pinned fixture holds a per-parent aggregate without `output_type` over a
+float or decimal child or with every parent childless.
+
+### Red first (`ac1b9ae2` on the source of `df2b9ba5`)
+
+`test_at12_the_aggregate_type_follows_the_op_and_child_column_not_the_values` in
+`tests/unit/generation/relational/test_aggregate.py`: every op times four child kinds (int,
+float, `decimal(2)`, a `reference` to a float) times three shapes (`no-child-rows`: zero line
+rows; `all-keys-null`: every `oid` null; `mixed`: six lines over ten orders, some childless,
+asserted non-vacuous). Each cell validates the config, asserts the Arrow type of
+`orders.total` and the identity of every childless row. Python 3.10.20: 33 failed, 27 passed.
+
+Red, by reason: `mean`, `min`, `max` over every kind in `no-child-rows` and `all-keys-null`
+(24: `null` instead of `float64`, `int64` or `decimal128(38, 2)`); `sum` over float, reference and
+decimal in those two shapes (6: `int64` instead of `float64` or `decimal128(38, 2)`); `sum`,
+`min`, `max` over decimal in `mixed` (3: `decimal128(3, 2)` instead of `decimal128(38, 2)`).
+
+Green on the base by design (inference was already right on those values): every `count`
+cell (12), `mean`, `min`, `max` and `sum` in `mixed` over int, float and reference, `mean` over
+decimal in `mixed`, and `sum` over int in the two childless shapes (27). Each is red under A3
+and P1 below (the placeholder table is returned, or the post-pass runs before the child exists),
+and also under D1 and G2; the float, decimal and reference `count` cells are red under T2, and
+the int and decimal `mean` cells under T3.
+
+### Mutations (final source head `fe5373b7`, detached worktree; 60 of 60 red)
+
+The 51 recorded E3b mutations and nine new ones, each applied once in a detached worktree at
+`/home/user/wt-e3b-mut` (`fe5373b7`) importing its own `src` (the harness printed
+`decoy_engine.__file__` as `/home/user/wt-e3b-mut/src/decoy_engine/__init__.py`), named tests
+run (Python 3.10.20, the worktree's `.venv`), file restored; every anchor matched exactly once;
+the worktree was clean at the end and is removed. Statuses are read from the harness's results
+JSON: 60 entries, 60 `RED`. No witness starts a child process, so no mutation was applied in the
+checkout.
+
+- Re-anchored to the adapted `_aggregate_problem`, same intent: V1 (via may reference any table:
+  `if not parent or parent != table_name:` becomes `if not parent:`), V3 (the key does not go
+  through `parent_key_problem`), V4 (null_probability accepted; anchor now ends at
+  `target = aggregate_via_target`), V5 (a via through a self-reference is not refused as one:
+  `if parent == col.get("from_table"):` becomes `if False:`). Their red counts equal the
+  previous run's (1, 4, 1, 1).
+- Every other anchor matched unchanged. Red counts equal the previous run's except where the
+  new type cells also go red: A1 16 (was 4), A3 83 (23), P1 93 (33), D1 108 (48), G2 55 (19).
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| T1 | the explicit type is dropped (Arrow inference types the column) | `generation/relational/_aggregate.py` | 33: the 33 red-first cells |
+| T2 | `count` takes the child column's type | the same | 9: `[count-float-*]`, `[count-decimal-*]`, `[count-reference-*]` |
+| T3 | `mean` takes the child column's type | the same | 6: `[mean-int-*]`, `[mean-decimal-*]` |
+| T4 | a reference child column is typed as itself, not by the column it copies | the same | 6: `[sum-reference-no-child-rows]`, `[sum-reference-all-keys-null]`, the same for `min` and `max` |
+| T5 | a child column's declared `output_type` is ignored | the same | 9: `[sum-decimal-*]`, `[min-decimal-*]`, `[max-decimal-*]` |
+| T6 | the op's type overrides the aggregate's own `output_type` | the same | 1: `test_at12_an_output_type_on_the_aggregate_is_applied_to_the_filled_values` |
+| J1 | the aggregate check follows the via column to its parent and key itself | `config/_generate_relational.py` | 1: `test_only_the_via_resolver_follows_a_lookup_column_to_its_parent` |
+| J2 | the run re-reads the aggregate's parent key from the child's columns | `generation/relational/_aggregate.py` | 1: the same |
+| J3 | guard scan: the aggregate's `via` does not mark a lookup | `tests/sentry/defects/test_generate_input_edges.py` | 1: `test_meta_a_second_via_resolution_is_seen[a run re-reads the aggregate's key from the child's columns]` |
+
+T1 is the review's mutation (drop the explicit type): the red-first cells go red.
+
+### Gates (head `fe5373b7`, the final source head)
+
+`GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
+ruff,format,mypy,sentry,layers,licenses,tests` over the 80 E3b T1 paths plus
+`tests/native/test_draw_site_inventory_coverage.py`, the slice 1 to 3 test files the merge
+brought (`tests/sentry/defects/test_expression_column_refs.py`, `test_generate_input_edges.py`,
+`test_generate_option_reads.py`, `test_sequence_key_predicate.py`,
+`tests/sentry/test_physical_seam_disconnection.py`, `tests/sentry/test_sentry_manifest.py`,
+`tests/unit/config/test_generate_options.py`, `test_generate_relational.py`,
+`tests/unit/expressions/test_column_refs.py`, `test_lark_if_lazy.py`,
+`tests/unit/transforms/test_derived.py`), slice 3's importer set
+(`tests/unit/test_expressions.py`, `tests/unit/execution/test_derived_strategy.py`,
+`tests/unit/execution/derived_visibility`, `test_engine_transforms_routes.py`, `test_runner.py`,
+`tests/native/test_draw_sites_assembly.py`, `test_c1b_i_metadata_inventory.py`,
+`test_c5b_i_metadata_inventory.py`) and the changed `test_aggregate.py` (`tests/unit/reasons`,
+`tests/unit/expressions` and `test_draw_sites_catalogue_pinned.py` are in the T1 list).
+101 paths. Python 3.10.20 (the worktree's `.venv`), PyArrow 24.0.0, DuckDB 1.5.4, pandas 2.3.3,
+NumPy 2.2.6; `origin/main` at `8c9c1162`.
+
+| Step | Branch (`fe5373b7`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5502 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 11153 passed, 0 failed, 113 skipped (parallel and serial passes; second run) |
+
+The first full run (all seven steps) passed every step but `tests`, which had one failure,
+`tests/unit/scripts/test_gates_select_from_import.py::test_from_import_of_changed_module_is_selected[from zzpkg import _zzmod as m\n]`
+(11152 passed, 1 failed): a `git commit` inside the test's own scratch repository exited 128.
+The script's `origin/main` rerun of the same paths passed (10349 passed, 0 failed), the test
+file passed alone on the branch (18 of 18), and it reads no file this branch changes. The
+`tests` step was then rerun alone on the same head with `--baseline`: 11153 passed, 0 failed,
+113 skipped; failure sets branch 0, baseline 0, branch-only 0, so the script did not rerun
+`origin/main`. There is no branch failure.
+
+`test_static_scan_finds_no_uncatalogued_draw_site` passed (the inventory file 12 of 12) and
+`test_draw_sites_catalogue_pinned.py` passed 5 of 5. No digest, golden or snapshot moved.
+
+### Script checks
+
+On `fe5373b7` (clean tree). `origin/main` moved to `8c9c1162` (`feat(delivery): add resume run
+fingerprint (#562)`) after `c86ca58d`; main is not merged here, so both are reported.
+
+| Check | `--base`/`--main origin/main` (`8c9c1162`) | `c86ca58d` |
+| --- | --- | --- |
+| `registry_renumber.py --check --main` | 2 (`main-not-merged`) | 0 (`registry consistent`) |
+| `ratchet_check.py --base` | 0 | 0 |
+| `check_fragment.py --base` | 0 | 0 |
+| `reason_release_pin.py --check` | 0 (`reason release pin current`) | |
+
+The exit 2 is the known main-not-merged effect: the branch does not hold `8c9c1162`.
+
+Line counts (at or above 550): `generation/synthesize.py` 600, `config/_generate_options.py` 571,
+`config/_generate_relational.py` 562, `expressions/_lark_parser.py` 555 and `plan/_checks.py`
+699 (both slice 3's, unchanged here); tests: `tests/sentry/defects/test_generate_input_edges.py`
+738. `generation/relational/_aggregate.py` is 210, `config/__init__.py` 206.
+
+### V2-LOG (accepted from review, not built)
+
+1. `generation/relational/_aggregate.py`: parent matching groups and reindexes on raw pandas
+   equality, not `config.value_key`, the one equality key. Safe today because validation limits
+   the key to a non-null `sequence`; it breaks if parent keys widen (`True` and `1` would share a
+   group, a list key would crash `groupby`). Fix: group on `value_key(k)` on both sides.
+2. The "is this generated type a number" predicate appears in both
+   `config/_generate_type_checks.py` (`numeric_as_text_read`) and `generation/_numeric_typing.py`
+   (`is_number`); the rule pieces are shared, and drift could only make validate refuse more.
+   Fix: export one `is_number_type` from config.
+3. `tests/sentry/defects/test_generate_option_reads.py`: `READER_FILES` lacks
+   `config/_generate_type_checks.py` and `generation/relational/_aggregate.py`, so a misspelled
+   key read there is not caught.
+4. Stale docs: `docs/strategies.md` (the scalar `derived_aggregate` section) and the
+   `transforms/derived_aggregate.py` module docstring still say the cross-table aggregate is not
+   built (deferred to SP-10c).
+5. The plan's Placement table (`plan/gen-rel`, `docs/plans/gen-rel.md`) does not list
+   `tests/unit/generation/relational/test_aggregate_input.py` or this evidence record.
+6. Trailing whitespace in this file (the owner-ruling red-first paragraph): fixed in this
+   commit.
+
+Also from this round: a zero-row child table's undeclared columns are Arrow `null` (whole-table
+inference over no values). The aggregate no longer depends on it; the child table's own schema
+is the generation route's general behavior and is not changed here.
+
+### Not run
+
+The full suite; the gate steps under Python 3.11; the gates against a branch holding
+`origin/main` `8c9c1162`. On the docs-only commit that adds these sections, only `ruff`,
+`format`, `sentry` and the two draw-site tests were rerun.

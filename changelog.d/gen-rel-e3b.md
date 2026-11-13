@@ -10,7 +10,9 @@ A generated `derived_aggregate` column can now aggregate each parent row's own c
   foreign key belongs to no parent.
 - A parent with no children gets 0 for `sum` and `count` and a null for `mean`, `min` and `max`,
   never NaN. The column is filled after every table exists and the returned parent table holds
-  the filled values; a declared `output_type` applies to them.
+  the filled values; a declared `output_type` applies to them. Without one the Arrow type
+  follows the op and the child column, even when no parent has children: `count` is `int64`,
+  `mean` `float64`, and `sum`, `min` and `max` take the child column's type.
 - `via` must be a `reference` to this table whose key is an earlier `sequence` column with no
   `null_probability` (`config/generate_parent_lookup_key_not_unique`); a `via` through a
   self-reference is refused (`config/generate_parent_lookup_self_reference`). `via` without
@@ -37,6 +39,7 @@ A generated `derived_aggregate` column can now aggregate each parent row's own c
 - A generated `derived_aggregate` whose `column` is missing is now refused at plan compile with
   `generate_column_forward_reference`, the same code as an input generated later.
   `derived_aggregate_missing_column_ref` remains the refusal of a masked column.
-- `decoy_engine.config` exports `aggregate_problems` and `is_per_parent_aggregate`.
+- `decoy_engine.config` exports `aggregate_problems`, `aggregate_via_target` and
+  `is_per_parent_aggregate`.
 
 Every config without `from_table` keeps its bytes.

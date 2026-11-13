@@ -1588,6 +1588,9 @@ customer's order count.
   form, and a child with a null foreign key belongs to no parent.
 - A parent with no children gets 0 for `sum` and `count` and a null for `mean`, `min` and `max`,
   never NaN.
+- Without an `output_type` the column's Arrow type follows the op and the child column, not the
+  values, even when no parent has children: `count` is `int64`, `mean` `float64`, and `sum`,
+  `min` and `max` take the child column's type (a `decimal(n)` child gives that decimal).
 - The column is filled after every table has been generated, and the returned parent table holds
   the filled values. No other column can read it: a same-table reader, a child's `anchor`, a
   reference, a formula or another aggregate that names it is refused at validate.
