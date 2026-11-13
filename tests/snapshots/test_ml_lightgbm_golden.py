@@ -53,8 +53,10 @@ from pathlib import Path
 
 import pytest
 
+from tests._ml import require_ml_stack
+
 # ml-gate membership (pytest -m ml). The pure file-hash tests here
-# (report/manifest/provenance/golden-SHA) need no ml extra and also run in the
+# (report/manifest/provenance/golden-SHA) need no classifier stack and also run in the
 # default regression gate; the retrain + band tests importorskip themselves
 # when scikit-learn/lightgbm are absent.
 pytestmark = pytest.mark.ml
@@ -195,7 +197,7 @@ def test_provenance_json_hashes_match_committed_artifacts() -> None:
     committed. Nothing regenerates it automatically (UPDATE_SNAPSHOTS rewrites
     the report/manifest/pack but not this scaffold), so without this test a
     regeneration silently leaves provenance.json pointing at bytes that no
-    longer exist. This is a pure file-hash check (no ml extra), so it runs in
+    longer exist. This is a pure file-hash check (no classifier stack), so it runs in
     the main regression-gate, not only ml-gate.
     """
     prov_path = _REPORT_PATH.parent / "provenance.json"
@@ -252,8 +254,7 @@ def test_lightgbm_regression_retrain(tmp_path: Path) -> None:
     """
     import pytest
 
-    pytest.importorskip("lightgbm")  # ml extra; trainer needs sklearn + lightgbm
-    pytest.importorskip("sklearn")
+    require_ml_stack()  # the trainer needs sklearn + lightgbm
 
     if not _LIVE_PACK.exists():
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")
@@ -331,8 +332,7 @@ def test_predict_column_band_accuracy() -> None:
     import pandas as pd
     import pytest
 
-    pytest.importorskip("lightgbm")  # ml extra; trainer needs sklearn + lightgbm
-    pytest.importorskip("sklearn")
+    require_ml_stack()  # the trainer needs sklearn + lightgbm
 
     if not _LIVE_PACK.exists():
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")

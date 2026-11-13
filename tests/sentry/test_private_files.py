@@ -109,8 +109,11 @@ def _writes(site: Site) -> bool:
     node = site.node
     if not node.args and not node.keywords:
         return False  # the sink named as a value; vetted where it is called
+    # `_call(os.open, ...)` records the wrapper call as the site (fa/scan.py), so the sink's
+    # own positional arguments start one later, as fa/rules.py reads them.
+    shift = 1 if isinstance(node.func, ast.Name) and node.func.id == "_call" else 0
     if site.sink == "os.open":
-        flags = _mode_arg(node, 1, "flags")
+        flags = _mode_arg(node, 1 + shift, "flags")
         if flags is None:
             return True
         for sub in ast.walk(flags):
@@ -119,7 +122,7 @@ def _writes(site: Site) -> bool:
             if isinstance(sub, ast.Name) and sub.id != "os":
                 return True  # a named flag set the scan cannot read
         return False
-    index = 0 if site.sink == "Path.open" else 1
+    index = (0 if site.sink == "Path.open" else 1) + shift
     mode = _mode_arg(node, index)
     if mode is None:
         return False
@@ -322,6 +325,7 @@ def seeded(tmp_path_factory: pytest.TempPathFactory) -> dict[str, set[str]]:
         ("pf/seeded_p1_p2.py::master_key", {"P1"}),
         ("pf/seeded_p1_p2.py::key_dir", {"P2"}),
         ("pf/seeded_read_row.py::save", {"P1"}),
+        ("pf/seeded_read_row.py::wrapped_write", {"P1"}),
         ("pf/seeded_private_row.py::save", {"P2"}),
         ("pf/seeded_modes.py::swallowed_dir_chmod", {"P3"}),
         ("pf/seeded_modes.py::swallowed_fchmod", {"P3"}),
@@ -338,3 +342,4 @@ def test_seeded_case_is_caught_by_its_rule(
 def test_seeded_controls_pass(seeded: dict[str, set[str]]) -> None:
     assert "pf/seeded_modes.py::directory_chmod_and_fchmod" not in seeded
     assert "pf/seeded_p1_p2.py::public_report" not in seeded
+    assert "pf/seeded_read_row.py::wrapped_read" not in seeded

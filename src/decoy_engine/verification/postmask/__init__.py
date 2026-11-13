@@ -40,6 +40,19 @@ shape changes in a non-backward-compatible way.
 
 from __future__ import annotations
 
+from decoy_engine.verification.postmask._keys import (
+    KeyCounts,
+    KeyResult,
+    check_keys,
+    keys_report,
+)
+from decoy_engine.verification.postmask._stream_input import (
+    TableBatches,
+    from_lazy,
+    from_table,
+    key_batches,
+    missing_columns,
+)
 from decoy_engine.verification.postmask.runner import run_post_mask
 from decoy_engine.verification.postmask.types import (
     SCHEMA_VERSION,
@@ -53,9 +66,18 @@ from decoy_engine.verification.postmask.types import (
 __all__ = [
     "SCHEMA_VERSION",
     "FKPreservationFinding",
+    "KeyCounts",
+    "KeyResult",
     "PolicyValidationFinding",
     "PostMaskReport",
     "ResidualPIIFinding",
     "Severity",
+    "TableBatches",
+    "check_keys",
+    "from_lazy",
+    "from_table",
+    "key_batches",
+    "keys_report",
+    "missing_columns",
     "run_post_mask",
 ]

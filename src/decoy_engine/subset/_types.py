@@ -3,7 +3,7 @@
 House style follows `decoy_engine.plan._types`: frozen dataclasses, tuples
 (never lists) for ordered/immutable collections, `__post_init__` guards for
 structural invariants only (no I/O, no polars). This module has no
-dependency on polars or any subset submodule; every other `subset/*` module
+dependency on polars or any subset submodule but `_errors`; every other `subset/*` module
 imports from here.
 """
 
@@ -13,8 +13,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from decoy_engine.subset._errors import invalid_knob
+
 EdgeDirection = Literal["both", "downward", "upward", "none"]
-SeedMode = Literal["sample", "filter", "keys"]
+SeedMode = Literal["sample", "filter", "keys", "head"]
 PredicateOp = Literal["eq", "ne", "lt", "le", "gt", "ge", "in", "is_null", "is_not_null"]
 
 
@@ -50,6 +52,10 @@ class SeedSpec:
     - "keys": `key_columns` and `keys` non-empty; every tuple in `keys` has
       length == len(key_columns). Raw key values NEVER get serialized
       (see `SubsetPlan.seed_specs_public` / `SubsetManifest`).
+    - "head": `count` rows by row index; nothing else is set. Built by `sample_request`;
+      the YAML `subset:` block cannot say it.
+
+    `cap`, when set, keeps only the first `cap` selected rows by row index in any mode.
     """
 
     table: str
@@ -59,9 +65,22 @@ class SeedSpec:
     count: int | None = None
     predicates: tuple[Predicate, ...] = ()
     keys: tuple[tuple[Any, ...], ...] = ()
+    cap: int | None = None
 
     def __post_init__(self) -> None:
-        if self.mode == "sample":
+        # `type(...) is int` keeps a bool from passing as 1 or 0.
+        if self.cap is not None and (type(self.cap) is not int or self.cap < 1):
+            raise invalid_knob("a seed cap must be an integer of at least 1.")
+        if self.mode == "head":
+            if type(self.count) is not int or self.count < 1:
+                raise ValueError(
+                    f"SeedSpec(table={self.table!r}, mode='head'): count must be an int >= 1."
+                )
+            if self.key_columns or self.fraction is not None or self.predicates or self.keys:
+                raise ValueError(
+                    f"SeedSpec(table={self.table!r}, mode='head'): only count is allowed."
+                )
+        elif self.mode == "sample":
             if not self.key_columns:
                 raise ValueError(
                     f"SeedSpec(table={self.table!r}, mode='sample'): key_columns must be non-empty."

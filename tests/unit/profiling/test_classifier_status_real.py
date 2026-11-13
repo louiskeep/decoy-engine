@@ -1,4 +1,4 @@
-"""Classifier status on the real shipped pack. Needs only the `ml` extra, so `ml-gate` runs it."""
+"""Classifier status on the real shipped pack. Needs only the base classifier stack, so `ml-gate` runs it."""
 
 from __future__ import annotations
 
@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 import decoy_engine
+from tests._ml import require_ml_stack
 
 pytestmark = pytest.mark.ml
 
-lightgbm = pytest.importorskip("lightgbm")
-pytest.importorskip("sklearn")
+require_ml_stack()
+
+import lightgbm  # noqa: E402
 
 PACK = Path(__file__).resolve().parents[3] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
 

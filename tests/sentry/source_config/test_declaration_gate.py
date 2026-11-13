@@ -15,8 +15,10 @@ walks guard it:
   after `next(`, with no profile, compile or per-chunk wrap between; and no `declared=None`
   appears in `src/`.
 
-Covered shapes: a plain call and an attribute call (`mod.name(...)`). The walk matches the
-called name, so a reader imported under another name is not seen.
+Covered shapes: a plain call and an attribute call (`mod.name(...)`). Walks (a) to (c) match the
+called name, so a reader imported under another name is not seen. The execution-layer checks
+at the end resolve import aliases and re-bindings for `prepare_declared_sources` and
+`profile_source`.
 """
 
 from __future__ import annotations
@@ -26,6 +28,9 @@ from pathlib import Path
 
 SRC = Path(__file__).parents[3] / "src" / "decoy_engine"
 GATE = "prepare_declared_sources"
+# Execution routes call the choke point in `execution/_guards.py`, which adds the created-column
+# policy and then calls the profile boundary; both names count as the gate.
+GATES = frozenset({GATE, "prepare_declared_execution_sources"})
 
 # (file, function) -> calls that must come after the gate in that function body.
 ROUTES: dict[tuple[str, str], frozenset[str]] = {
@@ -121,7 +126,7 @@ def _calls(node: ast.AST) -> list[tuple[str, int]]:
 def violations(func: ast.FunctionDef, guarded: frozenset[str]) -> list[str]:
     """Guarded calls that are not preceded by the gate, or all of them when there is no gate."""
     calls = _calls(func)
-    gate_lines = [line for name, line in calls if name == GATE]
+    gate_lines = [line for name, line in calls if name in GATES]
     first = min(gate_lines) if gate_lines else None
     return [
         f"{name}@{line}"
@@ -139,7 +144,7 @@ def _parse(rel: str) -> ast.Module:
 
 
 def _contains_gate(stmt: ast.stmt) -> bool:
-    return any(name == GATE for name, _ in _calls(stmt))
+    return any(name in GATES for name, _ in _calls(stmt))
 
 
 def _reparse(tree: ast.Module) -> ast.Module:
@@ -150,7 +155,7 @@ def test_the_gate_precedes_every_reader_on_each_route() -> None:
     for (rel, func_name), guarded in ROUTES.items():
         tree = _parse(rel)
         assert _route_violations(tree, func_name, guarded) == [], (rel, func_name)
-        assert any(name == GATE for name, _ in _calls(_function(tree, func_name))), (
+        assert any(name in GATES for name, _ in _calls(_function(tree, func_name))), (
             f"{func_name} has no {GATE} call"
         )
 
@@ -266,3 +271,120 @@ def test_no_route_passes_declared_none() -> None:
                     ):
                         offenders.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}")
     assert offenders == []
+
+
+CHOKE_POINT = ("execution/_guards.py", "prepare_declared_execution_sources")
+
+
+def _local_names(tree: ast.AST, target: str) -> set[str]:
+    """Names `target` is reachable under in a module: itself, import aliases, plain re-bindings."""
+    names = {target}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(a.asname for a in node.names if a.name == target and a.asname)
+    grew = True
+    while grew:
+        grew = False
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in names
+            ):
+                bound = {t.id for t in node.targets if isinstance(t, ast.Name)} - names
+                if bound:
+                    names |= bound
+                    grew = True
+    return names
+
+
+def _resolved_calls(tree: ast.AST, target: str) -> list[ast.Call]:
+    """Calls of `target` by its name, an alias of it, or as an attribute (`mod.target(...)`)."""
+    names = _local_names(tree, target)
+    return [
+        call
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and (
+            (isinstance(call.func, ast.Name) and call.func.id in names)
+            or (isinstance(call.func, ast.Attribute) and call.func.attr == target)
+        )
+    ]
+
+
+def _outside_function(tree: ast.Module, calls: list[ast.Call], name: str | None) -> list[ast.Call]:
+    if name is None:
+        return calls
+    body = _function(tree, name)
+    return [c for c in calls if not body.lineno <= c.lineno <= (body.end_lineno or body.lineno)]
+
+
+def _direct_gate_calls(tree: ast.Module, exempt: str | None = None) -> list[int]:
+    """Lines calling the profile boundary directly, outside the exempt function's body."""
+    calls = _outside_function(tree, _resolved_calls(tree, GATE), exempt)
+    return [c.lineno for c in calls]
+
+
+def _profile_calls_without_declared(tree: ast.Module) -> list[int]:
+    return [
+        c.lineno
+        for c in _resolved_calls(tree, "profile_source")
+        if not any(kw.arg == "declared" for kw in c.keywords)
+    ]
+
+
+def _execution_modules() -> list[tuple[str, ast.Module]]:
+    return [
+        (path.relative_to(SRC).as_posix(), ast.parse(path.read_text(encoding="utf-8")))
+        for path in sorted((SRC / "execution").rglob("*.py"))
+    ]
+
+
+def test_execution_builds_the_capability_only_through_the_choke_point() -> None:
+    """The created-column policy rides on `prepare_declared_execution_sources`; a route that
+    calls the profile boundary directly would skip it. Only the choke point's own body may."""
+    offenders = [
+        f"{rel}:{line}"
+        for rel, tree in _execution_modules()
+        for line in _direct_gate_calls(tree, CHOKE_POINT[1] if rel == CHOKE_POINT[0] else None)
+    ]
+    assert offenders == []
+
+
+def test_every_execution_profile_call_passes_the_prepared_capability() -> None:
+    """`profile_source` builds its own policy-free capability when `declared=` is absent."""
+    offenders = [
+        f"{rel}:{line}"
+        for rel, tree in _execution_modules()
+        for line in _profile_calls_without_declared(tree)
+    ]
+    assert offenders == []
+
+
+def test_the_direct_call_check_sees_aliases_attributes_and_the_choke_point_body() -> None:
+    aliased = ast.parse(
+        "from decoy_engine.profile import prepare_declared_sources as gate\n"
+        "def f(r):\n    return gate(r)\n"
+    )
+    assert _direct_gate_calls(aliased) == [3]
+    rebound = ast.parse(
+        "from x import prepare_declared_sources\nalias = prepare_declared_sources\n"
+        "def f(r):\n    return alias(r)\n"
+    )
+    assert _direct_gate_calls(rebound) == [4]
+    attr = ast.parse("import m\ndef f(r):\n    return m.prepare_declared_sources(r)\n")
+    assert _direct_gate_calls(attr) == [3]
+    guards = ast.parse(
+        "def prepare_declared_execution_sources(r):\n    return prepare_declared_sources(r)\n"
+        "def other(r):\n    return prepare_declared_sources(r)\n"
+    )
+    assert _direct_gate_calls(guards, "prepare_declared_execution_sources") == [4]
+
+
+def test_the_profile_call_check_sees_a_missing_declared_keyword() -> None:
+    missing = ast.parse("from p import profile_source as ps\ndef f(c):\n    return ps(c, seed=1)\n")
+    assert _profile_calls_without_declared(missing) == [3]
+    kwargs_only = ast.parse("def f(c, k):\n    return profile_source(c, **k)\n")
+    assert _profile_calls_without_declared(kwargs_only) == [2]
+    passing = ast.parse("def f(c, d):\n    return profile_source(c, declared=d)\n")
+    assert _profile_calls_without_declared(passing) == []

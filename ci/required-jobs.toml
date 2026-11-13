@@ -5,7 +5,14 @@ schema = 1
 
 [[merge]]
 workflow = "ci.yml"
-jobs = ["packaging-gate", "ml-gate", "ner-gate", "dp-certified-gate", "determinism"]
+jobs = [
+  "packaging-gate",
+  "ml-gate",
+  "base-install",
+  "ner-gate",
+  "dp-certified-gate",
+  "determinism",
+]
 
 [[merge]]
 workflow = "native-companion.yml"
@@ -45,7 +52,7 @@ reason = "deploy job; runs only from a main push, and docs.yml has no push trigg
 # their lane.
 [[dedicated_marker]]
 name = "ml"
-reason = "tests importorskip the ml extra; a whole-suite run on the dev profile skips them"
+reason = "tests skip when the ML stack cannot load (tests/_ml.py); only ml-gate sets DECOY_REQUIRE_ML=1 so that fails"
 
 [[dedicated_marker]]
 name = "ner"

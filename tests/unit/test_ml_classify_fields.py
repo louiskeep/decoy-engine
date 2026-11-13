@@ -22,6 +22,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from tests._ml import ml_stack_available
+
 pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
 
 _LIVE_PACK = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
@@ -42,21 +44,9 @@ def _clean_signing_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DECOY_PACK_REQUIRE_SIGNATURE", raising=False)
 
 
-def _ml_extra_available() -> bool:
-    """True when the optional `ml` extra (scikit-learn + lightgbm) is installed.
-    classify_fields degrades to None without it, so live-pack tests that assert a
-    real result must skip rather than fail in a base `.[dev]` CI install."""
-    try:
-        import lightgbm  # noqa: F401
-        import sklearn  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
 _needs_live_pack = pytest.mark.skipif(
-    not _LIVE_PACK.exists() or not _ml_extra_available(),
-    reason="lgbm-v1 pack or ml extra (scikit-learn/lightgbm) not installed",
+    not _LIVE_PACK.exists() or not ml_stack_available(),
+    reason="lgbm-v1 pack or the classifier stack (scikit-learn/lightgbm) not importable",
 )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
     "DEDUPE_UNSUPPORTED_TYPE",
@@ -18,6 +19,7 @@ __all__ = [
     "GENERATE_OPTION_INVALID",
     "GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY",
     "REFERENCE_WEIGHTS_LENGTH_MISMATCH",
+    "RELATIONSHIP_PARENT_NOT_UNIQUE",
     "SORT_UNSUPPORTED_TYPE",
     "STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES",
     "STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH",
@@ -140,4 +142,9 @@ REFERENCE_WEIGHTS_LENGTH_MISMATCH = _d(
     "reference_weights_length_mismatch",
     "Reference weights count does not match the parent sequence row count.",
     since="1.13.0",
+)
+RELATIONSHIP_PARENT_NOT_UNIQUE = _d(
+    "relationship_parent_not_unique",
+    "A generated relationship parent key is not provably unique.",
+    since=UNRELEASED,
 )
