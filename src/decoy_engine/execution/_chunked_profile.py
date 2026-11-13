@@ -16,6 +16,8 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine._arrow_types import is_text
+
 # Typed as Any: the compute kernels are registered at runtime, so stubs miss them.
 pc: Any = importlib.import_module("pyarrow.compute")
 
@@ -245,18 +247,14 @@ def _missing_mask(arr: pa.Array) -> pa.Array:
     return pc.fill_null(mask, True)
 
 
-def _is_string_type(t: pa.DataType) -> bool:
-    return pa.types.is_string(t) or pa.types.is_large_string(t)
-
-
 def _is_pandas_string(arr: pa.Array, null_count: int) -> bool:
     """pandas' `is_string_dtype` for the converted column: text with no missing value
     (a missing value makes a plain column object-typed with None), or a dictionary
     of text with a non-empty dictionary."""
     t = arr.type
     if pa.types.is_dictionary(t):
-        return _is_string_type(t.value_type) and len(arr.dictionary) > 0
-    return _is_string_type(t) and null_count == 0
+        return is_text(t.value_type) and len(arr.dictionary) > 0
+    return is_text(t) and null_count == 0
 
 
 def _dtype_label(t: pa.DataType, has_missing: bool, canonical: Any) -> str:
