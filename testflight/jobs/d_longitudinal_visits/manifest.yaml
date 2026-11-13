@@ -215,6 +215,24 @@ config:
           type: statistical
           snapshot_file: "snapshot:build_charge_snapshot"
 
+        # source_system, acuity_score, dx_code: the constant, distribution and lookup
+        # generate types. Each is the only job-level coverage its type has, so the
+        # live-registry guard stays satisfied without an allowlist entry. lookup uses a
+        # shipped code set so the manifest needs no data file.
+        - name: source_system
+          type: constant
+          value: "EHR"
+
+        - name: acuity_score
+          type: distribution
+          family: uniform
+          low: 1
+          high: 10
+
+        - name: dx_code
+          type: lookup
+          codeset: icd10
+
   relationships:
     - parent:   {table: providers, columns: [provider_id]}
       children:
