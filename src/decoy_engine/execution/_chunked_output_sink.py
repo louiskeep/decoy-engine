@@ -37,12 +37,13 @@ import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine._lexeme import lexeme_columns_by_table
-from decoy_engine.config import post_scan_integrity_requested, post_scan_output_unreadable
+from decoy_engine.config import post_scan_sink_kind
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._publication_observer import observed_abort, observed_commit
 from decoy_engine.execution._substrate import require_bool
 from decoy_engine.execution._transactional_sink import TransactionalSink
+from decoy_engine.execution._transforms_gate import post_scan_resident_for
 from decoy_engine.execution.native._chunked_evidence import (
     check_decline_records_consistent,
     copy_decline_records,
@@ -121,12 +122,14 @@ def decide_output_mode(
         return "resident", reasons.route.FIDELITY_REPORT
     if post_validation:
         return "resident", reasons.route.POST_VALIDATION
-    if post_scan_output_unreadable(config, sink):
-        # The post-scan gate reads `result.outputs`, which a streamed run leaves empty, so the
-        # run stays resident; masked values are chunk-invariant, so the check is the same.
-        if post_scan_integrity_requested(config):
-            return "resident", reasons.route.POST_SCAN_INTEGRITY
-        return "resident", reasons.route.POST_SCAN_KEYS_RESIDENT
+    # The post-scan gate reads `result.outputs`, which a streamed run leaves empty.
+    kind = post_scan_sink_kind(sink)
+    held = post_scan_resident_for(
+        config, sink_kind=kind, caller_sources=None, source_loader_present=False
+    )
+    if held is not None:
+        integrity = held == reasons.route.POST_SCAN_INTEGRITY_REQUESTED
+        return "resident", reasons.route.POST_SCAN_INTEGRITY if integrity else held
     return "streamed", REASON_ELIGIBLE
 
 

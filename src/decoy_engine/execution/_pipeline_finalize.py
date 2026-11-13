@@ -458,6 +458,10 @@ def finalize_validators_and_quarantine(
             quarantine_removed = quarantine_row_mask(
                 outputs, v_report, quarantine_cfg, row_errors=mask_row_errors
             )
+            from decoy_engine.execution.pipeline._post_scan import note_quarantined
+
+            # The gate must not count children of these parents as orphans the run introduced.
+            note_quarantined(outputs, quarantine_removed)
             outputs, q_summary = apply_quarantine(
                 outputs, v_report, quarantine_cfg, row_errors=mask_row_errors
             )

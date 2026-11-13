@@ -2,7 +2,7 @@
 
 The config key existed on `PipelineConfig` but nothing in `execution/` honoured
 it; these tests pin that it now produces `quality_metrics["post_scan_integrity"]`,
-never changes output bytes, never fails the run, and routes an FK job to the
+never changes output bytes, does not fail a run with no failing finding, and routes an FK job to the
 full-frame finalize branch where the whole output is resident.
 """
 
@@ -48,7 +48,7 @@ def test_post_scan_integrity_stamps_a_report_and_keeps_output_bytes(tmp_path) ->
     assert isinstance(report, dict) and "fail_count" in report
 
 
-def test_post_scan_integrity_is_report_only_even_when_values_leak(tmp_path) -> None:
+def test_a_passthrough_column_is_reported_and_does_not_withhold_the_run(tmp_path) -> None:
     cfg, sources = _cfg(tmp_path, post_scan_integrity=True, strategy="passthrough")
     result = run_pipeline(cfg, sources=sources, engine_version=_V)
     report = result.quality_metrics["post_scan_integrity"]

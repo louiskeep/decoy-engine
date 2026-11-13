@@ -256,6 +256,16 @@ def applies_sites() -> list[str]:
 # ----- no commit without the gate -------------------------------------------------------------
 
 COMMIT_HOME = ("_publication_observer.py", "observed_commit")
+# `publish.commit()` is the session wrapper, whose own `commit` goes through `observed_commit`.
+# Only these files may call it, matched by exact path and receiver name, so a helper named
+# `publish` elsewhere is still a commit site.
+PUBLISH_SESSION_FILES = frozenset(
+    {
+        "decoy_engine/execution/_pipeline_full_frame.py",
+        "decoy_engine/execution/_pipeline_mixed_route.py",
+        "decoy_engine/generation/_streamed.py",
+    }
+)
 
 
 def _receiver(node: ast.Call) -> str | None:
@@ -277,15 +287,21 @@ def commit_label(node: ast.AST) -> str | None:
         return "atomic-commit"
     if name == "getattr" and len(node.args) > 1 and "commit" in _strings(node.args[1]):
         return "getattr-commit"
-    if name == "commit" and isinstance(node.func, ast.Attribute) and _receiver(node) != "publish":
-        return "commit-call"
+    if name == "commit" and isinstance(node.func, ast.Attribute):
+        return "publish-commit" if _receiver(node) == "publish" else "commit-call"
     return None
+
+
+def session_commit(key: str) -> bool:
+    """True for a `publish.commit()` site in one of the session wrapper's own files."""
+    path, _, label, _ = key.split("::")
+    return label == "publish-commit" and path in PUBLISH_SESSION_FILES
 
 
 def commit_sites() -> list[str]:
     keys = scan(commit_label, "execution", "generation")
     home = f"/{COMMIT_HOME[0]}::{COMMIT_HOME[1]}::"
-    return [k for k in keys if home not in k]
+    return [k for k in keys if home not in k and not session_commit(k)]
 
 
 # ----- one model predicate --------------------------------------------------------------------
@@ -322,7 +338,11 @@ def readability_label(node: ast.AST) -> str | None:
     if not isinstance(node, ast.Call):
         return None
     name = _name(node.func)
-    if name in {"post_scan_resident_reason", "post_scan_output_readable"}:
+    if name in {
+        "post_scan_resident_reason",
+        "post_scan_output_readable",
+        "post_scan_output_unreadable",
+    }:
         return "decision-call"
     if name == "post_scan_resident_for":
         if any(k.arg in FACT_ARGS and isinstance(k.value, ast.Constant) for k in node.keywords):

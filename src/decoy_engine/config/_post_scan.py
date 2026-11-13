@@ -160,13 +160,6 @@ def post_scan_output_readable(sink_kind: str) -> bool:
     return sink_kind == NO_SINK_CLASS_LABEL
 
 
-def post_scan_output_unreadable(config: Mapping[str, Any], sink: object | None) -> bool:
-    """True when the gate applies to this config and `sink` cannot be read back before commit."""
-    return post_scan_gate_applies(config) and not post_scan_output_readable(
-        post_scan_sink_kind(sink)
-    )
-
-
 def post_scan_model_setting(config: Mapping[str, Any]) -> str | None:
     """The post-scan setting that asks for a model check (`post_scan.detectors` other than
     regex, or `post_scan.ner_findings: fail`), or `None`. Only an enabled suite asks."""

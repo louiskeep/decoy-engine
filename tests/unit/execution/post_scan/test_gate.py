@@ -20,7 +20,6 @@ from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
 from decoy_engine.execution.pipeline import _post_scan
 from decoy_engine.execution.pipeline._post_scan import PostScanGate
-from decoy_engine.profiling import MEMORY_LIMIT
 from decoy_engine.verification.postmask import PostScanBlockedError, TableBatches, from_table
 
 CANARY = "CANARY-31c4"
@@ -180,14 +179,16 @@ def test_a_coded_error_from_a_part_propagates_as_the_same_object(
     assert not gate.ran
 
 
-def test_the_memory_limit_is_the_smaller_of_the_scan_cap_and_the_budget(
+def test_the_memory_limit_is_the_runs_budget_share_with_a_working_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    small = 256 * 1024 * 1024
+    small = 2 * 1024**3
     assert PostScanGate(KEYS, budget_bytes=small).memory_limit == (
         resolve_ooc_memory_limit(small).memory_limit
     )
-    assert PostScanGate(KEYS, budget_bytes=64 * 1024**3).memory_limit == MEMORY_LIMIT
+    assert PostScanGate(KEYS, budget_bytes=64 * 1024**3).memory_limit == "512MB"
+    # A tiny budget never starves the scan below the floor.
+    assert PostScanGate(KEYS, budget_bytes=64 * 1024 * 1024).memory_limit == "128MB"
     seen: list[str] = []
     real = _post_scan.check_keys
 

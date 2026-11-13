@@ -70,7 +70,6 @@ from decoy_engine.config._post_scan import (
     post_scan_integrity_requested,
     post_scan_model_setting,
     post_scan_output_readable,
-    post_scan_output_unreadable,
     post_scan_resident_reason,
     post_scan_sink_kind,
 )
@@ -167,7 +166,6 @@ __all__ = [
     "post_scan_integrity_requested",
     "post_scan_model_setting",
     "post_scan_output_readable",
-    "post_scan_output_unreadable",
     "post_scan_resident_reason",
     "post_scan_sink_kind",
     "refuse_fixed_width_output_types",

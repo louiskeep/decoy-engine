@@ -5,3 +5,5 @@
 Jobs that declare relationships and write to a sink, read inputs through a `source_loader`, or declare casting or lazy transforms stay on the resident route until the staged-output slices land, so an explicit sequential or out-of-core request for such a job is refused. New reason `route/post_scan_keys_resident`. `decide_execution_route` takes `post_scan_resident` in place of `post_scan_integrity`, and `compute_post_scan_integrity` is removed.
 
 A relationship whose parent table is generated treats the orphans its input child rows already carried as inherited, so `preserve` and `warn` runs on generated parents keep passing.
+
+Orphans that point at a parent row quarantine removed no longer withhold the run. They are reported as the warning `post_scan.foreign_key_orphans_quarantined`; any other new orphan still blocks. A null-typed key column (zero rows, or all null) compares with every key type. The gate's key scan uses the run's memory budget (at least 128MB), honours `out_of_core_threads`, and spills to its scratch directory. New reason `post_scan/foreign_key_orphans_quarantined`.

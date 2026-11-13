@@ -297,6 +297,9 @@ def _family(t: pa.DataType) -> str | None:
     return "string" if pa.types.is_string(t) or pa.types.is_large_string(t) else None
 
 
+_NULL: Final = "null"
+
+
 def _comparable(schema: pa.Schema) -> list[str]:
     """One token per column. Integer widths and string encodings are each one family because
     DuckDB compares their values exactly; floats, decimals, dates, timestamps and non-string
@@ -309,25 +312,33 @@ def _comparable(schema: pa.Schema) -> list[str]:
 
 def keys_comparable(parent: KeyBatches, children: Sequence[KeyBatches]) -> bool:
     """Whether `key_facts` would measure these ends rather than report `key_type_mismatch`.
-    Reads schemas only and opens no connection."""
+    Reads schemas only and opens no connection. A null-typed column holds no value that could
+    match or orphan, so it is comparable with every family."""
     wanted = _comparable(parent.schema)
-    return all(_comparable(k.schema) == wanted for k in children)
+    return all(
+        all(w == t or _NULL in (w, t) for w, t in zip(wanted, _comparable(k.schema), strict=True))
+        for k in children
+    )
 
 
 def _duck_types(parent: KeyBatches, children: Sequence[KeyBatches]) -> list[str | None]:
     """The DuckDB type for each key label, wide enough for every end; `None` keeps the parent's
     declared type. The tables are created from these types, never from the first batch, so a
-    later wider batch cannot overflow or narrow."""
+    later wider batch cannot overflow or narrow. Null-typed ends are left out of the choice; a
+    label that is null-typed everywhere loads as BIGINT, which holds only nulls."""
     schemas = [parent.schema, *(k.schema for k in children)]
     out: list[str | None] = []
     for n in range(len(parent.schema)):
         types = [s.types[n] for s in schemas]
-        if all(t.equals(types[0]) for t in types):
+        typed = [t for t in types if not pa.types.is_null(t)]
+        if not typed:
+            out.append("BIGINT")
+        elif all(t.equals(typed[0]) for t in typed) and not pa.types.is_null(types[0]):
             out.append(None)
         else:
-            family = _family(types[0])
+            family = _family(typed[0])
             if family == "integer":
-                out.append("HUGEINT" if any(t == pa.uint64() for t in types) else "BIGINT")
+                out.append("HUGEINT" if any(t == pa.uint64() for t in typed) else "BIGINT")
             else:
                 out.append("VARCHAR" if family == "string" else None)
     return out
@@ -373,6 +384,8 @@ def _check_widths(
                 else None
             )
         if span is None:
+            continue
+        if pa.types.is_null(actual):
             continue
         if (
             pa.types.is_integer(actual)

@@ -78,6 +78,11 @@ def bind_duckdb_run(thread_cap: int | None) -> Iterator[DuckDBRunRecorder]:
         _RUN.reset(token)
 
 
+def current_duckdb_run() -> DuckDBRunRecorder | None:
+    """The recorder bound for this run, or `None` outside `bind_duckdb_run`."""
+    return _RUN.get()
+
+
 def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
     """Open an in-memory DuckDB connection with a restricted temp directory."""
     try:
@@ -152,4 +157,10 @@ def _threads_for_memory_limit(
     return max(1, min(ceilings))
 
 
-__all__ = ["AppliedConnection", "DuckDBRunRecorder", "bind_duckdb_run", "connect_duckdb"]
+__all__ = [
+    "AppliedConnection",
+    "DuckDBRunRecorder",
+    "bind_duckdb_run",
+    "connect_duckdb",
+    "current_duckdb_run",
+]

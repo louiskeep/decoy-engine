@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+import pyarrow as pa
+
 from decoy_engine import reasons
 from decoy_engine.config import RelationshipConfig
 from decoy_engine.profiling import KeyBatches, key_facts, keys_comparable, passes_through
@@ -20,6 +22,7 @@ from decoy_engine.progress import safe_error_class
 from decoy_engine.reasons import ReasonCode, reason_ref_payload
 from decoy_engine.verification.postmask._stream_input import (
     TableBatches,
+    from_table,
     key_batches,
     missing_columns,
 )
@@ -28,9 +31,18 @@ Kind = Literal["primary", "foreign"]
 Status = Literal["checked", "key_type_mismatch", "key_column_missing", "error"]
 # How the source side was counted (4.2.2). Only a measured or no_source baseline has counts.
 Baseline = Literal[
-    "measured", "no_source", "key_column_missing", "key_type_mismatch", "error", "not_run"
+    "measured",
+    "no_source",
+    "key_column_missing",
+    "key_type_mismatch",
+    "inherited_type_mismatch",
+    "error",
+    "not_run",
 ]
 _End = tuple[str, tuple[str, ...]]
+# Key columns of the parent rows quarantine removed, by parent end. Held in memory for the run and
+# never written to a report or a log.
+Removed = Mapping[_End, Sequence[pa.Table]]
 
 __all__ = ["Baseline", "KeyCounts", "KeyResult", "Status", "check_keys", "key_codes", "keys_report"]
 
@@ -99,9 +111,11 @@ def check_keys(
     *,
     scratch: Path,
     memory_limit: str,
+    quarantined: Removed | None = None,
 ) -> tuple[KeyResult, ...]:
     """One result per declared key. A table absent from `source` has a baseline of zero (a
-    generated table). `scratch` is caller-owned."""
+    generated table). `scratch` is caller-owned. `quarantined` holds the parent keys quarantine
+    removed from the output: a child pointing at one is not an orphan the run introduced."""
     primaries: dict[_End, None] = {}
     parents_of: dict[_End, dict[_End, None]] = {}
     for rel in relationships:
@@ -112,7 +126,7 @@ def check_keys(
     todo = [(end, ()) for end in primaries] + [(c, tuple(p)) for c, p in parents_of.items()]
     results = []
     for n, (end, parents) in enumerate(todo):
-        run = _Run(source, output, scratch / f"k{n}", memory_limit)
+        run = _Run(source, output, scratch / f"k{n}", memory_limit, quarantined or {})
         results.append(run.check(end, parents))
     return tuple(results)
 
@@ -124,10 +138,12 @@ class _Run:
         output: Mapping[str, TableBatches],
         scratch: Path,
         memory_limit: str,
+        quarantined: Removed,
     ) -> None:
         self._sides = {"source": source, "output": output}
         self._scratch = scratch
         self._limit = memory_limit
+        self._quarantined = quarantined
 
     def check(self, end: _End, parents: tuple[_End, ...]) -> KeyResult:
         kind: Kind = "foreign" if parents else "primary"
@@ -152,6 +168,8 @@ class _Run:
                 error_class=_class_of(exc),
             )
         baseline, base, failed = self._baseline(end, parents, status)
+        # An error here is not caught: the gate turns it into a check error, which blocks.
+        gone = self._quarantine_orphans(end, parents, status, out)
         return KeyResult(
             table=table,
             columns=columns,
@@ -159,7 +177,7 @@ class _Run:
             parent=names,
             status=status,
             bounded=bounded,
-            codes=key_codes(status, kind, baseline, base, out),
+            codes=key_codes(status, kind, baseline, base, out, quarantined_orphans=gone),
             source=base,
             output=out,
             baseline=baseline,
@@ -179,6 +197,9 @@ class _Run:
                 if passes_through(exc):
                     raise
                 return "error", None, _class_of(exc)
+            if inherited == "key_type_mismatch":
+                # A generated parent has no input side to compare, so this blocks like no_source.
+                return "inherited_type_mismatch", KeyCounts(), None
             if inherited is not None:
                 return "measured", inherited, None
             return "no_source", KeyCounts(), None
@@ -197,20 +218,26 @@ class _Run:
             return "error", None, _class_of(exc)
         return "measured", counts, None
 
-    def _inherited(self, end: _End, parents: tuple[_End, ...]) -> KeyCounts | None:
-        """A child that is in the inputs but whose parent is generated: the input child keys that
-        match no output parent key. The generated parent has no input side, so these orphans came
-        with the data (`preserve` and `warn` keep them) and are not the run's doing. `None` when
-        the child is itself generated, or a side cannot be read or compared."""
+    def _inherited(
+        self, end: _End, parents: tuple[_End, ...]
+    ) -> KeyCounts | Literal["key_type_mismatch"] | None:
+        """A child that is in the inputs whose every parent is generated: the input child keys
+        that match no output parent key. A generated parent has no input side, so these orphans
+        came with the data (`preserve` and `warn` keep them) and are not the run's doing. With
+        any parent present in the inputs the end is measured against its inputs instead, so a
+        generated parent cannot hide what the mask did to the other one. `None` when the child is
+        itself generated, or a side cannot be read; `key_type_mismatch` when the types differ."""
         own = self._lookup("source", end)
-        found = [self._lookup("output", p) for p in parents]
         if not parents or not isinstance(own, KeyBatches):
             return None
+        if any(self._sides["source"].get(p[0]) is not None for p in parents):
+            return None
+        found = [self._parent_keys(p) for p in parents]
         if not all(isinstance(f, KeyBatches) for f in found):
             return None
         keys = [f for f in found if isinstance(f, KeyBatches)]
         if not keys_comparable(keys[0], [*keys[1:], own]):
-            return None
+            return "key_type_mismatch"
         facts = key_facts(
             _union(keys), [*keys[1:], own], scratch=self._scratch, memory_limit=self._limit
         )
@@ -244,13 +271,40 @@ class _Run:
         keys = [k for k in got if isinstance(k, KeyBatches)]
         return keys[0], keys[1:]
 
+    def _removed_keys(self, parent: _End) -> list[KeyBatches]:
+        return [
+            key_batches(from_table(parent[0], table), parent[1])
+            for table in self._quarantined.get(parent, ())
+        ]
+
+    def _parent_keys(self, parent: _End) -> KeyBatches | str:
+        """The output keys of a parent plus the keys quarantine removed from it, so a child that
+        pointed at a removed parent is not counted as an orphan."""
+        found = self._lookup("output", parent)
+        removed = self._removed_keys(parent)
+        if not removed or not isinstance(found, KeyBatches):
+            return found
+        return _union([found, *removed])
+
+    def _quarantine_orphans(
+        self, end: _End, parents: tuple[_End, ...], status: Status, out: KeyCounts
+    ) -> int:
+        """Output orphan rows whose parent key quarantine removed: the orphans counted against
+        the output parents alone, less those counted with the removed keys added."""
+        if status != "checked" or not any(self._quarantined.get(p) for p in parents):
+            return 0
+        total = self._measure("output", end, parents, removed=False)[2]
+        return max(0, total.orphan_rows - out.orphan_rows)
+
     def _measure(
-        self, side: str, end: _End, parents: tuple[_End, ...]
+        self, side: str, end: _End, parents: tuple[_End, ...], *, removed: bool = True
     ) -> tuple[Status, bool, KeyCounts]:
         got = self._resolve(side, end, parents)
         if isinstance(got, str):
             return "key_column_missing", True, KeyCounts()
         own, found = got
+        if side == "output" and parents and removed:
+            found = [k for p in parents if isinstance(k := self._parent_keys(p), KeyBatches)]
         if not parents:
             facts = key_facts(own, (), scratch=self._scratch, memory_limit=self._limit)
             counts = KeyCounts(
@@ -293,7 +347,13 @@ def _union(parts: Sequence[KeyBatches]) -> KeyBatches:
 
 
 def key_codes(
-    status: Status, kind: Kind, baseline: Baseline, base: KeyCounts | None, out: KeyCounts
+    status: Status,
+    kind: Kind,
+    baseline: Baseline,
+    base: KeyCounts | None,
+    out: KeyCounts,
+    *,
+    quarantined_orphans: int = 0,
 ) -> tuple[ReasonCode, ...]:
     p = reasons.post_scan
     if status == "key_column_missing":
@@ -316,4 +376,6 @@ def key_codes(
             found.append(p.PRIMARY_KEY_DUPLICATES_INTRODUCED)
     elif out.orphan_rows > base.orphan_rows:
         found.append(p.FOREIGN_KEY_ORPHANS_INTRODUCED)
+    if kind == "foreign" and quarantined_orphans:
+        found.append(p.FOREIGN_KEY_ORPHANS_QUARANTINED)
     return tuple(found)

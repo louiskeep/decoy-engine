@@ -235,8 +235,12 @@ def test_a_commit_outside_the_observer_is_flagged(source: str, label: str) -> No
     assert [k.split("::")[2] for k in found] == [label]
 
 
-def test_the_publish_session_wrapper_is_not_flagged() -> None:
-    assert _keys(scan.commit_label, "def f(publish):\n    publish.commit()\n", "x.py") == []
+def test_the_publish_session_wrapper_is_allowed_only_in_its_own_files() -> None:
+    source = "def f(publish):\n    publish.commit()\n"
+    (home,) = _keys(scan.commit_label, source, "execution/_pipeline_full_frame.py")
+    (other,) = _keys(scan.commit_label, source, "execution/x.py")
+    assert scan.session_commit(home)
+    assert not scan.session_commit(other)
 
 
 def test_calling_the_sink_commit_directly_in_the_sequential_route_is_flagged() -> None:

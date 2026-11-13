@@ -15,7 +15,7 @@ result.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Final
@@ -24,6 +24,7 @@ import pyarrow as pa
 
 from decoy_engine import fileaccess
 from decoy_engine.config import (
+    RelationshipConfig,
     parse_relationship_config,
     post_scan_gate_applies,
     post_scan_integrity_requested,
@@ -52,10 +53,15 @@ if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_context import PipelineRunContext
     from decoy_engine.verification.postmask import TableBatches
 
-__all__ = ["PostScanGate", "active_gate", "bind_gate", "settle"]
+__all__ = ["PostScanGate", "active_gate", "bind_gate", "note_quarantined", "settle"]
 
 # `pass_failed_with` when the commit is reached and a required gate never ran.
 _NOT_RUN: Final = "PostScanGateNotRun"
+
+
+# A smaller cap starves DuckDB's hash join even at 100k keys (it fails to pin a block), so a small
+# run budget never takes the key scan below this.
+_FLOOR_MB: Final = 128
 
 
 def _megabytes(limit: str) -> int:
@@ -79,15 +85,20 @@ class PostScanGate:
         self.verdict: PostScanVerdict | None = None
         self._config = config
         self._budget_bytes = budget_bytes
+        # Key columns of the parent rows quarantine removed. Kept only in memory, so a child
+        # that pointed at one is told apart from an orphan the run introduced; never reported.
+        self._quarantined: dict[tuple[str, tuple[str, ...]], list[pa.Table]] = {}
         # Footer facts of each lazy input, taken before any route read it: a re-read refuses a
         # file that changed in between.
         self._source_facts = source_facts or {}
 
     @property
     def memory_limit(self) -> str:
-        """The key scan's DuckDB cap: its own fixed cap or the run's budget, whichever is less."""
+        """The key scan's DuckDB cap: its own fixed cap or the run's budget share, whichever is
+        less, never below the working floor. The scan spills to its scratch directory past it."""
         budget = resolve_ooc_memory_limit(self._budget_bytes).memory_limit
-        return min(MEMORY_LIMIT, budget, key=_megabytes)
+        capped = min(MEMORY_LIMIT, budget, key=_megabytes)
+        return f"{max(_FLOOR_MB, _megabytes(capped))}MB"
 
     def run_resident(
         self,
@@ -125,6 +136,30 @@ class PostScanGate:
         if error is not None:
             raise error
 
+    def note_quarantined(self, table: str, rows: pa.Table, removed: Collection[int]) -> None:
+        """Record the declared parent keys of `rows` (a table before quarantine filtered it) at
+        the `removed` row indices. A relationship that cannot be read is left for the check to
+        report."""
+        if not self.required or not removed:
+            return
+        try:
+            relationships = self._relationships()
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            return
+        for rel in relationships:
+            columns = tuple(rel.parent.columns)
+            if rel.parent.table == table and set(columns) <= set(rows.column_names):
+                taken = rows.select(list(columns)).take(sorted(removed))
+                self._quarantined.setdefault((table, columns), []).append(taken)
+
+    def _relationships(self) -> list[RelationshipConfig]:
+        return [
+            parse_relationship_config(raw, prefix=f"relationship {n} is invalid")
+            for n, raw in enumerate(self._config.get("relationships") or ())
+        ]
+
     def before_commit(self, sink: Any) -> None:
         """Refuse the commit when a required gate never ran. No sink's staged files can be checked
         yet, so every sink is refused; `ran` stays false, so a retry is refused too."""
@@ -148,12 +183,11 @@ class PostScanGate:
     def _keys(
         self, outputs: Mapping[str, pa.Table], sources: Mapping[str, pa.Table | LazySource]
     ) -> tuple[KeyResult, ...]:
-        rels = [
-            parse_relationship_config(raw, prefix=f"relationship {n} is invalid")
-            for n, raw in enumerate(self._config.get("relationships") or ())
-        ]
+        rels = self._relationships()
         if not rels:
             return ()
+        # The gate's connections go through the run's own recorder and thread cap, which
+        # `execute_route` binds around the route and this check alike.
         with fileaccess.protected_scratch_dir(prefix="decoy-post-scan-gate-") as scratch:
             return check_keys(
                 rels,
@@ -161,6 +195,7 @@ class PostScanGate:
                 {name: from_table(name, table) for name, table in outputs.items()},
                 scratch=scratch,
                 memory_limit=self.memory_limit,
+                quarantined=self._quarantined,
             )
 
     def _column_suite(
@@ -196,12 +231,28 @@ def bind_gate(ctx: PipelineRunContext) -> Iterator[PostScanGate]:
         if post_scan_gate_applies(ctx.config)
         else {}
     )
-    gate = PostScanGate(ctx.config, budget_bytes=ctx.out_of_core_budget_bytes, source_facts=facts)
+    gate = PostScanGate(
+        ctx.config,
+        budget_bytes=ctx.out_of_core_budget_bytes,
+        source_facts=facts,
+    )
     token = _ACTIVE.set(gate)
     try:
         yield gate
     finally:
         _ACTIVE.reset(token)
+
+
+def note_quarantined(
+    tables: Mapping[str, pa.Table], removed: Mapping[str, Collection[int]]
+) -> None:
+    """Tell the run's gate which rows quarantine is about to remove from `tables` (still
+    unfiltered). Outside `bind_gate` there is no gate and nothing to tell."""
+    if (gate := active_gate()) is None:
+        return
+    for name, rows in removed.items():
+        if name in tables:
+            gate.note_quarantined(name, tables[name], rows)
 
 
 def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult) -> None:

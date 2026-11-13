@@ -56,6 +56,7 @@ _CHECK_ERROR, _KEY_TYPE_MISMATCH, _FINDING_BLOCKED = (
     _P.FINDING_BLOCKED.spec.ref,
 )
 _ORPHANS = _P.FOREIGN_KEY_ORPHANS_INTRODUCED.spec.ref
+_QUARANTINED = _P.FOREIGN_KEY_ORPHANS_QUARANTINED.spec.ref
 _FALLBACK_SUMMARY = "The post-scan integrity check blocked the run."
 _MAX_SPOTS = 3
 # Read from `_keys` so a new status or baseline cannot be missed here.
@@ -155,9 +156,12 @@ def _reachable_key_shape(
     return refs in {
         tuple(
             code.spec.ref
-            for code in _keys.key_codes(status, kind, baseline, _keys.KeyCounts(), out)
+            for code in _keys.key_codes(
+                status, kind, baseline, _keys.KeyCounts(), out, quarantined_orphans=gone
+            )
         )
         for out in outputs
+        for gone in (0, 1)
     }
 
 
@@ -197,6 +201,8 @@ def _key_refs(key: Mapping[str, Any]) -> Iterator[tuple[ReasonRef, bool]]:
             yield ref, baseline != "error"
         elif ref == _KEY_TYPE_MISMATCH:
             yield ref, baseline != "key_type_mismatch"
+        elif ref == _QUARANTINED:
+            yield ref, False
         else:
             yield ref, True
 

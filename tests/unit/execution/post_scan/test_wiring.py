@@ -108,6 +108,12 @@ def test_at16_a_blocking_verdict_commits_nothing_on_every_no_sink_route(
     exc = _blocked(run)
     assert exc.reason == DUPLICATES
     assert not list(tmp_path.glob("*.out.parquet"))
+    # The same job, unbroken, runs on this route and hands its outputs back resident. A route that
+    # never ran would pass the glob check above for the wrong reason.
+    control, routes = _run(_config(tmp_path), route)
+    assert routes == [route]
+    assert set(control.outputs) == {"parent", "child"}
+    assert not list(tmp_path.glob("*.out.parquet"))
 
 
 def test_at16_the_commit_is_refused_before_the_sink_is_touched() -> None:

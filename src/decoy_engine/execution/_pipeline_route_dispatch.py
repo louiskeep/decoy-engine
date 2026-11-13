@@ -11,6 +11,7 @@ Nothing here decides or re-decides a route: the decision arrives finished in `Ro
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +19,7 @@ from decoy_engine.declared_casting._boundary import open_cast_run
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
-from decoy_engine.execution.out_of_core._duckdb import bind_duckdb_run
+from decoy_engine.execution.out_of_core._duckdb import bind_duckdb_run, current_duckdb_run
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
@@ -41,7 +42,9 @@ def execute_route(
     from decoy_engine.execution import _pipeline_full_frame
     from decoy_engine.execution.pipeline._post_scan import bind_gate, settle
 
-    with bind_gate(ctx) as gate:
+    # One recorder for the whole run, the post-scan gate's connections included, so the resources
+    # block lists every connection the run opened.
+    with bind_duckdb_run(ctx.out_of_core_threads) as recorder, bind_gate(ctx) as gate:
         if ctx.has_mask_table and decision.route == "sequential":
             result = execute_sequential_route(ctx, decision)
         elif ctx.has_mask_table and decision.route == "out_of_core":
@@ -51,6 +54,9 @@ def execute_route(
         else:
             result = _pipeline_full_frame.run_full_frame_route(ctx, decision)
         settle(gate, ctx, result)
+        block = result.quality_metrics.get("resources", {}).get("out_of_core")
+        if block is not None:
+            block["applied"] = [asdict(pair) for pair in recorder.applied()]
     stamp(result.quality_metrics, refusals)
     return result
 
@@ -114,7 +120,10 @@ def _out_of_core_route(
 ) -> ExecutionResult:
     """Bind the run's DuckDB thread cap once; every nested connection reads it at
     `connect_duckdb`, and the settings they applied come back on the result."""
-    with bind_duckdb_run(ctx.out_of_core_threads) as recorder:
+    bound = current_duckdb_run()
+    with (
+        nullcontext(bound) if bound is not None else bind_duckdb_run(ctx.out_of_core_threads)
+    ) as recorder:
         result = _run_out_of_core(ctx, decision, cast_run)
     result.quality_metrics.setdefault("resources", {})["out_of_core"] = {
         "thread_cap": recorder.thread_cap,
