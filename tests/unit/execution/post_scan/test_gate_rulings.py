@@ -147,12 +147,13 @@ def test_a_fully_quarantined_table_is_not_a_type_mismatch() -> None:
     assert _warned(gate) == {QUARANTINED}
 
 
-def test_a_key_pair_with_no_exact_cast_defers_the_gate_and_does_not_block() -> None:
+def test_a_run_that_changes_a_comparable_key_to_a_type_with_no_cast_blocks() -> None:
     gate = _gate()
     source = {"p": pa.table({"id": ["a"]}), "c": pa.table({"pid": ["a"]})}
     outputs = {"p": pa.table({"id": ["a"]}), "c": pa.table({"pid": [[1]]})}
-    gate.run_resident(outputs, source, KINDS)
-    assert gate.deferred and gate.verdict is None
+    exc = _blocked(lambda: gate.run_resident(outputs, source, KINDS))
+    assert exc.reason == "post_scan.key_type_mismatch"
+    assert not gate.deferred
 
 
 # ----- H1: one generated and one masked parent --------------------------------------------------
@@ -213,15 +214,16 @@ def test_an_inherited_type_mismatch_still_blocks_and_is_labelled_as_one() -> Non
     assert child["baseline"] == "inherited_type_mismatch"
 
 
-def test_a_run_that_changes_a_key_to_a_type_with_no_cast_defers_beside_a_generated_parent() -> None:
+def test_a_run_that_changes_a_key_to_a_type_with_no_cast_blocks_beside_a_generated_parent() -> None:
     gate = _gate([GENERATED])
     outputs = {
         "people": pa.table({"id": [1.0, 2.0]}),
         "accounts": pa.table({"person_id": pa.array([[1], [2]])}),
     }
     sources = {"accounts": pa.table({"person_id": [1.0, 2.0]})}
-    gate.run_resident(outputs, sources, GEN_KINDS)  # not check_error, not a block
-    assert gate.deferred and gate.verdict is None
+    exc = _blocked(lambda: gate.run_resident(outputs, sources, GEN_KINDS))
+    assert exc.reason == "post_scan.key_type_mismatch"
+    assert not gate.deferred
 
 
 def test_a_run_that_changes_a_float_key_to_int_beside_a_generated_parent_is_measured() -> None:

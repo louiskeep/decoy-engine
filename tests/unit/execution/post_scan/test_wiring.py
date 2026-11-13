@@ -451,12 +451,13 @@ def test_a_string_parent_with_an_int64_child_still_blocks_a_key_the_mask_broke()
     assert exc.reason.startswith("post_scan.")
 
 
-def test_a_key_pair_with_no_exact_cast_defers_the_gate_instead_of_blocking() -> None:
+def test_a_key_pair_with_no_cast_in_the_source_too_is_reported_and_does_not_block() -> None:
+    # The run did not make these ends incomparable, so the mismatch is inherited, not caused.
     gate = _typed_run(
         pa.array(["0", "1"]), pa.array([{"a": 0}, {"a": 1}], type=pa.struct([("a", pa.int64())]))
     )
-    assert gate.ran and gate.deferred
-    assert gate.verdict is None
+    assert gate.ran and not gate.deferred
+    assert gate.verdict is not None and not gate.verdict.blocking
 
 
 def test_a_value_that_does_not_cast_exactly_blocks_as_a_key_type_mismatch() -> None:

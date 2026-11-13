@@ -69,8 +69,9 @@ The gate's DuckDB connection is a run connection: `execute_route` binds one reco
 `ExecutionError`. The scan and the gate compare two key ends when that cast has a route between their types,
 and cast each child batch to the comparison type before it is loaded. Integers of any width still
 load as one BIGINT or HUGEINT column. A pair with no route, or a value with no exact cast, ends the
-key count as `key_type_mismatch`, and the gate defers (report only, reason
-`post_scan.gate_deferred_route`) rather than blocking. An inherited mismatch (child inputs against
-a generated parent) still blocks. The duplicate-parent-key block is pinned by
+key count as `key_type_mismatch`. The gate never defers the whole check for one key: the verdict
+blocks a mismatch the run caused (the input ends compared, or the parent is generated) and reports
+one the input already had without blocking. An inherited mismatch (child inputs against a
+generated parent) still blocks. The duplicate-parent-key block is pinned by
 `test_at24_a_subset_run_with_a_broken_key_still_blocks` and
 `test_at16_a_blocking_verdict_commits_nothing_on_every_no_sink_route`.
