@@ -60,7 +60,16 @@ def binding_digest(source: Mapping[str, Any], target: Mapping[str, Any]) -> str:
     `pipeline_config_hash` drops `sources` and `targets`, so this is what notices a changed path
     or format.
     """
-    return payload_digest({"source": source, "target": target})
+    return payload_digest({"source": _plain(source), "target": _plain(target)})
+
+
+def _plain(value: Any) -> Any:
+    # The canonical encoder takes plain dicts and lists only; any read-only mapping hashes alike.
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
 
 
 def _key_check(key: bytes) -> str:
@@ -83,7 +92,10 @@ def build_fingerprint(
     `key_provider=None` is the seed path: the key is the job seed, exactly as the masking
     strategies derive it, so no seed logic is copied here.
     """
-    pairs = tuple(sorted((str(d), str(v)) for d, v in components))
+    given = [tuple(pair) for pair in components]
+    if any(len(pair) != 2 or not all(type(part) is str for part in pair) for pair in given):
+        raise TypeError("each component must be a (distribution, version) pair of strings")
+    pairs = tuple(sorted(given))
     if not pairs:
         raise ValueError("a resume fingerprint needs at least one component version")
     config_hash = pipeline_config_hash(config)

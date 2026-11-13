@@ -96,6 +96,19 @@ def test_digests_are_tagged() -> None:
     assert binding_digest(src, tgt).startswith("sha256:")
 
 
+@pytest.mark.parametrize("bad", [(("decoy-engine", 1),), ((1, "1.0"),), (("decoy-engine",),)])
+def test_non_string_components_refused(bad: Any) -> None:
+    with pytest.raises(TypeError, match="pair of strings"):
+        _fp(components=bad)
+
+
+def test_binding_accepts_any_mapping() -> None:
+    from types import MappingProxyType
+
+    src, tgt = _config()["sources"]["t1"], _config()["targets"]["t1"]
+    assert binding_digest(MappingProxyType(src), MappingProxyType(tgt)) == binding_digest(src, tgt)
+
+
 def test_empty_components_refused() -> None:
     with pytest.raises(ValueError, match="component"):
         _fp(components=())
