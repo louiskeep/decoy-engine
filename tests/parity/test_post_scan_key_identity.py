@@ -235,3 +235,25 @@ def test_keys_one_nanosecond_apart_stay_distinct(tmp_path: Path, keys: pa.Array)
     (pk,) = (r for r in found if (r.table, r.kind) == ("parent", "primary"))
     assert pk.status == "checked"
     assert pk.output.duplicate_excess == 0
+
+
+@pytest.mark.parametrize(
+    ("parent", "child"),
+    [
+        (
+            pa.array([10_000_000_000, 1], pa.duration("s")),
+            pa.array([1_000_000_000, 2], pa.duration("ns")),
+        ),
+        (
+            pa.array([10_000_000_000, 1], pa.timestamp("s", tz="UTC")),
+            pa.array([1_000_000_000, 2], pa.timestamp("ns", tz="UTC")),
+        ),
+    ],
+    ids=["duration", "tz-timestamp"],
+)
+def test_a_coarse_key_past_the_nanosecond_range_is_still_compared(
+    tmp_path: Path, parent: pa.Array, child: pa.Array
+) -> None:
+    """Ten billion seconds does not fit int64 nanoseconds; the scan must still count the one
+    child (2 ns) that matches no parent, not refuse the key."""
+    assert _gate_orphans(tmp_path, parent, child) == 1

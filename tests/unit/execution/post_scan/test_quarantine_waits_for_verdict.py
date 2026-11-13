@@ -106,3 +106,33 @@ def test_outside_a_run_the_write_happens_at_once() -> None:
     written: list[int] = []
     publish_after_gate(lambda: written.append(1))
     assert written == [1]
+
+
+def _bucketize_run(tmp_path: Path, mode: str, *, broken: bool) -> Path:
+    from decoy_engine import run_pipeline
+    from tests.unit.execution import _subset_run_support as subset_sup
+    from tests.unit.execution.test_sequential_run_kills import _fk_bucketize_config, _sources
+
+    qpath = tmp_path / "q.jsonl"
+    config = _fk_bucketize_config(
+        tmp_path, {"enabled": True, "output_path": str(qpath), "triggers": ["format_error"]}
+    )
+    if broken:  # one constant parent key collapses the unique keys the input held
+        parent = next(t for t in config["tables"] if t["name"] == "parent")
+        parent["columns"][0] = {"name": "id", "strategy": "redact"}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv(subset_sup.VAR, "ab" * 32)
+        run_pipeline(config, sources=_sources(config), engine_version="ps8-q", execution_mode=mode)
+    return qpath
+
+
+@pytest.mark.parametrize("mode", ["full_frame", "sequential"])
+def test_a_run_with_a_quarantined_row_publishes_the_file(tmp_path: Path, mode: str) -> None:
+    assert _bucketize_run(tmp_path, mode, broken=False).exists()
+
+
+@pytest.mark.parametrize("mode", ["full_frame", "sequential"])
+def test_a_blocked_run_with_a_quarantined_row_writes_no_file(tmp_path: Path, mode: str) -> None:
+    with pytest.raises(PostScanBlockedError):
+        _bucketize_run(tmp_path, mode, broken=True)
+    assert not (tmp_path / "q.jsonl").exists()

@@ -9,7 +9,7 @@ timestamp, as the join sees them. Nothing here carries a key value in an error o
 
 A zone-aware timestamp or a duration is kept out of the token path on purpose: the token for
 those is an object repr that does not fold two units of one instant, and the only route that
-accepts those types (the pandas join) matches them by value. They load as the int64 count of
+accepts those types (the pandas join) matches them by value. They load as the exact count of
 their finest unit, as does a nanosecond time of day: DuckDB holds an interval, a zoned
 timestamp and a time at microseconds, which would merge keys one nanosecond apart."""
 
@@ -62,8 +62,12 @@ def _common(family: str, typed: Sequence[pa.DataType]) -> str | pa.DataType:
     return first
 
 
+_COUNT: Final = pa.decimal128(38, 0)
+
+
 def _as_count(t: pa.DataType) -> bool:
-    """A type DuckDB would store coarser than Arrow, so its table holds the int64 count."""
+    """A type DuckDB would store coarser than Arrow, so its table holds the exact count of the
+    finest unit. DECIMAL(38, 0) holds any int64 count widened from seconds to nanoseconds."""
     return (
         pa.types.is_duration(t)
         or (pa.types.is_timestamp(t) and t.tz is not None)
@@ -73,7 +77,7 @@ def _as_count(t: pa.DataType) -> bool:
 
 def table_type(kind: pa.DataType) -> pa.DataType:
     """The column type a key table is created with for a cast `kind`."""
-    return pa.int64() if _as_count(kind) else kind
+    return _COUNT if _as_count(kind) else kind
 
 
 def duck_types(schemas: Sequence[pa.Schema]) -> list[str | pa.DataType | None]:
@@ -115,6 +119,16 @@ def _token_array(array: pa.Array) -> pa.Array | None:
     return pa.array(tokens, type=pa.string())
 
 
+def _count(array: pa.Array, kind: pa.DataType) -> pa.Array:
+    """Each value as the exact count of `kind`'s unit. An Arrow cast to the finer unit would
+    overflow int64 on a valid coarse value, so the scaling runs in a wide decimal."""
+    own = array.type.unit if hasattr(array.type, "unit") else kind.unit
+    factor = 1000 ** (_UNITS.index(kind.unit) - _UNITS.index(own))
+    wide = array.cast(pa.int64()).cast(pa.decimal256(40, 0))
+    scaled = pc.multiply(wide, pa.scalar(factor, pa.decimal256(13, 0)))  # type: ignore[attr-defined, unused-ignore]
+    return scaled.cast(_COUNT)
+
+
 def cast_batch(
     batch: pa.RecordBatch, duck: Sequence[str | pa.DataType | None]
 ) -> pa.RecordBatch | None:
@@ -128,13 +142,13 @@ def cast_batch(
             array = _token_array(array)
             if array is None:
                 return None
+        elif isinstance(kind, pa.DataType) and _as_count(kind):
+            array = _count(array, kind)
         elif isinstance(kind, pa.DataType) and not array.type.equals(kind):
             try:
                 array = array.cast(kind)
             except pa.ArrowInvalid:
                 return None
-        if isinstance(kind, pa.DataType) and _as_count(kind):
-            array = array.cast(pa.int64())
         if pa.types.is_floating(array.type):
             # The join reads a NaN key as null (`fk_key_value`); DuckDB would count it as a value.
             nan = pc.is_nan(array)  # type: ignore[attr-defined, unused-ignore]
