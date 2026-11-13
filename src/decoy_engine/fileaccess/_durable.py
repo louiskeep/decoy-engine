@@ -19,6 +19,7 @@ import stat
 import time
 from collections.abc import Callable, Iterator
 
+from decoy_engine.fileaccess._component import LOCK_PREFIX, LOCK_SUFFIX
 from decoy_engine.fileaccess._output import (
     _DIR_FLAGS,
     _call,
@@ -124,7 +125,7 @@ def _held_lock(open_parent: Callable[[], int], leaf: str, timeout_s: float) -> I
 def _open_lock_at(parent_fd: int, leaf: str) -> int:
     # O_RDWR because NFS emulates flock with byte-range locks, which need write access.
     flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
-    lock_fd = _call(os.open, f".{leaf}.decoy-lock", flags, 0o600, dir_fd=parent_fd)
+    lock_fd = _call(os.open, f"{LOCK_PREFIX}{leaf}{LOCK_SUFFIX}", flags, 0o600, dir_fd=parent_fd)
     try:
         _restore_missing_owner_bits(lock_fd)  # under umask 0477 it is born 0200
     except OSError:
