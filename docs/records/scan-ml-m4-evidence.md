@@ -287,3 +287,131 @@ changed no file they read except through main's unrelated run-result and capacit
 parent relation); no conflict. After it: `--check` exit 0; the M4 files, the M5 acceptance file,
 #537's test, the seam and module-size sentries and the compat corpus rerun in the NER venv: 1178 passed, 1
 skipped (the compat pre-GA capture skip).
+
+## Merge with main and the owner rulings (2026-11-13)
+
+### Merge
+
+`c6d49ca5` merges `origin/main` at `efedebc0` (M5 squashed as `0f505928`, #545 FK findings from
+the declared key facts, #560) into `7dc5a085`. Never rebased. Resolution per file:
+
+- M5's own files take main's side (M4 had no delta on them): `docs/records/scan-ml-m5-evidence.md`,
+  `execution/_chunked_oracle.py`, `execution/native/chunked/_core.py`,
+  `tests/sentry/test_physical_seam_disconnection.py`; `tests/unit/execution/test_subset_run_guard_entries.py`
+  is deleted as on main.
+- `tests/unit/execution/test_scanml_m5_route_guard.py`: main's side, then M4's one change on top
+  (the routing test replaces `load_detectors` in `_model_findings`).
+- `execution/_pipeline.py`: main's `resolve_subset` first, then M4's strict
+  `post_scan_detectors` load; `resolve_subset` reads no source, so the load is still before any read.
+- `verification/postmask/runner.py`: both keywords (`detectors` and main's `keys`), main's
+  `passes_through` guards and `fk_findings`, M4's model passes after the regex wrapper.
+- `__init__.py`: M4's folded `validation_result` import kept (597 lines, at its goal, no census
+  entry); the export line kept M4's side in the merge and moved to `_blocked.py` in the ruling commit.
+- `reason_adapter.py`: both rows kept in the merge (main's `_CODED` row and M4's `_FIXED` row); the
+  `_FIXED` row is dropped in the ruling commit, so the file now equals main.
+- `docs/compatibility-contract.md`: both paragraphs (main's PS-4 FK note, then M4's report keys) and
+  M4's 3.4 paragraph.
+- `tests/unit/config/test_scan_ml_reasons.py`, `tests/unit/test_public_api.py`: M4's side (the code
+  is registered as pending, the export is listed).
+- `tests/unit/test_reason_registry.py`: both sides (M4's pending test, main's blocked-error tests
+  and GEN-TYPES E3 test).
+
+### Owner rulings (message 7)
+
+Red tests `05cc4c10` on the merge, production `e70ecbb6`.
+
+- `_blocked.py`: `post_scan_verdict(report, *, ner_findings="warn")` replaces `ner_blocked: bool`.
+  A `residual_pii` row whose `source` is `ner` or `classifier` and whose severity is known skips the
+  generic rule and blocks only through `_ner_blocks` (under `fail`, an NER row at `fail` or `error`);
+  a model row with an unknown severity falls through to `check_error`; regex rows and rows without a
+  `source` keep main's rule. `_NER_BLOCKED` is now the registered ref; `_ORDER` is unchanged, so
+  `ner_blocked` ranks last. An unknown mode raises `ValueError`. `block_location` no longer names a
+  model row, since a model row never gives `finding_blocked`. `raise_if_ner_blocked(report, *,
+  ner_findings)` computes the verdict once and raises `PostScanBlockedError(report, verdict)` through
+  `raise_bare` when `ner_blocked` is among the codes.
+- How the mode reaches the verdict: as the keyword. The report does not carry the mode (adding it
+  would be a new report key), and main has no `src/` caller of the verdict. So
+  `PostScanBlockedError(report)` with no verdict computes a `warn` verdict, which never contains
+  `ner_blocked`; the run's raise always passes the verdict it computed, and `__reduce__` carries it.
+- The raise lives in `_blocked.py` because main's blocking sentry flags any construction of
+  `PostScanBlockedError` outside that module; its baseline stays empty.
+- `_model_findings.py`: M4's `PostScanBlockedError`, `blocks` and `raise_if_blocked` are deleted;
+  each model pass's `except Exception` opens with `if passes_through(exc): raise`;
+  `ner_findings_mode(config)` is the one reader of the mode (promotion, log line, the run's raise).
+- `_pipeline_finalize.compute_post_scan_integrity` calls
+  `raise_if_ner_blocked(report, ner_findings=ner_findings_mode(config))`.
+- `__init__.py` exports `PostScanBlockedError` from `_blocked.py`; `reason_adapter.py` equals main.
+- `changelog.d/scan-ml-m4.md` names `post_scan/ner_blocked`, the verdict keyword change and the
+  pass-through, and keeps the regex-only hook dismissal line.
+
+Main's replaced test: `tests/unit/test_reason_registry.py::test_a_post_scan_blocked_error_whose_only_code_is_unregistered_is_unregistered`
+becomes `tests/unit/test_reason_registry.py::test_a_post_scan_blocked_error_blocked_only_by_an_ner_row_is_ner_blocked`.
+The adapter's unregistered path is still reachable through a hand-built verdict, so it keeps a case
+with a code that is really unregistered:
+`tests/unit/test_reason_registry.py::test_a_post_scan_blocked_error_whose_only_code_is_not_in_the_registry_is_unregistered`.
+
+Other existing tests changed:
+
+- `tests/unit/detection_verification/postscan/test_blocked.py`: the three callers that passed
+  `ner_blocked=True` now add one NER `fail` row and pass `ner_findings="fail"`; every assertion is
+  unchanged.
+- `tests/unit/execution/test_scanml_m4_run.py`: the source notes carry an email in every fifth cell.
+  Without it `text_redact` left the notes byte-identical, so the policy check failed and, under
+  ruling 2, the error led with `finding_blocked`; the AT-M4g cases need NER to be the only blocker.
+  `_assert_safe` also asserts the verdict's codes are `["ner_blocked"]`.
+
+Red first (`05cc4c10` on `c6d49ca5`, dev venv): 34 failed, 74 passed, 1 skipped in the new file and
+the registry file, every failure an `AssertionError`: the verdict has no `ner_findings` keyword
+(cases A to E, the order case, the malformed rows, the regex rule, the default and unknown mode,
+the NER-only adapter case, the replacement test), a coded error was turned into an error row (the
+two pass-through cases), and the run raised M4's class, not main's (the run-level order case; the
+real-model case A in the NER venv, 1 failed). Passing by design: the two plain-exception cases
+(the AT-M4g row shape, tied to M-M4g2) and the unregistered-code case (characterization). Setup
+fix after the red commit: the run-level case A takes the same email-bearing notes as above.
+
+### Mutations on `e70ecbb6`
+
+Each applied once, run in the NER venv with `DECOY_REQUIRE_NER=1 -n 2` over the six M4 files, the
+new verdict file, `tests/unit/execution/test_scanml_m4_run.py`,
+`tests/unit/detection_verification/postscan`, `tests/sentry/post_scan` and
+`tests/unit/test_reason_registry.py` (477 tests, all pass unmutated), then edited back by hand
+(`git diff` empty after each).
+
+- m1 (model rows through the generic rule): 30 red, including C (`test_under_warn_no_ner_row_blocks[C_ner_error]`, `[C_ner_fail]`) and D (all four `test_d_a_classifier_row_never_blocks` cases).
+- m2 (no classifier exclusion in the predicate): `test_d_a_classifier_row_never_blocks[error-fail]`, `[fail-fail]`.
+- m3 (bare `except Exception` in the model pass): both `test_a_coded_engine_error_in_a_model_pass_propagates_unchanged` cases and the pass-through sentry.
+- M-M4a (classifier when `detectors` is None): 48 red, including `test_platform_call_with_no_detectors_is_byte_equal_to_the_base` and `test_the_regex_only_hook_honours_dismissals`.
+- M-M4b (`ner_findings_mode` always `warn`): 9 red (promotion, old-version dismissal, blocked canary, the run blocks, both fake-detector routing cases, both new run-level cases).
+- M-M4b2 (NER through `_classify`): 6 red (severity table, promotion, route parity, the run block, warn and fail-under-rate run cases).
+- M-M4b3 (score with `iter_ner_spans_batch` directly): 8 red (severity table spy, promotion, both raising-pass report cases, the coded and plain NER cases, two run cases).
+- M-M4c (match without the strategy): `test_a_changed_field_makes_the_finding_report_again[strategy]`, `test_a_dismissal_matches_the_current_strategy_of_the_column`.
+- M-M4d (a cell in `message`): both canary tests.
+- M-M4e (no model passes on the chunked route): both AT-M4e tests.
+- M-M4f (classifier through `_escalate`): 10 red, including both `test_classifier_findings_never_exceed_warning` cases.
+- M-M4g (NER `error` not blocking): `test_a_raising_ner_pass_blocks_and_keeps_the_regex_findings`, `[pass_error]`, `[B_ner_error]`.
+- M-M4g2 (model passes inside the regex wrapper): 7 red, including both plain-exception cases and the pass-through sentry.
+- M-M4g3 (report in the message): 20 red, including the AT-M4g run cases and the new NER-only cases.
+- M-M4sub (whole output): `test_classifier_pass_reads_a_60_row_subsample_of_each_column`.
+
+### Checks on `e70ecbb6`
+
+- `ruff check`, `ruff format --check`, `mypy` on the seven touched `src` files (the dev venv has the
+  `lint` extra): pass, no mypy issue.
+- `registry_renumber.py --check --main origin/main`, `ratchet_check.py --base origin/main`,
+  `check_fragment.py --base origin/main`: exit 0.
+- `GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps sentry,layers,licenses,tests <83 paths>`
+  (the M4 and M5 acceptance files, `tests/sentry`, the registry, release-pin, consumer-contract and
+  public-API tests, and every `tests/` file `git grep` finds for the changed names; perf excluded),
+  against main `efedebc0`, rc 0: sentry 5322 passed, 3 failed, 31 errors (main 5317, 3, 31); layers
+  15; licenses 63; tests 7336 passed, 2 failed, 31 errors, 99 skipped (main 7265, 2, 31, 85).
+  Failing ids identical, 34 each (`test_serial_resources::test_the_required_serial_registry_is_marked`
+  and the `test_outbound_clients` set, no `google`); no branch-only id; no main failure passing.
+  Collected 7468 against 7383 (+85, the M4 tests in the selection).
+- NER venv re-synced (`uv sync --frozen --extra dev --extra ner`), model wheel from
+  `NER_MODEL_WHEELS` downloaded, `sha256sum --check` OK, installed `--no-deps`; `DECOY_REQUIRE_NER=1
+  pytest -m ner -n 2`: 53 passed, 10 skipped (module import skips for google, paramiko, hvac,
+  mimesis, the wheel builder, mutmut); no NER test skipped.
+- `pytest tests/integration/compat_corpus`: 5 passed, 1 skipped (pre-GA real-artifact capture).
+
+Owner conditions unchanged: `classify_frame(..., subsample=False)` by default;
+`PipelineRunContext.post_scan_detectors` is `repr=False, compare=False`; dismissal rules unchanged.
