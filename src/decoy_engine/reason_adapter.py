@@ -21,6 +21,7 @@ itself stays a leaf (it imports none of them).
 from __future__ import annotations
 
 import errno
+import sys
 import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -133,6 +134,27 @@ def _families() -> tuple[dict[type, str], dict[type, ReasonCode]]:
     return coded, fixed
 
 
+def _loaded_families() -> tuple[dict[type, str], dict[type, ReasonCode]]:
+    """The same tables, limited to modules this process has already imported.
+
+    An exception instance's class lives in a module that is already imported, so a classifier
+    never needs to import one. Importing here ran the whole `quality.dp` stack (opendp, scikit-learn,
+    scipy's OpenBLAS) at failure time, which is when a memory-capped child has no address space left
+    to initialise it and spins instead of reporting the failure.
+    """
+    coded: dict[type, str] = {}
+    for module, name, namespace in _CODED:
+        cls = getattr(sys.modules.get(module), name, None)
+        if cls is not None:
+            coded[cls] = namespace
+    fixed: dict[type, ReasonCode] = {}
+    for module, name, reason in _FIXED:
+        cls = getattr(sys.modules.get(module), name, None)
+        if cls is not None:
+            fixed[cls] = reason
+    return coded, fixed
+
+
 def registered_families() -> frozenset[type]:
     """Every exception class the adapter trusts (coded or fixed), for completeness tests."""
     coded, fixed = _families()
@@ -195,7 +217,7 @@ def _classify(exc: BaseException, phase: Phase, context: ReasonContext | None) -
     )
     if publishing and _capacity_evidence(exc):
         return _record(reasons.decoy.STORAGE_CAPACITY_EXHAUSTED, phase, context)
-    coded, fixed = _families()
+    coded, fixed = _loaded_families()
     namespace = _first_in_mro(exc, coded)
     if namespace is not None:
         code = _read_code(exc)
