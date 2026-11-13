@@ -251,18 +251,35 @@ def self_reference_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem
     return problems
 
 
+def _via_target(columns: Sequence[Any], via_name: Any) -> tuple[str, str] | None:
+    """The parent table and key column that the lookup column `via_name` of `columns` leads to.
+
+    None when no column has that name, and two empty names when it is not a `reference` to a
+    named table. The one place a lookup column is followed: the resolver puts the answer on the
+    edge for the run, and the lookup check judges it.
+    """
+    for sibling in columns:
+        if isinstance(sibling, Mapping) and sibling.get("name") == via_name:
+            parent, key = sibling.get("reference_table"), sibling.get("reference_column")
+            if sibling.get("type") != "reference" or not isinstance(parent, str):
+                return "", ""
+            return parent, key if isinstance(key, str) else ""
+    return None
+
+
 def _lookup_problem(
-    via: Mapping[str, Any], table_name: Any, by_name: Mapping[Any, Mapping[str, Any]]
+    target: tuple[str, str], table_name: Any, by_name: Mapping[Any, Mapping[str, Any]]
 ) -> str | None:
-    """The reason code a lookup through the column `via` of table `table_name` is refused with.
+    """The reason code a lookup that leads to `target` from table `table_name` is refused with.
 
     A column that is not a `reference` names no parent table, so it has no parent key either.
     """
-    if is_self_reference(table_name, via):
+    parent, key = target
+    if isinstance(table_name, str) and table_name and parent == table_name:
         return _LOOKUP_SELF
-    parent = by_name.get(via.get("reference_table")) if via.get("type") == "reference" else None
-    columns = generate_columns_of(parent) if parent is not None else []
-    return parent_key_problem(columns, via.get("reference_column"), _LOOKUP_KEY)
+    found = by_name.get(parent) if parent else None
+    columns = generate_columns_of(found) if found is not None else []
+    return parent_key_problem(columns, key, _LOOKUP_KEY)
 
 
 def parent_lookup_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
@@ -276,12 +293,12 @@ def parent_lookup_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]
     problems: list[Problem] = []
     for t_idx, table in enumerate(tables):
         columns = [c for c in generate_columns_of(table) if isinstance(c, Mapping)]
-        named = {c.get("name"): c for c in columns}
         for c_idx, col in enumerate(columns):
             via_name = col.get("anchor_via")
-            if not isinstance(via_name, str) or via_name not in named:
+            target = _via_target(columns, via_name) if isinstance(via_name, str) else None
+            if target is None:
                 continue
-            code = _lookup_problem(named[via_name], table.get("name"), by_name)
+            code = _lookup_problem(target, table.get("name"), by_name)
             if code is not None:
                 problems.append((("tables", t_idx, "generate_columns", c_idx, "anchor_via"), code))
     return problems
@@ -292,7 +309,10 @@ class GenerateInputRef:
     """One resolved input: `option` of the consumer column reads the source column.
 
     Resolved from the registry's ``ref_kind`` descriptors. An empty ``source_table`` means the
-    companion column leads to no table.
+    companion column leads to no table. ``source_key`` is set for an input read through a
+    foreign key: the parent key column whose row holds the source value, so a consumer finds
+    the parent row from the edge alone. It is empty for any other input, or when the companion
+    column names no key.
     """
 
     consumer_table: str
@@ -300,6 +320,7 @@ class GenerateInputRef:
     option: str
     source_table: str
     source_column: str
+    source_key: str
     must_be_earlier: bool
     phase: str
 
@@ -320,15 +341,16 @@ def _named_columns(kind: str, value: Any) -> list[str]:
     return sorted(column_refs(compiled))
 
 
-def _source_table(table: Mapping[str, Any], option: OptionSpec, context: Any) -> str | None:
-    """The table an option's columns live in: "" when `context` leads to none, None to skip."""
+def _source_table(
+    table: Mapping[str, Any], option: OptionSpec, context: Any
+) -> tuple[str, str] | None:
+    """The table an option's columns live in and the parent key that finds the row.
+
+    "" when `context` leads to no table or names no key, None to skip the option.
+    """
     if option.ref_kind == "column_in_named_table":
-        return context if isinstance(context, str) else None
-    for sibling in generate_columns_of(table):
-        if isinstance(sibling, Mapping) and sibling.get("name") == context:
-            parent = sibling.get("reference_table")
-            return parent if sibling.get("type") == "reference" and isinstance(parent, str) else ""
-    return None
+        return (context, "") if isinstance(context, str) else None
+    return _via_target(generate_columns_of(table), context)
 
 
 def iter_generate_input_refs(
@@ -347,16 +369,25 @@ def iter_generate_input_refs(
         if option.ref_kind is None:
             continue
         context = column.get(option.ref_context_key) if option.ref_context_key else None
-        source, phase = here, option.ref_phase
+        (source, source_key), phase = (here, ""), option.ref_phase
         if option.ref_context_key and context is None:
             phase = "inline"
         elif option.ref_context_key:
             found = _source_table(table, option, context)
             if found is None:
                 continue
-            source = found
+            source, source_key = found
         earlier = phase == "inline" and source == here
         for name in _named_columns(option.ref_kind, column.get(key)):
-            ref = GenerateInputRef(here, str(column.get("name")), key, source, name, earlier, phase)
+            ref = GenerateInputRef(
+                consumer_table=here,
+                consumer_column=str(column.get("name")),
+                option=key,
+                source_table=source,
+                source_column=name,
+                source_key=source_key,
+                must_be_earlier=earlier,
+                phase=phase,
+            )
             refs[ref] = None
     return tuple(refs)
