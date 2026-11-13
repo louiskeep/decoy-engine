@@ -321,35 +321,26 @@ def _masked_driver_columns(node: WorkNode) -> frozenset[str]:
     """The same-table sibling columns `node` reads for their MASKED value, so it
     must be ordered AFTER them (the cross-column V1 ordering edge).
 
-    `derived` (any expression, including the `case_when` construct): the
-    expression's column refs, the same set `check_derived_column_refs` extracts.
-    `group_key`: its `group_by` sibling (its docstring pins a post-mask read).
-    Every other node (including `joint_mask`, whose `key_by` is a SOURCE read via
-    snapshot, so it imposes no ordering edge) reads no masked driver here.
+    Only a scalar node whose strategy creates its own target from other columns has
+    such drivers. Their names come from `scalar_creating_reads`, the same declaration
+    `created_columns` admits a created column by, so a column accepted as created is
+    ordered after every column it reads, for every creating strategy. Every other node
+    (including `joint_mask`, whose `key_by` is a SOURCE read via snapshot) imposes no
+    ordering edge.
     """
     plan_slice = node.plan_slice
-    if not isinstance(plan_slice, ColumnSeed):
+    if node.kind != "scalar" or not isinstance(plan_slice, ColumnSeed):
         return frozenset()
     from decoy_engine.execution._adapter import provider_config_to_dict
+    from decoy_engine.execution._column_access import scalar_creating_reads
 
-    if node.strategy == "derived":
-        from decoy_engine.expressions import compile_expr
-        from decoy_engine.transforms.derived import _get_column_refs
-
-        expr = provider_config_to_dict(plan_slice.provider_config).get("expression")
-        if not expr:
-            return frozenset()
-        try:
-            return _get_column_refs(compile_expr(str(expr)))
-        except Exception:
-            # Invalid syntax surfaces as a ValidationError at execution time
-            # (DerivedConfig.from_dict); no edge, no double-report.
-            return frozenset()
-    if node.strategy == "group_key":
-        group_by = provider_config_to_dict(plan_slice.provider_config).get("group_by")
-        if isinstance(group_by, str) and group_by:
-            return frozenset({group_by})
-    return frozenset()
+    entry = {
+        "name": node.columns[0] if node.columns else None,
+        "strategy": plan_slice.strategy,
+        "provider_config": provider_config_to_dict(plan_slice.provider_config),
+        "coherent_with": list(plan_slice.coherent_with),
+    }
+    return scalar_creating_reads(entry)
 
 
 def column_dependency_edges(work: list[WorkNode]) -> dict[_NodeKey, set[_NodeKey]]:
@@ -393,7 +384,7 @@ def order_work(
 
     `column_deps` is the cross-column V1 channel: dependent-node key -> the keys
     of the nodes writing its MASKED driver columns (`derived` expression refs,
-    `group_key` `group_by`), so a dependent reads its drivers' masked values
+    `group_key` `group_by`, and the reads of every other creating strategy), so a dependent reads its drivers' masked values
     under an explicit edge instead of by lexicographic-sort accident. None means
     derive them from `work` via `column_dependency_edges` (so every route gets
     the fix); a caller/test may pass an explicit map. These edges only ADD

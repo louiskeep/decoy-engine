@@ -288,10 +288,11 @@ def test_cycle_is_rejected() -> None:
 
 
 def test_a_nested_child_and_the_config_only_entry_point_run_the_same_checks() -> None:
-    names = run_config_only_checks(_cfg([_col()]))
+    names = run_config_only_checks(_cfg([{**_col(), "namespace": "ns"}]))
     assert "date_shift_group_by_refs" in names
-    with pytest.raises(PlanCompileError):
-        run_config_only_checks(_cfg([_col(preserve_values=["nope"])]))
+    with pytest.raises(PlanCompileError) as exc:
+        run_config_only_checks(_cfg([{**_col(preserve_values=["nope"]), "namespace": "ns"}]))
+    assert exc.value.code != "date_shift_requires_namespace"
 
 
 # ---- native admission -----------------------------------------------------------------------

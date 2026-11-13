@@ -262,34 +262,8 @@ def build_namespace_registry(
     # columns are tracked so step 3 does not demand a per-column namespace for
     # them (their namespace is the group binding).
     tables_block = config.get("tables", []) if isinstance(config.get("tables"), list) else []
-    composite_columns: set[tuple[str, str]] = set()
-    composite_group_ns: dict[tuple[str, tuple[str, ...]], str | None] = {}
-    for table_entry in tables_block:
-        if not isinstance(table_entry, dict):
-            continue
-        table_name = table_entry.get("name", "?")
-        for col_entry in table_entry.get("columns", []) or []:
-            if not isinstance(col_entry, dict):
-                continue
-            coherent = [c for c in (col_entry.get("coherent_with") or []) if isinstance(c, str)]
-            if not coherent:
-                continue
-            col_name = col_entry.get("name", "?")
-            group = tuple(sorted({col_name, *coherent}))
-            group_key = (table_name, group)
-            composite_columns.add((table_name, col_name))
-            for ref in coherent:
-                composite_columns.add((table_name, ref))
-            explicit_ns = col_entry.get("namespace")
-            if explicit_ns:
-                prev = composite_group_ns.get(group_key)
-                if prev is not None and prev != explicit_ns:
-                    _raise_ambiguity(table_name, group, sorted({prev, explicit_ns}))
-                composite_group_ns[group_key] = explicit_ns
-            elif group_key not in composite_group_ns:
-                composite_group_ns[group_key] = None
-    for (tbl, grp), explicit in composite_group_ns.items():
-        ns = explicit if explicit is not None else f"composite/{tbl}/{'__'.join(grp)}"
+    composite_group_ns, composite_columns = composite_bindings(config)
+    for (tbl, grp), ns in composite_group_ns.items():
         existing = column_owner.get((tbl, grp))
         if existing is not None and existing != ns:
             _raise_ambiguity(tbl, grp, sorted({existing, ns}))
@@ -348,6 +322,50 @@ def build_namespace_registry(
         for ns in sorted(namespace_to_columns.keys())
     )
     return NamespaceRegistry(bindings=bindings)
+
+
+def composite_bindings(
+    config: dict[str, Any],
+) -> tuple[dict[tuple[str, tuple[str, ...]], str], set[tuple[str, str]]]:
+    """The namespace of each ``coherent_with`` group, and the columns that belong to one.
+
+    A group takes the explicit ``namespace`` of any member, else the derived
+    ``composite/<table>/<members>``; two different explicit names raise ``namespace_ambiguity``.
+    This is the one owner of that rule: the registry binds from it and the required-setting check
+    asks it whether a column's namespace is derived.
+    """
+    tables_block = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    composite_columns: set[tuple[str, str]] = set()
+    composite_group_ns: dict[tuple[str, tuple[str, ...]], str | None] = {}
+    for table_entry in tables_block:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            coherent = [c for c in (col_entry.get("coherent_with") or []) if isinstance(c, str)]
+            if not coherent:
+                continue
+            col_name = col_entry.get("name", "?")
+            group = tuple(sorted({col_name, *coherent}))
+            group_key = (table_name, group)
+            composite_columns.add((table_name, col_name))
+            for ref in coherent:
+                composite_columns.add((table_name, ref))
+            explicit_ns = col_entry.get("namespace")
+            if explicit_ns:
+                prev = composite_group_ns.get(group_key)
+                if prev is not None and prev != explicit_ns:
+                    _raise_ambiguity(table_name, group, sorted({prev, explicit_ns}))
+                composite_group_ns[group_key] = explicit_ns
+            elif group_key not in composite_group_ns:
+                composite_group_ns[group_key] = None
+    bound = {
+        key: explicit if explicit is not None else f"composite/{key[0]}/{'__'.join(key[1])}"
+        for key, explicit in composite_group_ns.items()
+    }
+    return bound, composite_columns
 
 
 def _raise_ambiguity(table: str, columns: tuple[str, ...], conflicting: list[str]) -> None:

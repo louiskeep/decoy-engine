@@ -1,0 +1,9 @@
+Breaking: a column that leaves out a setting its strategy needs (a namespace for `hash`, `fpe`, `date_shift`, `bucket_perturb`, `categorical`, `tokenize` and `shuffle` with `deterministic: true`, or `provider_config.strategy` and `target` for `nested`) is now refused at validation and compile; add the setting.
+
+### Changed (required strategy settings, CONFIG-EXPLICIT E2b-s, 2026-11-13)
+
+`compile_plan` and `run_config_only_checks` refuse a column with a missing required strategy setting before any executor runs, with the code the executor's own guard already raised: `fpe` with no namespace now fails `decoy validate` instead of failing at run. Nine plan-namespace reasons, all pending release, carry the same code text as their runtime counterparts: `plan/hash_requires_namespace`, `plan/fpe_requires_namespace`, `plan/date_shift_requires_namespace`, `plan/bucket_perturb_requires_namespace`, `plan/categorical_requires_namespace`, `plan/tokenize_requires_namespace`, `plan/shuffle_requires_namespace`, `plan/nested_strategy_unset` and `plan/nested_target_unset`. `code_set` in `gen` mode keeps its existing plan code. Existing specific checks keep precedence and the executor guards stay.
+
+The requirements live in `decoy_engine.plan.checks` (`StrategyRequirement`, `REQUIREMENTS_BY_STRATEGY`, `requirements_for`) and each `StrategyInfo` from `strategy_catalog()` gains a `requirements` tuple that projects the same descriptors.
+
+`run_config_only_checks` (and so `decoy validate`) now also raises `namespace_ambiguity` for a `coherent_with` group whose members declare different explicit namespaces, the same code and path `compile_plan` already raised. A blank or non-string setting counts as missing.

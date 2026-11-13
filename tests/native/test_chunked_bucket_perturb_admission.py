@@ -268,7 +268,7 @@ def test_missing_namespace_fails_eagerly_before_any_chunk_is_masked() -> None:
             consumed.append(1)
             yield chunk
 
-    with pytest.raises(StrategyError) as info:
+    with pytest.raises(PlanCompileError) as info:
         _manual(make_config([bp_col(namespace=None), passthrough("p")]), stream())  # type: ignore[arg-type]
     assert info.value.code == "bucket_perturb_requires_namespace"
     assert len(consumed) <= 1, "fails before any chunk is masked; only the profile peek reads one"

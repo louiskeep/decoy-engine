@@ -15,6 +15,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import _unified_slice_admission
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.physical._activation import build_unified_slice_activation
 from decoy_engine.execution.physical._compiler import compile_physical_plan
@@ -501,13 +502,16 @@ def test_resident_contract_admission_admits_the_golden_shape(tmp_path: Path) -> 
 
 
 def test_resident_contract_admission_declines_an_unsupported_strategy(tmp_path: Path) -> None:
-    """`fpe` has no entry in the four-operator allowlist, so its node
+    """`shuffle` has no operator in the unified-slice registry, so its node
     compiles with `execution is None` -- the resident-contract check must
-    decline, not admit a partial slice."""
+    decline, not admit a partial slice. (`fpe` is no longer the example: with a
+    namespace and the companion it is a bound operator.)"""
     source = pa.table({"c": pa.array(["12345", "23456", "34567"], type=pa.string())})
-    config, source = _build(tmp_path, [{"name": "c", "strategy": "fpe"}], source)
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "shuffle"}], source)
     profile, plan = _profile_and_plan(config, source)
     physical_plan, registry = _compile(config, profile, plan, source)
+    assert "shuffle" not in OPERATORS
+    assert all(n.execution is None for t in physical_plan.tables for n in t.nodes)
     assert _resident_contract(physical_plan, plan, source, registry=registry) is None
 
 

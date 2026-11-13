@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from decoy_engine.generation.pool._cache import PoolCache
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import ColumnSeed, Plan
+    from decoy_engine.plan.checks import StrategyRequirement
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
@@ -369,6 +370,8 @@ class StrategyInfo:
     join_safe: bool
     options: tuple[StrategyOption, ...]  # allowed V1 wizard options; empty is valid
     offer_in_wizard: bool  # listed at the wizard's `edit` prompt
+    # Settings the plan check refuses a column for omitting; the one mapping lives in plan/checks.
+    requirements: tuple[StrategyRequirement, ...]
 
     @property
     def required_options(self) -> tuple[str, ...]:

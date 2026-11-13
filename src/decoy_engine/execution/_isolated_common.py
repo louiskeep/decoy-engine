@@ -175,17 +175,45 @@ def apply_mem_cap(cap_bytes: int, rlimit_kind: str) -> None:
     resource.setrlimit(RLIMIT_KINDS[rlimit_kind], (cap_bytes, cap_bytes))
 
 
+_CHAIN_DEPTH = 16
+
+
+def _is_typed_memory_error(exc: BaseException) -> bool:
+    if isinstance(exc, _MEMORY_ERRORS):
+        return True
+    return isinstance(exc, OSError) and exc.errno == errno.ENOMEM
+
+
+def _chain_has_memory_error(exc: BaseException) -> bool:
+    """True iff `exc` or a linked `__cause__`/`__context__` is a typed memory error.
+
+    Native code at the cap can surface exhaustion wrapped: an Arrow cancellation reaches
+    Python as `KeyboardInterrupt` raised while a `MemoryError` was being handled. Only the
+    exception TYPE of each link is read, never its message. Bounded and cycle-safe.
+    """
+    seen: set[int] = set()
+    pending: list[BaseException] = [exc]
+    while pending and len(seen) < _CHAIN_DEPTH:
+        link = pending.pop()
+        if id(link) in seen:
+            continue
+        seen.add(id(link))
+        if _is_typed_memory_error(link):
+            return True
+        pending.extend(x for x in (link.__cause__, link.__context__) if x is not None)
+    return False
+
+
 def is_memory_failure(exc: BaseException) -> bool:
     """True iff `exc` is one of the documented under-cap failure shapes.
 
-    Ported from `fk_memory_probe._is_memory_failure` unchanged: the worker
-    calls this to self-classify a caught exception as `oom_killed` (exits 0
-    with a clean diagnostic) versus `crashed` (a genuine bug, re-raised as
-    data in the result envelope but NOT hidden behind an OOM label).
+    Ported from `fk_memory_probe._is_memory_failure`: the worker calls this to self-classify
+    a caught exception as `oom_killed` (exits 0 with a clean diagnostic) versus `crashed`
+    (a genuine bug, reported as data in the result envelope but NOT hidden behind an OOM
+    label). A typed memory error anywhere in the `__cause__`/`__context__` chain counts; a
+    bare `KeyboardInterrupt` with no memory-typed link stays `crashed`.
     """
-    if isinstance(exc, _MEMORY_ERRORS):
-        return True
-    if isinstance(exc, OSError) and exc.errno == errno.ENOMEM:
+    if _chain_has_memory_error(exc):
         return True
     message = str(exc)
     if any(marker in message for marker in _MEMORY_ERROR_MARKERS):
