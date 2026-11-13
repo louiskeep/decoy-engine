@@ -342,11 +342,13 @@ def _pinned_snapshot_from_dict(
     )
     # A digest match proves the bytes are what the manifest claims, not that they are JSON: a
     # non-JSON payload is a typed refusal, raised outside the handler so no decoder error rides.
+    from decoy_engine.generation.statistical import StatisticalSpecError, parse_snapshot_json
+
     parsed: Any = None
     not_json = False
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
+        parsed = parse_snapshot_json(raw, shown=position)
+    except StatisticalSpecError:
         not_json = True
     if not_json:
         raise PlanCompileError(
