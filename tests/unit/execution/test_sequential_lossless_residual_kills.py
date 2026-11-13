@@ -103,6 +103,7 @@ def _run_sequential(config: dict[str, Any]):
     return PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,

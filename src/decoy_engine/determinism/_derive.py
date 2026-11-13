@@ -34,9 +34,8 @@ References:
 
 Source pattern: HKDF binds the per-context key; HMAC binds the per-source
 value. The split is the standard pattern for "derive a stable per-context
-key from a master, then mix per-input data." Both primitives are implemented
-on stdlib `hmac` + `hashlib` only (see `_hkdf.py` for the rationale; the
-engine has an explicit anti-PyCA design choice in `transforms/fpe.py`).
+key from a master, then mix per-input data." HKDF is PyCA `cryptography`'s
+(`_hkdf.py`); the per-source HMAC is stdlib `hmac` + `hashlib`.
 """
 
 from __future__ import annotations

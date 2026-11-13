@@ -43,8 +43,14 @@ modules:
   - path: src/decoy_engine/profiling/model_pack/provenance.py
     pattern: HMAC-SHA256
     source: RFC 2104
-    note: Manifest integrity signing for ML model packs (ML3.2). Same stdlib
-      keyed-hash primitive as transforms/fpe.py and determinism/_hkdf.py.
+    note: Manifest integrity signing for ML model packs (ML3.2). Stdlib HMAC;
+      the signing key is derived through determinism/_hkdf.py.
+
+  # B-6 S1 (D7): the engine's HKDF delegates to PyCA; the module keeps the
+  # empty-salt refusal (QA-10 F12) on both entry points.
+  - path: src/decoy_engine/determinism/_hkdf.py
+    pattern: RFC 5869 HKDF-SHA256
+    source: RFC 5869; cryptography (PyCA, Apache-2.0/BSD) HKDF, HKDFExpand, HKDF.extract
 
   # SP-05 (2026-06-27): FK-integrity validators use the SDV HMA1 parent-first
   # DAG pattern: materialise parent PK set, resolve child FK values against it.

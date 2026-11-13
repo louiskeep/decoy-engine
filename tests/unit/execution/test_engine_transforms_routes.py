@@ -22,7 +22,7 @@ from decoy_engine.execution._sequential import run_sequential
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
 from tests._declared_schema import declared_schema
-from tests._keyed_secret import THROWAWAY_SECRET
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER, THROWAWAY_SECRET
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
     base_table,
@@ -628,10 +628,10 @@ class TestInvalidTransforms:
             "triggers": ["validation_fail"],
         }
         cfg["validators"] = [{"name": "regex_match", "columns": {"t": ["s"]}, "params": {}}]
-        vault = VaultWriter((11).to_bytes(8, "big"))
+        vault = VaultWriter(THROWAWAY_KEY_PROVIDER.mask_key())
         before = sorted(p.name for p in tmp_path.iterdir())
         with pytest.raises(PipelineValidationError if code == MISSING else TransformError) as exc:
-            _run(cfg, {"t": tbl}, vault_writer=vault)
+            _run(cfg, {"t": tbl}, vault_writer=vault, key_provider=THROWAWAY_KEY_PROVIDER)
         assert exc.value.code == code
         assert sorted(p.name for p in tmp_path.iterdir()) == before
         assert not vault._entries

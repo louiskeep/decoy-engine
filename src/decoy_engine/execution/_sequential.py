@@ -178,9 +178,10 @@ from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.progress import get_active_channel
 from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     import pandas as pd
 
@@ -221,6 +222,7 @@ def run_sequential(
     plan: Plan,
     source_loader: Callable[[str], pa.Table],
     *,
+    config: Mapping[str, Any],
     registry: ProviderRegistry,
     pool_cache: PoolCache | None = None,
     relationship_graph: RelationshipGraph,
@@ -275,7 +277,11 @@ def run_sequential(
 
     `cast_run` (F06): each table is cast as it is loaded and rendered before projection and write;
     the quarantine is sealed last. The caller owns `cast_run.abort()`.
+
+    `config` is the raw pipeline config; this route runs no post-scan, so a model post-scan
+    config is refused before any table is loaded (`PostScanRouteError`).
     """
+    refuse_unchecked_route(config, "sequential")
     declared_route_guard("sequential", plan=plan, raise_on_decline=True)
     q_cfg: dict[str, Any] = quarantine_config or {}
     q_enabled = bool(q_cfg.get("enabled", False))
@@ -391,12 +397,14 @@ def run_sequential(
     try:
         with use_collector(collector):
             for table in table_order:
+                # Started before the load so a table that fails loading reads failed, not not_run;
+                # its row count rides on the finish event.
+                _pg = get_active_channel()
+                _pg_started = _pg.phase_start("mask", table=table)
                 src = source_loader(table)
                 if cast_run is not None:
                     src = cast_run.load_table(table, src)
-                _pg = get_active_channel()
                 _pg_rows_in = src.num_rows
-                _pg_started = _pg.phase_start("mask", table=table, rows_in=_pg_rows_in)
                 # The same guard list as run(), table-local (FK children exempt via graph).
                 run_chunk_ingest_guards(plan, {table: src}, registry, graph)
                 t0 = time.perf_counter()

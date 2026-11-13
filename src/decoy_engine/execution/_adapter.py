@@ -73,6 +73,7 @@ class ExecutionResult:
     # artifact. None when no row was quarantined. Hidden from repr and never serialized into
     # evidence, because possessing it is the read right.
     quarantine_access: Any = field(default=None, repr=False)
+    sample_source_rows: dict[str, pa.Table] | None = field(default=None, repr=False, compare=False)
 
     @property
     def output(self) -> pa.Table:
@@ -97,7 +98,17 @@ class TokenVaultWriter(Protocol):
     vault itself (library code does not know its callers). Distinct from
     ``decoy_engine.vault.VaultWriter``, which is the file-based one-way
     re-identification map for ``vault: true`` columns.
+
+    ``derivation_scope`` (B-6 D2) is an opaque, non-secret, vault-unique byte
+    string of 16 to 64 bytes that the vault's owner mints once at vault creation
+    and stores with the vault. The token key is derived under it, so two vaults
+    never mint the same token for one plaintext. A writer without one (a vault
+    from before vault-scoped derivation) is refused with
+    ``token_vault_derivation_unsupported``; a malformed one with
+    ``tokenize_vault_scope_required``. Required pre-GA, with no fallback.
     """
+
+    derivation_scope: bytes
 
     def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
         """The token already stored for ``(namespace, plaintext)``, or None.

@@ -66,6 +66,7 @@ from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._post_scan import (
     Dismissal,
     PostScanConfig,
+    post_scan_gate_applies,
     post_scan_integrity_requested,
 )
 from decoy_engine.config._pre_scan import PreScanConfig
@@ -164,6 +165,7 @@ __all__ = [
     "parse_relationship_config",
     "per_parent_bounds",
     "per_parent_problems",
+    "post_scan_gate_applies",
     "post_scan_integrity_requested",
     "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",

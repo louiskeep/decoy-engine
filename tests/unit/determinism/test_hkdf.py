@@ -1,13 +1,18 @@
 """RFC 5869 HKDF-SHA256 reference vector tests.
 
 The RFC 5869 §A.1, §A.2, §A.3 vectors are the published cross-
-implementation reference. If our 30-line stdlib implementation passes
-all three, the implementation is correct against the specification.
+implementation reference; the engine's HKDF (PyCA `cryptography` behind the
+engine's empty-salt rule) must reproduce all three.
 
 Source: https://datatracker.ietf.org/doc/html/rfc5869#appendix-A
 """
 
 from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -127,7 +132,67 @@ class TestHkdfBounds:
         with pytest.raises(ValueError, match="exceeds RFC 5869 maximum"):
             hkdf_expand(prk, b"info", 255 * 32 + 1)
 
+    @pytest.mark.parametrize("length", [-1, -32])
+    def test_a_negative_length_is_rejected_by_expand_and_the_one_shot(self, length: int) -> None:
+        with pytest.raises(ValueError, match="negative"):
+            hkdf_expand(b"\x00" * 32, b"info", length)
+        with pytest.raises(ValueError, match="negative"):
+            hkdf_sha256(b"ikm", b"salt", b"info", length)
+
     def test_expand_accepts_max_length(self) -> None:
         prk = b"\x00" * 32
         out = hkdf_expand(prk, b"info", 255 * 32)
         assert len(out) == 255 * 32
+
+
+_ENGINE_VECTORS = Path(__file__).resolve().parents[2] / "fixtures" / "hkdf" / "engine-vectors.json"
+
+
+def _engine_vectors() -> dict[str, Any]:
+    data: dict[str, Any] = json.loads(_ENGINE_VECTORS.read_text(encoding="utf-8"))
+    return data
+
+
+class TestEngineVectorCorpus:
+    """Byte identity with the stdlib implementation the PyCA swap replaced.
+
+    The corpus was captured from the pre-swap function: the engine salts (determinism,
+    keyprovider, the 32-zero-byte salt of `context._hkdf_sha256` and `provenance.py`), short,
+    32-byte and empty IKMs, empty and long info, and lengths across one, two and many blocks up
+    to the RFC 5869 maximum, and the zero length (expand and one-shot).
+    """
+
+    def test_engine_vectors_are_unchanged_by_the_pyca_swap(self) -> None:
+        cases = _engine_vectors()["cases"]
+        assert len(cases) > 100
+        for case in cases:
+            salt, ikm, info = (bytes.fromhex(case[k]) for k in ("salt", "ikm", "info"))
+            okm = hkdf_sha256(ikm, salt, info, case["length"])
+            prk = hkdf_extract(salt, ikm)
+            expanded = hkdf_expand(prk, info, case["length"])
+            got = hashlib.sha256(okm).hexdigest() if case["okm_is_sha256"] else okm.hex()
+            assert prk.hex() == case["prk"], case["id"]
+            assert got == case["okm"], case["id"]
+            assert expanded == okm, case["id"]
+
+    @pytest.mark.parametrize("entry", ["hkdf_extract", "hkdf_sha256"])
+    def test_captured_empty_salt_refusals_still_raise(self, entry: str) -> None:
+        (refusal,) = [r for r in _engine_vectors()["refusals"] if r["entry"] == entry]
+        assert refusal["raises"] == "ValueError"
+        with pytest.raises(ValueError, match=refusal["prefix"]):
+            if entry == "hkdf_extract":
+                hkdf_extract(b"", b"k" * 32)
+            else:
+                hkdf_sha256(b"k" * 32, b"", b"info", 32)
+
+    def test_oneshot_rejects_empty_salt(self) -> None:
+        """PyCA derives under the all-zero salt for `salt=b""`; the engine refuses it instead."""
+        with pytest.raises(ValueError, match="salt must be non-empty"):
+            hkdf_sha256(b"k" * 32, b"", b"info", 32)
+
+    def test_bytes_like_salt_and_info_derive_as_bytes(self) -> None:
+        case = _engine_vectors()["cases"][1]
+        salt, ikm, info = (bytes.fromhex(case[k]) for k in ("salt", "ikm", "info"))
+        want = hkdf_sha256(ikm, salt, info, 32)
+        assert hkdf_sha256(bytearray(ikm), bytearray(salt), bytearray(info), 32) == want
+        assert hkdf_expand(bytearray(hkdf_extract(salt, ikm)), bytearray(info), 32) == want

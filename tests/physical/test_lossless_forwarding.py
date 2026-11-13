@@ -93,6 +93,7 @@ def test_sequential_adapter_forwards_result_unchanged(monkeypatch: pytest.Monkey
         object(),  # type: ignore[arg-type]
         plan_marker,  # type: ignore[arg-type]
         loader_marker,  # type: ignore[arg-type]
+        config={},
         registry=object(),  # type: ignore[arg-type]
         relationship_graph=object(),  # type: ignore[arg-type]
         namespace_registry=object(),  # type: ignore[arg-type]
@@ -226,6 +227,7 @@ def test_out_of_core_adapter_forwards_result_unchanged(monkeypatch: pytest.Monke
     result = adapter.run(
         object(),  # type: ignore[arg-type]
         sources_marker,
+        config={},
         registry=object(),  # type: ignore[arg-type]
         relationship_graph=object(),  # type: ignore[arg-type]
     )

@@ -499,7 +499,7 @@ def _run_route(route: str, table: pa.Table, per_column: list[tuple[str, ColumnSe
     if route == "full":
         adapter.run(plan, {"t": table}, **kwargs)
     else:
-        adapter.run_sequential(plan, lambda _name: table, **kwargs)
+        adapter.run_sequential(plan, lambda _name: table, config={}, **kwargs)
 
 
 @pytest.mark.parametrize("route", ["full", "seq"])

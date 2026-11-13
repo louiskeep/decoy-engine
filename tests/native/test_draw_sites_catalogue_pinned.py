@@ -54,8 +54,9 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
 # Re-pinned for GEN-TYPES E1: gen.distribution appended at the end of the catalogue.
 # Re-pinned for GEN-TYPES E3: gen.lookup appended after gen.distribution.
+# Re-pinned for B-6: mask.tokenize derives under the vault-scoped subkey (call site moved).
 # Re-pinned for GEN-REL E1: gen.reference names the relational repair and its randrange fill.
-_CATALOGUE_DIGEST = "3e12aa89395118cf055899a310423f5d45a66f34eb0b8d552e4be38f42b7c71f"
+_CATALOGUE_DIGEST = "49e1c1382250722f23267d28c7bcbc3c0553c01f0e79e8b6da5cb6fb27204ed4"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -145,7 +146,7 @@ _ENTRY_DIGESTS = [
     "d4a795b3273175d0c76a88f69cd8e3d97326497538694faa60b0886b0868bb02",
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
-    "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
+    "a3a39749058c9e86e9ff2b063fb57c1e4ab4c41bc2d8cb74ce0aedf6c87e696d",
     "abcb0cebb1fd2d748a5eb67d3ee5e473fbe222e0cda0e6bd177a343f3a3f8a70",
     "59cfabe8b717938031643576d025e71097d0e7ad1e82d53657c30105c323f5bc",
 ]

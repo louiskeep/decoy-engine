@@ -25,6 +25,8 @@ capability_modules = [
 capability_creators = [
   "decoy_engine/fileaccess/_output.py::make_stage_dir_at",
   "decoy_engine/fileaccess/_output.py::create_output_file_at",
+  "decoy_engine/fileaccess/_output.py::discard_stage_at",
+  "decoy_engine/fileaccess/_output.py::publish_exclusive_durable",
 ]
 
 # The only module that may construct `LocalFileAccess`.

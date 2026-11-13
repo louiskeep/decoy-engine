@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, RetryClass, Severity
+from decoy_engine.reasons._types import Kind, Outcome, RetryClass, Severity
 
 __all__ = [
     "DELIVERY_DEPENDENT_DROPPED",
@@ -22,7 +22,7 @@ DELIVERY_WITHHELD = _d(
     severity=Severity.INFO,
     outcome=Outcome.PUBLICATION,
     retry=RetryClass.NEVER,
-    since=UNRELEASED,
+    since="1.25.0",
 )
 DELIVERY_DEPENDENT_DROPPED = _d(
     "delivery_dependent_dropped",
@@ -31,7 +31,7 @@ DELIVERY_DEPENDENT_DROPPED = _d(
     severity=Severity.INFO,
     outcome=Outcome.PUBLICATION,
     retry=RetryClass.NEVER,
-    since=UNRELEASED,
+    since="1.25.0",
 )
 # Only a lost compare-and-swap: a failed fsync after the swap is uncertain, not this.
 DELIVERY_POINTER_MOVED = _d(
@@ -39,7 +39,7 @@ DELIVERY_POINTER_MOVED = _d(
     "Another run moved the current pointer before this run could.",
     outcome=Outcome.PUBLICATION,
     retry=RetryClass.RETRY_OPERATION,
-    since=UNRELEASED,
+    since="1.25.0",
 )
 DELIVERY_ROLLED_BACK = _d(
     "delivery_rolled_back",
@@ -48,5 +48,5 @@ DELIVERY_ROLLED_BACK = _d(
     severity=Severity.WARNING,
     outcome=Outcome.PUBLICATION,
     retry=RetryClass.NEVER,
-    since=UNRELEASED,
+    since="1.25.0",
 )

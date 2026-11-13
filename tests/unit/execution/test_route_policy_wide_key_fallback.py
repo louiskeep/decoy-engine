@@ -294,6 +294,7 @@ def test_wide_fk_key_falls_back_to_batch_join_and_completes(
     result = run_fk_out_of_core(
         _plan(),
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -345,6 +346,7 @@ def test_matched_6mib_key_under_hash_selects_reorder_and_completes(
     run_fk_out_of_core(
         _plan(_hash_seed()),
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -393,6 +395,7 @@ def test_narrow_fk_key_still_routes_through_reorder(
     run_fk_out_of_core(
         _plan(),
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
