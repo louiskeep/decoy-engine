@@ -57,6 +57,7 @@ from decoy_engine.config._generate_relational import (
 )
 from decoy_engine.config._generate_type_checks import (
     categorical_arrow_type,
+    categorical_categories,
     constant_arrow_type,
     generated_arrow_type,
     parametric_arrow_type,
@@ -170,6 +171,7 @@ __all__ = [
     "TransformOp",
     "aggregate_problems",
     "categorical_arrow_type",
+    "categorical_categories",
     "classify_table_kinds",
     "constant_arrow_type",
     "declares_unique",

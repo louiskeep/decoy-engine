@@ -196,4 +196,4 @@ def test_a_conditional_categorical_child_is_judged_by_every_category_it_draws(
     assert set(out["lines"].column("amount").to_pylist()) <= {2, 3, 7}
     assert all(_is_number(v) for v in out["orders"].column("total").to_pylist())
     text = per_parent(line_cols=[LINE_ID, ref("oid", "orders"), KIND, _conditional_amount(["a"])])
-    assert _errors(text) == [(NOT_NUMERIC, _at_column(3))]
+    assert _errors(text) == [(NOT_NUMERIC, _at_column())]

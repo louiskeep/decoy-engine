@@ -19,9 +19,13 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.generation.kinds import cast_output_columns, output_types
+from decoy_engine.generation.kinds import cast_output_columns, conditional_tables, output_types
 from decoy_engine.generation.pool import QualityWarning, emit_generation_warning
-from decoy_engine.generation.statistical import StatisticalSpec, conditional_fallback_counts
+from decoy_engine.generation.statistical import (
+    StatisticalSpec,
+    conditional_fallback_counts,
+    fallback_counts,
+)
 from decoy_engine.generators.derivation import GenDeriveContext
 
 _log = logging.getLogger(__name__)
@@ -166,21 +170,32 @@ def warn_on_unseen_parents(
     statistical_specs: dict[tuple[str, str], StatisticalSpec],
     on_warning: Callable[[QualityWarning], None] | None,
 ) -> None:
-    """After a conditional statistical column is drawn, report the rows whose parent had no fitted
-    combination and drew from the column's overall counts. One record per column, only when such
-    rows exist. Names and counts only; output bytes are untouched."""
-    if col.get("type") != "statistical":
+    """After a conditional column is drawn, report the rows whose parent had no fitted combination
+    (`statistical`) or no `by` entry (`categorical`) and drew from the column's overall mix. One
+    record per column, only when such rows exist. Names and counts only; output bytes are
+    untouched. Both providers count through `select_table`, the one parent keying."""
+    if n <= 0:
         return
-    spec = statistical_specs.get((table_name, str(col.get("name"))))
-    if spec is None or spec.condition_on is None or n <= 0:
+    column, condition_on = str(col.get("name")), col.get("condition_on")
+    if col.get("type") == "categorical" and condition_on is not None:
+        provider = "categorical"
+        # The draw already refused a missing parent column, so the values are there.
+        counts = fallback_counts(conditional_tables(col)[1], data[condition_on], n)
+    elif col.get("type") == "statistical":
+        provider = "statistical"
+        spec = statistical_specs.get((table_name, column))
+        if spec is None or spec.condition_on is None:
+            return
+        column, condition_on = spec.column, spec.condition_on
+        counts = conditional_fallback_counts(spec, data.get(spec.condition_on) or [], n)
+    else:
         return
-    counts = conditional_fallback_counts(spec, data.get(spec.condition_on) or [], n)
     if counts.rows == 0:
         return
     detail = {
         "table": table_name,
-        "column": spec.column,
-        "condition_on": spec.condition_on,
+        "column": column,
+        "condition_on": condition_on,
         "rows": counts.rows,
         "rows_null_parent": counts.rows_null_parent,
         "rows_total": n,
@@ -188,15 +203,15 @@ def warn_on_unseen_parents(
         "parent_values_capped": counts.parent_values_capped,
     }
     line = (
-        f"generation_condition_parent_unseen: table={table_name} column={spec.column} "
-        f"condition_on={spec.condition_on} rows={counts.rows} "
+        f"generation_condition_parent_unseen: table={table_name} column={column} "
+        f"condition_on={condition_on} rows={counts.rows} "
         f"rows_null_parent={counts.rows_null_parent} rows_total={n} "
         f"parent_values={counts.parent_values} capped={counts.parent_values_capped}"
     )
     record = QualityWarning(
         code=reasons.warning.GENERATION_CONDITION_PARENT_UNSEEN,
-        provider="statistical",
-        column=spec.column,
+        provider=provider,
+        column=column,
         detail=detail,
     )
     emit_generation_warning(record, _log, line, on_warning)

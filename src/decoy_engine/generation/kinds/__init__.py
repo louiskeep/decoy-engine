@@ -1,4 +1,5 @@
-"""Generate types that need no source data (`constant`, parametric `distribution`, `lookup`) and `output_type`.
+"""Generate types that need no source data (`constant`, parametric `distribution`, `lookup`), the
+conditional `categorical` tables (`condition_on` with `by`), and `output_type`.
 
 A sub-package rather than modules beside `synthesize.py` (generation/ already holds 25 direct
 modules). The name is `kinds`, not `types`, so it never shadows the stdlib module. Callers import
@@ -7,6 +8,11 @@ from here, never from the underscore modules.
 
 from __future__ import annotations
 
+from decoy_engine.generation.kinds._categorical import (
+    CategoricalTable,
+    condition_values,
+    conditional_tables,
+)
 from decoy_engine.generation.kinds._constant import (
     ConstantStream,
     constant_arrow_type,
@@ -41,6 +47,7 @@ from decoy_engine.generation.kinds._parametric import (
 
 __all__ = [
     "MAX_LOOKUP_ENTRIES",
+    "CategoricalTable",
     "ConstantStream",
     "LookupList",
     "LookupOutcome",
@@ -48,6 +55,8 @@ __all__ = [
     "ParametricStream",
     "cast_output_columns",
     "cast_output_values",
+    "condition_values",
+    "conditional_tables",
     "constant_arrow_type",
     "constant_payload_bound",
     "constant_values",

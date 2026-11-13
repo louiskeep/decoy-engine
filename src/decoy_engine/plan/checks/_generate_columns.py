@@ -227,11 +227,17 @@ class _FakerView:
 
 
 def _check_categories(table: str, col: dict[str, Any]) -> None:
-    """Refuse a list Arrow cannot type, the inference ``pa.table`` applies at run."""
+    """Refuse a list Arrow cannot type, the inference ``pa.table`` applies at run.
+
+    A conditional column's list is every category it can draw: the top-level list and each
+    `by` entry's, which the run's inference sees together.
+    """
     import pyarrow as pa
 
-    categories = col.get("categories")
-    if not isinstance(categories, list):
+    from decoy_engine.config import categorical_categories
+
+    categories = categorical_categories(col) if isinstance(col.get("categories"), list) else None
+    if categories is None:
         return
     mixed = False
     try:

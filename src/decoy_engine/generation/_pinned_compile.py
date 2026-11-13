@@ -22,7 +22,11 @@ from typing import Any
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine._reference_date import normalize_reference_date
-from decoy_engine.config import is_per_parent_aggregate, is_self_reference
+from decoy_engine.config import (
+    categorical_categories,
+    is_per_parent_aggregate,
+    is_self_reference,
+)
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileAccess
 from decoy_engine.generation._pinned_plan import (
@@ -222,7 +226,7 @@ def _reject_column(tname: str, col: dict[str, Any], siblings: dict[Any, dict[str
     if kind == "windowed_date":
         anchor = siblings.get(col.get("anchor"))
         if anchor is not None and anchor.get("type") == "categorical":
-            for category in anchor.get("categories") or []:
+            for category in categorical_categories(anchor) or []:
                 if isinstance(category, str) and not anchor_is_absolute(category):
                     raise PinnedModeError(
                         code=reasons.plan.PINNED_WINDOWED_ANCHOR_NOT_ABSOLUTE,

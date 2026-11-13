@@ -117,6 +117,9 @@ def column_conflict_problems(
         problems.append((("output_type",), _CONFLICT))
     if type_ == "categorical" and extras.get("weights") is not None:
         problems.append((("weights",), _CONFLICT))
+    if type_ == "categorical" and extras.get("condition_on") is not None:
+        # A unique draw is one shuffled pass over the categories; it has no per-row mix.
+        problems.append((("condition_on",), _CONFLICT))
     if type_ == "reference":
         if extras.get("distribution") in _REFERENCE_CONFLICT_DISTRIBUTIONS:
             problems.append((("distribution",), _CONFLICT))

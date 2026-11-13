@@ -1,7 +1,9 @@
-"""Value checks for the `constant` and `distribution` generate types and the `output_type` option.
+"""Value checks for generate options: `weights`, the conditional categorical's `by`, the
+`constant` and `distribution` types and the `output_type` option.
 
 Callables for the option registry (`_generate_options`): each takes the submitted value and the
-column's flat options (plus its `type`) and returns ``(relative location, reason code)`` pairs.
+column's flat options (plus its `type`) and returns ``(relative location, reason code)`` pairs,
+with a third item of fixed hint text where a code's summary needs one.
 Nothing here quotes a submitted value. The family a `distribution` column chose is read from the
 options; the table of which keys a family takes lives in
 `_generate_options.CONDITIONAL_REQUIRED`.
@@ -26,7 +28,9 @@ from decoy_engine.errors import PipelineValidationError
 
 __all__ = [
     "OUTPUT_TYPE_MAX_SCALE",
+    "by_entries",
     "categorical_arrow_type",
+    "categorical_categories",
     "clip_bound",
     "constant_arrow_type",
     "constant_value",
@@ -38,17 +42,23 @@ __all__ = [
     "parametric_arrow_type",
     "parse_output_type",
     "refuse_fixed_width_output_types",
+    "weights_list",
 ]
 
 Problem = tuple[tuple[str | int, ...], str]
+# A problem whose message adds fixed, value-free text to the code's summary.
+HintedProblem = tuple[tuple[str | int, ...], str, str]
 
 _TYPE = str(reasons.config.GENERATE_OPTION_TYPE)
 _RANGE = str(reasons.config.GENERATE_OPTION_RANGE)
 
 _VALUE = str(reasons.config.GENERATE_OPTION_VALUE_UNKNOWN)
+_WEIGHTS = str(reasons.config.GENERATE_WEIGHTS_INVALID)
+_UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
 _UNSUPPORTED = str(reasons.config.GENERATE_OUTPUT_TYPE_UNSUPPORTED)
 
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+_DEFAULT_CATEGORIES = ["Category A", "Category B"]
 
 _OK: list[Problem] = []
 
@@ -121,6 +131,110 @@ def constant_value(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return [((), _TYPE)]
 
 
+def _weight_ok(w: Any) -> bool:
+    """A non-negative weight the generators can turn into a finite float.
+
+    Ints compare directly (`math.isfinite` overflows on a huge int); an int too large for a
+    float is refused because the samplers call `float()` on it.
+    """
+    if type(w) is float:
+        return math.isfinite(w) and w >= 0
+    if type(w) is int:
+        if w < 0:
+            return False
+        try:
+            float(w)
+        except OverflowError:
+            return False
+        return True
+    return False
+
+
+def weights_list(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
+    """A list of non-negative finite int or float with a positive sum (bool is not a number)."""
+    if not isinstance(value, list):
+        return [((), _TYPE)]
+    bad: list[Problem] = [((i,), _WEIGHTS) for i, w in enumerate(value) if not _weight_ok(w)]
+    if bad:
+        return bad
+    categories = extras.get("categories")
+    # Categorical weights pair with categories; a reference's pair with the parent (plan check).
+    if extras.get("type") == "categorical" and isinstance(categories, list):
+        if len(value) != len(categories):
+            return [((), _WEIGHTS)]
+    try:
+        total = math.fsum(value)
+    except OverflowError:
+        return [((), _WEIGHTS)]
+    return _OK if math.isfinite(total) and total > 0 else [((), _WEIGHTS)]
+
+
+# -- the conditional categorical (`condition_on` with `by`) -----------------------------------
+
+_ENTRY_KEYS = frozenset({"categories", "weights"})
+# Parents are matched by `str(parent)`, so a YAML `true:` or `1:` key would never match and a JSON
+# plan would turn it into text; the key must be written quoted.
+_KEY_HINT = (
+    'Quote the key: a true or false parent is matched as "True" or "False", a number as its '
+    'digits ("1").'
+)
+
+
+def _by_entry(entry: Any, top: Any) -> list[Problem]:
+    """One `by` entry: `weights`, or `categories` with optional `weights`."""
+    if not isinstance(entry, Mapping) or not _ENTRY_KEYS & set(entry):
+        return [((), _TYPE)]
+    found: list[Problem] = [((k,), _UNKNOWN) for k in entry if k not in _ENTRY_KEYS]
+    own = entry.get("categories", top)
+    if "categories" in entry and (not isinstance(own, list) or not own):
+        found.append((("categories",), _TYPE))
+    if "weights" in entry:
+        pairing = {"type": "categorical", "categories": own}
+        found += [
+            (("weights", *rel), code) for rel, code in weights_list(entry["weights"], pairing)
+        ]
+    return found
+
+
+def by_entries(value: Any, extras: Mapping[str, Any]) -> list[Problem | HintedProblem]:
+    """`by` of a conditional categorical: a mapping of text keys to entries.
+
+    A location names an entry by its position, never by its key, because a key is a parent value.
+    """
+    if not isinstance(value, Mapping):
+        return [((), _TYPE)]
+    found: list[Problem | HintedProblem] = []
+    for position, (key, entry) in enumerate(value.items()):
+        if not isinstance(key, str):
+            found.append(((position,), _TYPE, _KEY_HINT))
+            continue
+        top = extras.get("categories", _DEFAULT_CATEGORIES)
+        found += [((position, *rel), code) for rel, code in _by_entry(entry, top)]
+    return found
+
+
+def categorical_categories(col: Mapping[str, Any]) -> list[Any] | None:
+    """Every category a `categorical` column can draw, or None when the config is malformed.
+
+    A plain column draws its `categories`. A conditional one (`condition_on`) draws them plus
+    each `by` entry's own list, so the mixed-type check and the planned type read all of them.
+    """
+    cats = col.get("categories", _DEFAULT_CATEGORIES)
+    if not isinstance(cats, list):
+        return None
+    if col.get("condition_on") is None:
+        return cats
+    by = col.get("by")
+    if not isinstance(by, Mapping):
+        return None
+    union = list(cats)
+    for entry in by.values():
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("categories", []), list):
+            return None
+        union += entry.get("categories", [])
+    return union
+
+
 # -- output_type ------------------------------------------------------------------------------
 
 OUTPUT_TYPE_MAX_SCALE = 18
@@ -182,20 +296,26 @@ def output_type_value(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
 
 
 def categorical_arrow_type(col: Mapping[str, Any]) -> tuple[pa.DataType | None, str]:
-    """The Arrow type of homogeneous scalar categories, or None and why not."""
-    cats = col.get("categories", ["Category A", "Category B"])
+    """The Arrow type of homogeneous scalar categories, or None and why not.
+
+    A conditional column is typed by every category it can draw (`categorical_categories`).
+    """
+    cats = col.get("categories", _DEFAULT_CATEGORIES)
     if not isinstance(cats, list) or not cats:
         return None, "categories_not_a_nonempty_list"
     weights = col.get("weights")
     if weights is not None and (not isinstance(weights, list) or len(weights) != len(cats)):
         return None, "weights_do_not_match_categories"
-    kinds = {type(c) for c in cats}
+    drawn = categorical_categories(col)
+    if drawn is None:
+        return None, "by_entries_malformed"
+    kinds = {type(c) for c in drawn}
     if kinds == {str}:
         return pa.string(), "eligible"
     if kinds == {bool}:
         return pa.bool_(), "eligible"
     if kinds == {int}:
-        if all(_INT64_MIN <= c <= _INT64_MAX for c in cats):
+        if all(_INT64_MIN <= c <= _INT64_MAX for c in drawn):
             return pa.int64(), "eligible"
         return None, "int_category_outside_int64"
     if kinds == {float}:

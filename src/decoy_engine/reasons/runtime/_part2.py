@@ -14,6 +14,7 @@ __all__ = [
     "BUNDLE_MISSING_OUTPUT_COLUMNS",
     "CARDINALITY_TARGET_EXCEEDS_POOL",
     "CATEGORICAL_CATEGORIES_NOT_LIST",
+    "CATEGORICAL_CONDITION_COLUMN_UNAVAILABLE",
     "CPU_DETECTION_FAILED",
     "DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY",
     "DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE",
@@ -323,12 +324,17 @@ TIMEZONE_NAIVE_DATETIME = _d("timezone_naive_datetime", "Timezone naive datetime
 UNIQUENESS_IMPOSSIBLE = _d("uniqueness_impossible", "Uniqueness impossible.")
 UNKNOWN_CARDINALITY_MODE = _d("unknown_cardinality_mode", "Unknown cardinality mode.")
 
-# Reference-draw refusals. A summary is the whole message beside the table and column names, so
-# none names a key, count, bound or weight. `pinned_relational_option_unsupported` is the
-# run-time twin of the `plan` code of the same name, with the same text: pinned execute raises
-# it for a plan that never went through pinned compile.
+# Reference-draw and conditional-categorical refusals. A summary is the whole message beside the
+# table and column names, so none names a key, count, bound, weight or parent value.
+# `pinned_relational_option_unsupported` is the run-time twin of the `plan` code of the same name,
+# with the same text: pinned execute raises it for a plan that never went through pinned compile.
 _d = _catalog.runtime("GenerationError")
 
+CATEGORICAL_CONDITION_COLUMN_UNAVAILABLE = _d(
+    "categorical_condition_column_unavailable",
+    "Generate categorical column conditions on a column that has not been generated.",
+    since=UNRELEASED,
+)
 GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT = _d(
     "generate_fitted_reference_bounds_conflict",
     "Generate reference column per-parent bounds cannot be combined with distribution fitted.",
