@@ -8,8 +8,9 @@ its name; the label is therefore picked by exact type from a closed set the engi
 of ``decoy_engine.errors``), and anything else, a subclass included, is ``EXCEPTION``.
 
 The member set is exactly the names ``safe_error_class`` accepts, plus ``Exception``, so the two
-cannot drift. Members are built at import from names only; the type table is built on first use
-from the trusted classes, since resolving the families imports their modules.
+cannot drift. Members are built at import from names only. The builtin and `errors` type table is built on
+first use; the engine families are looked up among already-imported modules, so serializing a
+failure never imports one.
 """
 
 from __future__ import annotations
@@ -31,8 +32,7 @@ def _is_exception_class(value: object) -> bool:
 def _member_names() -> frozenset[str]:
     names = {n for n, v in vars(builtins).items() if _is_exception_class(v)}
     names |= {n for n, v in vars(errors).items() if _is_exception_class(v)}
-    names |= {name for _, name, _ in reason_adapter._CODED}
-    names |= {name for _, name, _ in reason_adapter._FIXED}
+    names |= reason_adapter.registered_family_names()
     return frozenset(names | {_EXCEPTION})
 
 
@@ -73,10 +73,17 @@ def _allowed_exception_types() -> dict[type, SafeErrorType]:
     """Exact class to member over the closed trusted set; a builtin maps by its own name."""
     classes = {v for v in vars(builtins).values() if _is_exception_class(v)}
     classes |= {v for v in vars(errors).values() if _is_exception_class(v)}
-    classes |= reason_adapter.registered_families()
     return {cls: SafeErrorType(cls.__name__) for cls in classes if cls.__name__ in _MEMBER_NAMES}
 
 
 def safe_error_type(exc: BaseException) -> SafeErrorType:
-    """The label for ``exc`` by exact type; an unlisted class or a subclass is ``EXCEPTION``."""
-    return _allowed_exception_types().get(type(exc), SafeErrorType.EXCEPTION)
+    """The label for ``exc`` by exact type; an unlisted class or a subclass is ``EXCEPTION``.
+
+    Runs while a failure is serialized, so it imports nothing: the engine families are read from
+    already-imported modules (a live exception's own class is always among them).
+    """
+    cls = type(exc)
+    label = _allowed_exception_types().get(cls)
+    if label is None and cls in reason_adapter.loaded_families():
+        label = SafeErrorType(cls.__name__)
+    return label or SafeErrorType.EXCEPTION

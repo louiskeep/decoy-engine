@@ -39,13 +39,16 @@ _PUBLICATION_OPERATIONS = frozenset(
 _INTERRUPTS = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
 # (module, class, namespace of its ``.code``) for every engine family that carries a code.
+# Each module is the class's DEFINING module (``cls.__module__``), never a re-export: a live
+# exception guarantees only its defining module is imported, and `_loaded_families` reads
+# ``sys.modules`` without importing. A guard test enforces this for both tables.
 _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.errors", "PipelineValidationError", "config"),
     ("decoy_engine.errors", "ValidationError", "config"),
     ("decoy_engine.relationships._namespace", "NamespaceConfigError", "config"),
     ("decoy_engine.subset._errors", "SubsetConfigError", "config"),
     ("decoy_engine.plan._errors", "PlanCompileError", "plan"),
-    ("decoy_engine.contracts.declared_casting", "DeclaredCastContractError", "plan"),
+    ("decoy_engine.contracts._declared_base", "DeclaredCastContractError", "plan"),
     ("decoy_engine.execution._errors", "DeclaredCastRouteError", "route"),
     ("decoy_engine.execution._errors", "DeclaredCastValueError", "runtime"),
     ("decoy_engine.execution._errors", "QuarantineError", "runtime"),
@@ -75,7 +78,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.execution.native._companion_status", "NativeCompanionCheckError", "runtime"),
     ("decoy_engine.execution.native._crypto_ext", "CryptoExtensionUnavailableError", "runtime"),
     ("decoy_engine.execution.native._crypto_ext", "FpeConfigError", "runtime"),
-    ("decoy_engine.execution.native._draw_site_providers", "DrawSiteProtocolError", "runtime"),
+    ("decoy_engine.execution.native.protocol.providers_base", "DrawSiteProtocolError", "runtime"),
     ("decoy_engine.execution.native._pool_quality", "PoolQualityError", "runtime"),
     ("decoy_engine.io.bounded_reader", "BoundedReadError", "runtime"),
     ("decoy_engine.fileaccess._protected_dir", "ProtectedDirAclFailed", "runtime"),
