@@ -134,7 +134,9 @@ def _megabytes(limit: str) -> int:
 def _native(series: pd.Series) -> pa.Array | None:
     try:
         return pa.array(series, from_pandas=True)
-    except Exception:
+    except Exception as exc:
+        if passes_through(exc):
+            raise
         return None
 
 
