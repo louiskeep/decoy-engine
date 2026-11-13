@@ -225,7 +225,9 @@ def test_the_four_stage_a_consumers_return_the_identical_config_verdict(
     except PlanCompileError as exc:
         # The plan compiler refuses a missing/empty category list itself, before the
         # three downstream consumers can run; the veto verdict is the only one left.
-        assert exc.code == "categorical_categories_missing" and case in _COMPILE_REJECTS
+        by_case = {"no_namespace": "categorical_requires_namespace"}
+        assert exc.code == by_case.get(case, "categorical_categories_missing")
+        assert case in _COMPILE_REJECTS | by_case.keys()
         assert veto is False
         return
     static = _dispatch._static_route_decision(

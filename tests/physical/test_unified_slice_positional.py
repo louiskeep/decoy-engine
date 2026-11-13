@@ -671,7 +671,7 @@ _VERDICTS: dict[str, tuple[bool, tuple[str, ...], str | None, bool, str | None]]
         ("categorical_not_deterministic:c",),
         "categorical_nondeterministic_not_chunk_safe",
         False,
-        "fallback_policy_not_native:c:python_only",
+        "categorical_requires_namespace",
     ),
     "cat_nd_weighted": (False, ("categorical_not_deterministic:c",), None, True, None),
     "faker_det": (False, ("no_native_kernel:c:faker",), None, True, None),
@@ -728,14 +728,19 @@ def _verdict(tmp_path: Path, columns: list[dict[str, Any]]) -> tuple[Any, ...]:
         veto = None
     except PlanCompileError as exc:
         veto = exc.code
-    preflight = plan_native_route(
-        config,
-        first_chunk_profile(source, table="t", engine_version="v"),
-        table="t",
-        engine_version="v",
-        first_schema=source.schema,
-        registry=registry,
-    )
+    try:
+        preflight = plan_native_route(
+            config,
+            first_chunk_profile(source, table="t", engine_version="v"),
+            table="t",
+            engine_version="v",
+            first_schema=source.schema,
+            registry=registry,
+        )
+    except PlanCompileError as exc:
+        # The plan compiler refuses a config that omits a required setting before any route is
+        # chosen, so the route evidence is the refusal.
+        return (eligibility.accepted, tuple(eligibility.rejections), veto, False, exc.code)
     return (
         eligibility.accepted,
         tuple(eligibility.rejections),
