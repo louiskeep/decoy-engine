@@ -1,6 +1,7 @@
 # GEN-REL E2 build evidence
 
-Status: built on `feat/gen-rel-e2`. No stop condition was hit.
+Status: built on `feat/gen-rel-e2`. Review round 1 item 2 stopped on a guarantee decision (see
+"Review round 1").
 
 Spec: `docs/plans/gen-rel.md` on `origin/plan/gen-rel` (`26a83542`), slice row 2 (self-reference
 trees). The plan stays on the plan branch.
@@ -437,6 +438,116 @@ Checks on `6c1a8691`, by exit code, with `origin/main` at `c0961a17`:
 
 Not run on this head: the full suite, the gate steps under Python 3.11, a rerun of
 `origin/main`.
+
+## Review round 1 (2026-11-13)
+
+Review of `ff0ab08c`: two fix items. Item 1 is built; item 2 stopped before any change, because
+the three copies of its rule differ (below). Commits: `1f9aad0b` red cells, `20faa7ba` the
+item 1 fix (final source head), then this record.
+
+### Item 1 (V1): a self-reference key that declares `output_type`
+
+The tree copies the key's drawn values before the Arrow-boundary cast, and a reference cannot
+declare `output_type`, so a cast key matched none of its foreign keys. Chosen fix: refuse.
+`config/_generate_relational.py:_key_is_valid` now also requires that the key declares no
+`output_type`; the refusal is the existing `config.generate_self_reference_key_invalid` at
+`reference_column` (no new code). The module docstring, `docs/strategies.md` (the rule list and
+the refusal table row) and `changelog.d/gen-rel-e2.md` say so.
+
+Red first: `1f9aad0b` adds two cells to
+`test_at9_a_key_that_is_not_a_non_null_sequence_is_refused` (`decimal-output-type`, the review's
+example, and `int-output-type`) and `test_at9_output_type_is_refused_on_the_key_only` (another
+column of the table may still declare `output_type`). Run on `ff0ab08c`'s source (Python
+3.10.20): both new parametrized cells failed, `Failed: DID NOT RAISE ValidationError`; the
+accept cell passed, as it should on both heads.
+
+### Item 2 (DESIGN): one sequence-key predicate, stopped
+
+Not built: no predicate, guard test or call-site change was committed. The three copies are:
+
+- `config/_generate_relational.py:_key_is_valid`: `type == "sequence" and not
+  _nulls_on(null_probability)`, where `_nulls_on(v)` is `type(v) in (int, float) and v > 0`.
+- `execution/_probe_scale.py:_loosen_per_parent_bounds` (`exact`) and
+  `plan/checks/_generate_columns.py:_check_reference_weights` (`keeps_all_keys`):
+  `type == "sequence" and not (null_probability or 0) > 0`.
+
+They agree on an absent value, `None`, `0`, `0.0`, negatives, NaN, `0.5`, `1`, infinity,
+`False`, `""`, `[]` and `{}`. They differ on any value that is not exactly an `int` or `float`
+but compares above 0: `True`, `Decimal("0.5")`, `Fraction(1, 2)`, `numpy.float64(0.5)` and
+`numpy.int64(1)` read as "no nulls" in the config copy and as "nulls" in the other two; `"0.5"`
+and `[1]` read as "no nulls" in the config copy and raise `TypeError` in the other two.
+`PipelineConfig` refuses every such value (`generate_option_type`), but `compile_plan` and the
+probe take a raw dict, so the plan check and the probe can see one; unifying would change the
+weights-length check and the probe's exact bounds there. The two non-config copies also find
+the key differently (the plan check reads `parent.get("generate_columns")` and every candidate
+of that name; the probe reads `generate_columns_of(parent)` and the first). Which behavior the
+one predicate keeps is a guarantee decision, reported to the orchestrator.
+
+### Mutations (final source head `20faa7ba`, Python 3.10.20)
+
+63 of 63 red: the 62 recorded on `6c1a8691` plus K1 (drop the `output_type` refusal from
+`_key_is_valid`; red in `test_at9_a_key_that_is_not_a_non_null_sequence_is_refused` for
+`decimal-output-type` and `int-output-type`). C1c, C1d and C1e were re-anchored to the new
+three-line return of `_key_is_valid` with the same edits (drop the null test; key type check
+replaced by `True`; null test replaced by `is None`); every anchor matched exactly once. 62 ran
+in a detached worktree of `20faa7ba` importing its own `src` (removed afterwards); the results
+JSON shows 62 `RED` and H2 `NOT RED` there, as before. H2 (its witness runs a child process
+that imports the checkout) was applied once in the checkout, red in
+`test_order_and_result_keys_are_equal_across_seeds_and_routes` (`['p1', 'p2'] == ['p2',
+'p1']`), and reverted; the tree was clean before and after.
+
+### Gates (final source head `20faa7ba`)
+
+`GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
+ruff,format,mypy,sentry,layers,licenses,tests` with the slice's T1 paths plus
+`tests/unit/execution/test_probe_scale.py`, `tests/unit/execution/test_probe_scale_kills.py`
+and `tests/unit/plan/checks` (the changed test file is under `tests/unit/config`, in T1).
+Python 3.10.20, PyArrow 24.0.0, DuckDB 1.5.4, pandas 2.3.3, NumPy 2.2.6.
+
+| Step | Branch (`20faa7ba`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5286 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 6772 passed, 0 failed, 60 skipped |
+
+Failure sets: branch 0, branch-only 0; the baseline was not rerun because every branch step
+passed. No digest, golden or snapshot moved.
+
+Checks on `20faa7ba`, by exit code, `origin/main` at `c86ca58d`:
+`registry_renumber.py --check --main c0961a17` exit 0 (`registry consistent`);
+`--main origin/main` exit 2 (`main-not-merged`); `ratchet_check.py --base c0961a17` exit 0;
+`--base origin/main` exit 1 (`exception-context`, `f29-producer-inventory`, `gcs-call-kwargs`,
+`private-file-sinks`, `secret-material-census`: keys main gained); `check_fragment.py --base
+origin/main` exit 0; `reason_release_pin.py --check` exit 0. The two `origin/main` failures
+are the same on `ff0ab08c` (main moved; main is not merged here).
+
+Line counts: `config/_generate_relational.py` 182, `tests/unit/config/test_generate_relational.py`
+444; `plan/checks/_generate_columns.py` (517) and `execution/_probe_scale.py` (273) unchanged.
+
+### V2-LOG (accepted from review)
+
+- a. An all-root table (`root_count == row_count`, including one row with the default) gives a
+  `null`-typed column, against the key-type sentence in `docs/strategies.md`.
+- b. `weights` without `distribution: weighted` on a self-reference is accepted and ignored.
+- c. `self_reference` has no run-time twin of the validate rules: an unvalidated dict drops
+  options silently, a missing key gives a bare `KeyError`, a nullable key makes roots.
+- d. `generation/synthesize.py` imports the private `relational._self_reference`;
+  `reference_parents` is general ordering logic in the tree module; `CODEMAP.md` describes
+  only per-parent bounds.
+- e. The bounded-memory reservation in `generation/_streamed.py` does not count the tree's
+  O(n) `open_rows` and `children` lists.
+- f. Streaming admission declines a capped self-reference as `reference_cardinality_repair` and
+  an uncapped one as `reference_to_own_table`; check `is_self_reference` first.
+- g. `tests/unit/generation/test_pinned_generation.py` grew from 825 to 853 lines; move the
+  relational-policy cells under `tests/unit/generation/relational/`.
+
+### Not run
+
+The full suite; the gate steps under Python 3.11; a baseline rerun on `origin/main`; item 2.
 
 ## Not run
 
