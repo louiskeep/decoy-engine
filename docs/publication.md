@@ -85,6 +85,11 @@ Other labels (`table_sink`, `hold`, `quarantine` and the rest) publish as before
 `LockUnavailable`; there is no lock-free fallback. The kernel releases the lock when the holder
 exits for any reason, SIGKILL included. The parent must exist: the lock creates nothing.
 
+A publication destination leaf is at most 243 bytes, so that `.<leaf>.decoy-lock` fits one
+255-byte name component (see the named limit below). `lock()` and `begin(...,
+label="publication")` refuse a longer leaf with the policy's denial before any I/O: no parent is
+created, no lock file and no stage. Other labels keep the 255-byte component limit.
+
 `OutputDir.read_member(component, limit=...)` reads one regular file inside a bound directory
 leaf through the same capability, at most `limit` bytes (`LeafTooLarge` beyond), and returns
 `None` when the parent, the leaf or the member is absent. No link is followed at the leaf or the
@@ -281,6 +286,12 @@ the routes' receipts are a later part; until this section says so, the sink does
 - **L2, stages left by a killed attempt.** A SIGKILL leaves the attempt's
   `._decoy_publication_pending_<token>` stage beside the destination. Nothing reclaims it: it is
   never read as output and never bound, and each attempt uses a fresh token, so it blocks nothing.
+- **The destination lock.** The lock name adds 12 bytes to the leaf (`.` before it,
+  `.decoy-lock` after it), so a publication destination leaf longer than 243 bytes
+  (`MAX_PUBLICATION_LEAF_BYTES` in `fileaccess/_component.py`, 255 less those 12) is refused up
+  front with a value-free denial rather than failing at the lock with `ENAMETOOLONG`. The lock is
+  an advisory `flock(2)`: it binds only writers that take it. On NFS it does not exclude two
+  holders in one process. A forked child keeps the lock its parent took.
 - **Errors.** A failure while creating or opening a directory on an output chain carries no path
   and no operating-system message text: the strict policies refuse with their usual denial, and
   the ambient policy raises an `OSError` with the errno only.
