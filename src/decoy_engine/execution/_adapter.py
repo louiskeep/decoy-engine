@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.providers_v2 import ProviderRegistry
+    from decoy_engine.publication import CommitReceipt
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
 
@@ -73,6 +74,9 @@ class ExecutionResult:
     # artifact. None when no row was quarantined. Hidden from repr and never serialized into
     # evidence, because possessing it is the read right.
     quarantine_access: Any = field(default=None, repr=False)
+    # F22: the reference sink's commit receipt (outcome, digests, counts; no path or name).
+    # None when the run published through no `ParquetTransactionalSink`.
+    publication_receipt: CommitReceipt | None = None
 
     @property
     def output(self) -> pa.Table:

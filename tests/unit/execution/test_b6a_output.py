@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution import ExecutionError
+from decoy_engine.publication import DESCRIPTOR_NAME
 from tests.unit.execution import _auto_chunk_matrix as matrix
 from tests.unit.execution import _auto_chunk_strategies as strategies
 from tests.unit.execution import _auto_chunk_support as support
@@ -51,7 +52,7 @@ def _check_case(cfg: dict[str, Any], src: pa.Table, tmp_path: Path, **extra: Any
     b6a.assert_streamed_equals(sink, expected)
     published = (target / f"{support.TABLE}.parquet").read_bytes()
     assert published == b6a.parquet_bytes(expected, tmp_path / "reference.parquet")
-    assert sorted(p.name for p in target.iterdir()) == [f"{support.TABLE}.parquet"]
+    assert sorted(p.name for p in target.iterdir()) == [DESCRIPTOR_NAME, f"{support.TABLE}.parquet"]
 
 
 # ---------------------------------------------------------------------------

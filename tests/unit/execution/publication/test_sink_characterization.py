@@ -4,13 +4,16 @@ is split into a write half (`StagedParquetWriter`) and a state table (plan 5.6, 
 Probes P1 to P6 (plan 1.3) on both POSIX policies, plus the write half's own contract: a table
 written twice replaces its staged file, names are single components, the stored size is the
 closed file's size, and a failing write records which boundary failed. Only cells the state
-table changes on purpose are updated (P6), and each update is named where it happens.
+table changes on purpose are updated (P6, c1a), and the cells the commit through
+`publish_unit` changes on purpose (P1 to P5, and the unit listing now holding the
+`_decoy_publication.json` descriptor, c1b); each update is named where it happens.
 """
 
 from __future__ import annotations
 
 import errno
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,7 @@ import pytest
 from decoy_engine.publication import PublicationRefused
 from decoy_engine.reasons import Operation
 from tests.unit.execution.publication._sink_support import (
+    DESCRIPTOR,
     POLICIES,
     sink_factory,
     stages,
@@ -29,32 +33,36 @@ from tests.unit.execution.publication._sink_support import (
     tree,
 )
 
-_REFUSED_ERRNOS = (errno.ENOTEMPTY, errno.EEXIST)
-
 
 @pytest.mark.parametrize("policy", POLICIES)
-def test_p1_a_second_sink_with_the_same_result_fails_with_the_raw_errno(
+def test_p1_a_second_sink_with_the_same_result_is_already_committed(
     policy: str, tmp_path: Path
 ) -> None:
+    """Updated on purpose by the commit through `publish_unit` (c1b): the pinned behaviour was
+    a raw `OSError` 39 (`ENOTEMPTY`). Now the same measured result is `already_committed`,
+    whatever the second sink's `operation_id`, and the unit is untouched."""
     with sink_factory(policy, tmp_path) as make:
         first = make()
         first.write("customers", table("A"))
-        first.commit()
+        bound = first.commit()
         before = tree(tmp_path / "out")
         second = make()
         second.write("customers", table("A"))
-        with pytest.raises(OSError) as info:
-            second.commit()
+        again = second.commit()
         second.abort()
-    assert info.value.errno in _REFUSED_ERRNOS
+    assert again.outcome == "already_committed"
+    assert again.operation_id != bound.operation_id  # non-vacuity: two attempts, one result
+    assert again.result_id == bound.result_id
     assert tree(tmp_path / "out") == before
     assert stages(tmp_path) == []
 
 
 @pytest.mark.parametrize("policy", POLICIES)
-def test_p2_a_different_result_fails_the_same_way_and_the_first_unit_survives(
+def test_p2_a_different_result_is_refused_and_the_first_unit_survives(
     policy: str, tmp_path: Path
 ) -> None:
+    """Updated on purpose (c1b): the pinned behaviour was the same raw `OSError` 39 as P1, so a
+    caller could not tell a retry from a collision. Now it is `publication_target_occupied`."""
     with sink_factory(policy, tmp_path) as make:
         first = make()
         first.write("customers", table("A"))
@@ -62,23 +70,32 @@ def test_p2_a_different_result_fails_the_same_way_and_the_first_unit_survives(
         before = tree(tmp_path / "out")
         second = make()
         second.write("customers", table("B"))
-        with pytest.raises(OSError) as info:
+        with pytest.raises(PublicationRefused) as info:
             second.commit()
         second.abort()
-    assert info.value.errno in _REFUSED_ERRNOS
+    assert (info.value.code, info.value.receipt.outcome) == (
+        "publication_target_occupied",
+        "refused",
+    )
     assert tree(tmp_path / "out") == before
     assert pq.read_table(tmp_path / "out" / "customers.parquet").equals(table("A"))
+    assert stages(tmp_path) == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX durable publish")
 @pytest.mark.parametrize("policy", POLICIES)
-def test_p3_p5_a_table_sink_write_and_commit_make_no_fsync(
+def test_p3_p5_a_sink_commit_fsyncs_the_unit(
     policy: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[int] = []
+    """Updated on purpose (c1b): the pinned behaviour was no fsync at all on either policy.
+    Now the commit is the durable `publication` publish: every unit file and the unit
+    directory are fsynced before the receipt says `published`."""
+    calls: list[tuple[int, int]] = []
     real = os.fsync
 
     def spy(fd: int) -> None:
-        calls.append(fd)
+        st = os.fstat(fd)
+        calls.append((st.st_dev, st.st_ino))
         real(fd)
 
     monkeypatch.setattr(os, "fsync", spy)
@@ -92,23 +109,35 @@ def test_p3_p5_a_table_sink_write_and_commit_make_no_fsync(
     with sink_factory(policy, tmp_path) as make:
         sink = make()
         sink.write("customers", table("A"))
-        sink.commit()
-    assert calls == []
-    assert (tmp_path / "out" / "customers.parquet").is_file()
+        receipt = sink.commit()
+    leaf = tmp_path / "out"
+
+    def ident(path: Path) -> tuple[int, int]:
+        st = os.lstat(path)
+        return (st.st_dev, st.st_ino)
+
+    unit = {ident(leaf / "customers.parquet"), ident(leaf / DESCRIPTOR), ident(leaf)}
+    assert unit <= set(calls)
+    assert (receipt.outcome, receipt.durable) == ("published", True)
 
 
 @pytest.mark.parametrize("policy", POLICIES)
-def test_p4_an_empty_commit_leaves_an_empty_directory_a_later_sink_replaces(
+def test_p4_an_empty_commit_binds_a_unit_a_later_sink_cannot_replace(
     policy: str, tmp_path: Path
 ) -> None:
+    """Updated on purpose (c1b): the pinned behaviour was an empty directory that a later sink
+    with a different result silently replaced. Now an empty commit binds a unit holding only
+    its descriptor, and a different result is refused."""
     with sink_factory(policy, tmp_path) as make:
-        make().commit()
-        assert sorted(os.listdir(tmp_path / "out")) == []
+        assert make().commit().outcome == "published"
+        assert sorted(os.listdir(tmp_path / "out")) == [DESCRIPTOR]
+        before = tree(tmp_path / "out")
         later = make()
         later.write("customers", table("B"))
-        later.commit()
-    assert sorted(os.listdir(tmp_path / "out")) == ["customers.parquet"]
-    assert pq.read_table(tmp_path / "out" / "customers.parquet").equals(table("B"))
+        with pytest.raises(PublicationRefused) as info:
+            later.commit()
+    assert info.value.code == "publication_target_occupied"
+    assert tree(tmp_path / "out") == before
 
 
 @pytest.mark.parametrize("policy", POLICIES)
@@ -119,9 +148,9 @@ def test_p6_after_a_commit_the_sink_is_sealed(policy: str, tmp_path: Path) -> No
     with sink_factory(policy, tmp_path) as make:
         sink = make()
         sink.write("customers", table("A"))
-        sink.commit()
+        receipt = sink.commit()
         before = tree(tmp_path / "out")
-        assert sink.commit() is None
+        assert sink.commit() == receipt
         with pytest.raises(PublicationRefused) as info:
             sink.write("orders", table("B"))
         assert info.value.code == "publication_attempt_sealed"
@@ -141,7 +170,7 @@ def test_a_table_written_twice_replaces_its_staged_file(policy: str, tmp_path: P
         sink.write("customers", table("A"))
         sink.write_batches("customers", iter(table("B").to_batches()), schema=table("B").schema)
         sink.commit()
-    assert sorted(os.listdir(tmp_path / "out")) == ["customers.parquet"]
+    assert sorted(os.listdir(tmp_path / "out")) == [DESCRIPTOR, "customers.parquet"]
     assert pq.read_table(tmp_path / "out" / "customers.parquet").equals(table("B"))
 
 

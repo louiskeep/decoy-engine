@@ -147,7 +147,9 @@ def assert_streamed_equals(sink: RecordingSink, expected: pa.Table, table: str =
 def leftovers(parent: Path) -> list[str]:
     """Staging and spill directories under `parent` (the sink's parent or the patched tempdir)."""
     return sorted(
-        p.name for p in parent.iterdir() if p.name.startswith(("_decoy_stage_", "_decoy_hold_"))
+        p.name
+        for p in parent.iterdir()
+        if p.name.startswith(("._decoy_publication_pending_", "_decoy_hold_"))
     )
 
 

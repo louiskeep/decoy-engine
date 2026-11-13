@@ -19,6 +19,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
+from decoy_engine.publication import DESCRIPTOR_NAME, PublicationRefused
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _b6a_support as b6a
 from tests.unit.execution.test_auto_chunk_dispatcher import _row_error_job
@@ -93,8 +94,10 @@ def test_nothing_is_visible_until_the_single_rename(
     monkeypatch.setattr(_chunked_entry, "_mask_chunk_native", spy)
     b6a.run_streamed(cfg, src, sink)
     assert seen["target_exists"] is False
-    assert len(seen["staging"]) == 1 and seen["staging"][0].startswith("_decoy_stage_")
-    assert sorted(p.name for p in target.iterdir()) == ["t.parquet"]
+    assert len(seen["staging"]) == 1 and seen["staging"][0].startswith(
+        "._decoy_publication_pending_"
+    )
+    assert sorted(p.name for p in target.iterdir()) == [DESCRIPTOR_NAME, "t.parquet"]
     assert b6a.leftovers(tmp_path) == []
     assert sink.calls == [("write_batches", "t"), ("commit",)]
 
@@ -163,8 +166,9 @@ def test_a_non_empty_target_fails_the_commit_and_leaves_it_unchanged(tmp_path: P
     sink, target = b6a.real_sink(tmp_path)
     target.mkdir()
     (target / "keep.txt").write_text("keep")
-    with pytest.raises(OSError):
+    with pytest.raises(PublicationRefused) as info:
         b6a.run_streamed(cfg, src, sink)
+    assert info.value.code == "publication_target_occupied"
     assert [p.name for p in target.iterdir()] == ["keep.txt"]
     assert (target / "keep.txt").read_text() == "keep"
     assert b6a.leftovers(tmp_path) == []

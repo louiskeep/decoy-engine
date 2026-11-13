@@ -16,6 +16,7 @@ import pytest
 from decoy_engine import reasons
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+from decoy_engine.publication import PublicationFailed
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import (
     CleanupState,
@@ -127,10 +128,10 @@ def test_the_reference_sink_confirms_cleanup_by_looking(
 
     monkeypatch.setattr("decoy_engine.execution._transactional_sink.os.replace", refuse)
     sink = ParquetTransactionalSink(tmp_path / "out")
-    with pytest.raises(OSError) as info:
+    with pytest.raises(PublicationFailed) as info:  # F22: a failed commit rename
         _run(tmp_path, sink)
     record = reason_from_exception(info.value)
     assert record.context.publication_state is PublicationState.NOT_PUBLISHED
     assert record.context.cleanup_state is CleanupState.CONFIRMED
-    assert not list(tmp_path.glob("_decoy_stage_*"))
+    assert not list(tmp_path.glob("._decoy_publication_pending_*"))
     assert reasons.CleanupState.FAILED is not record.context.cleanup_state

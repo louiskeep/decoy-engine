@@ -19,6 +19,7 @@ from decoy_engine import reasons
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.keyprovider import MissingMaskSecret
+from decoy_engine.publication import PublicationFailed
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import CleanupState, Operation, Phase, PublicationState, RetryClass
 
@@ -74,7 +75,7 @@ def test_capacity_exhausted_at_write_is_an_environment_repair_with_truthful_clea
     assert ctx.cleanup_state is CleanupState.CONFIRMED  # abort ran, and the staging dir is gone
     assert "ZXQ" not in _blob(record) and "/very" not in _blob(record)
     assert not (tmp_path / "out").exists()
-    assert not list(tmp_path.glob("_decoy_stage_*"))
+    assert not list(tmp_path.glob("._decoy_publication_pending_*"))
 
 
 def test_enospc_during_footer_close_reports_the_close_operation(
@@ -123,8 +124,10 @@ def test_a_failed_commit_rename_publishes_nothing_and_says_so(
         raise OSError(errno.ENOSPC, "No space left on device", f"{SECRET_PATH}/target")
 
     monkeypatch.setattr("decoy_engine.execution._transactional_sink.os.replace", refuse)
-    with pytest.raises(OSError) as info:
+    # F22: a failed commit rename is `PublicationFailed`, carrying the errno and no OS text.
+    with pytest.raises(PublicationFailed) as info:
         _run(tmp_path, ParquetTransactionalSink(tmp_path / "out"))
+    assert info.value.receipt.os_error == "ENOSPC"
     record = reason_from_exception(info.value)
     assert record.code == "storage_capacity_exhausted"
     assert record.context.operation is Operation.COMMIT

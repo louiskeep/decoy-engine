@@ -24,6 +24,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.publication import DESCRIPTOR_NAME
 from tests._declared_schema import declare_rest
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _multi_table_support as mt
@@ -74,8 +75,18 @@ def _record(result: Any, tmp: Path, published: Path | None = None) -> dict[str, 
         "row_errors": len(result.row_errors),
     }
     if published is not None and published.is_dir():
-        out["published"] = {p.name: _digest(pq.read_table(p)) for p in sorted(published.iterdir())}
+        out["published"] = {p.name: _published(p) for p in sorted(published.iterdir())}
     return out
+
+
+def _published(path: Path) -> Any:
+    """A table's digest; for the F22 descriptor, its fields that do not depend on the Parquet
+    writer (its sizes and digests carry the footer's pyarrow version, as file bytes do)."""
+    if path.name != DESCRIPTOR_NAME:
+        return _digest(pq.read_table(path))
+    doc = json.loads(path.read_bytes())
+    shape = [[a["path"], a["role"], a["rows"]] for a in doc["artifacts"]]
+    return {"schema": doc["schema"], "unit": doc["unit"], "artifacts": shape, "vault": doc["vault"]}
 
 
 def _std_source(tmp: Path, rows: int = support.ROWS) -> tuple[dict[str, Any], pa.Table]:

@@ -387,6 +387,7 @@ def run_sequential(
     # only ever runs after this flag is set, so any failure past that point
     # is a sidecar-publish failure, not a run failure to undo.
     _committed = False
+    receipt = None  # the reference sink's `CommitReceipt` (F22); None for any other sink
 
     try:
         with use_collector(collector):
@@ -600,22 +601,18 @@ def run_sequential(
         # already exists (from its own successful rename) by the time
         # anything is staged beside it, so there is nothing left to collide.
         if _tsink is not None:
-            observed_commit(_tsink)
+            receipt = observed_commit(_tsink)
             # Past this point abort() must never run (Codex finding #2): a
             # custom sink's abort() could delete tables it just durably
             # committed. Any failure below is a quarantine-sidecar problem,
             # not a run failure the sink should be asked to undo.
-            # Residual (dennis re-gate MEDIUM): `commit()` returning and this
-            # assignment are two separate bytecode steps, so an async signal
-            # landing in that exact gap would reach the except clause with
-            # `_committed` still False and call abort() post-commit. Accepted
-            # as-is rather than restructured further: the window is already
-            # the minimum possible (one call, one store), and the reference
-            # `ParquetTransactionalSink.abort()` is a proven no-op once its
-            # commit has already renamed staging away (see
-            # `TestAbortNotCalledAfterSuccessfulCommit`'s deliberate case for
-            # the same property) -- a custom sink relying on non-idempotent
-            # post-commit abort is already outside this contract's guarantees.
+            # Residual (dennis re-gate MEDIUM): an async signal between
+            # `commit()` returning and this store reaches the except clause
+            # with `_committed` False and calls abort() post-commit. Accepted:
+            # the window is one call and one store, and a sealed
+            # `ParquetTransactionalSink.abort()` is a no-op (state table); a
+            # custom sink relying on non-idempotent post-commit abort is
+            # already outside this contract's guarantees.
             _committed = True
 
         # Quarantine JSONL is durable only on a successful (fully covered)
@@ -657,4 +654,5 @@ def run_sequential(
         quality_metrics=quality_metrics,
         row_errors=tuple(all_row_errors),
         quarantine_access=quarantine_token,
+        publication_receipt=receipt,
     )

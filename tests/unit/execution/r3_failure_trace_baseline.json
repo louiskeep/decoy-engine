@@ -36,6 +36,7 @@
  "f_ff_streamed_success": {
   "exception": null,
   "published_files": [
+   "_decoy_publication.json",
    "t.parquet"
   ],
   "sink_calls": [
@@ -314,6 +315,7 @@
  "f_ooc_sink_success": {
   "exception": null,
   "published_files": [
+   "_decoy_publication.json",
    "child.parquet",
    "parent.parquet"
   ],
@@ -399,6 +401,7 @@
  "f_seq_sink_success": {
   "exception": null,
   "published_files": [
+   "_decoy_publication.json",
    "child.parquet",
    "parent.parquet"
   ],
