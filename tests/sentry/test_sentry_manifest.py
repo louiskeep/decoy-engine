@@ -87,6 +87,7 @@ SENTRIES = (
     "tests/sentry/layout/test_package_fanout.py",
     "tests/sentry/layout/test_vendored_files.py",
     "tests/sentry/protected_dir/test_protected_dir.py",
+    "tests/sentry/scratch/test_scratch_arena_prefix.py",
     "tests/sentry/defects/test_anchored_regex.py",
     "tests/sentry/defects/test_exception_context.py",
     "tests/sentry/defects/test_generate_option_reads.py",
