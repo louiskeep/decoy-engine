@@ -14,7 +14,7 @@ from collections.abc import Callable
 
 import lark
 
-from decoy_engine.expressions import compile_expr
+from decoy_engine.expressions import column_refs, compile_expr
 
 _ORDERING = {"==", "!=", "<", "<=", ">", ">="}
 _PASS_THROUGH = {
@@ -60,9 +60,7 @@ def derived_uses_as_numbers(
     """
 
     def has(node: lark.Tree) -> bool:
-        return any(
-            t.data == "col_ref" and str(t.children[0]) == column for t in node.iter_subtrees()
-        )
+        return column in column_refs(node)
 
     def typ(n: lark.Tree) -> str:
         d, kids = n.data, _trees(n)

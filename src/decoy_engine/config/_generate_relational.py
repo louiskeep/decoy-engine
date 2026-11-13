@@ -55,7 +55,7 @@ from typing import Any
 from decoy_engine import _capacity, reasons
 from decoy_engine.config._generate_options import GENERATE_OPTIONS, OptionSpec
 from decoy_engine.config._tables import generate_columns_of
-from decoy_engine.expressions import compile_expr
+from decoy_engine.expressions import column_refs, compile_expr
 
 __all__ = [
     "GenerateInputRef",
@@ -313,10 +313,11 @@ def _named_columns(kind: str, value: Any) -> list[str]:
     if kind != "expression":
         return [value]
     try:
-        tree = compile_expr(value).tree
+        compiled = compile_expr(value)
     except Exception:
         return []
-    return [str(t.children[0]) for t in tree.iter_subtrees() if t.data == "col_ref"]
+    # Sorted: a frozenset's order follows the hash seed, and the edges must not.
+    return sorted(column_refs(compiled))
 
 
 def _source_table(table: Mapping[str, Any], option: OptionSpec, context: Any) -> str | None:

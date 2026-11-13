@@ -333,14 +333,13 @@ def _masked_driver_columns(node: WorkNode) -> frozenset[str]:
     from decoy_engine.execution._adapter import provider_config_to_dict
 
     if node.strategy == "derived":
-        from decoy_engine.expressions import compile_expr
-        from decoy_engine.transforms.derived import _get_column_refs
+        from decoy_engine.expressions import column_refs, compile_expr
 
         expr = provider_config_to_dict(plan_slice.provider_config).get("expression")
         if not expr:
             return frozenset()
         try:
-            return _get_column_refs(compile_expr(str(expr)))
+            return column_refs(compile_expr(str(expr)))
         except Exception:
             # Invalid syntax surfaces as a ValidationError at execution time
             # (DerivedConfig.from_dict); no edge, no double-report.

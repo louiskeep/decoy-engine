@@ -35,7 +35,7 @@ Bounds:
 
 Mask mode and gen mode both evaluate the same closed expression against the
 row context, narrowed to exactly the expression's compiled column references
-(`_get_column_refs`) and keyed by real column name: a caller's extra keys are never
+(`expressions.column_refs`) and keyed by real column name: a caller's extra keys are never
 visible to the expression (a closed `names` scope, as simpleeval's `names` mapping and
 `expressions/_safe_eval.py` supply it). Determinism is inherent: same row context -> same output, no RNG
 involved. There is no code branching between mask and gen.
@@ -68,7 +68,7 @@ from typing import Any
 
 from decoy_engine import reasons
 from decoy_engine.errors import ValidationError
-from decoy_engine.expressions import CompiledExpression, compile_expr, evaluate
+from decoy_engine.expressions import CompiledExpression, column_refs, compile_expr, evaluate
 from decoy_engine.plan._errors import PlanCompileError
 
 # Valid null_propagation values.
@@ -185,26 +185,6 @@ class DerivedConfig:
         )
 
 
-def _get_column_refs(compiled: CompiledExpression) -> frozenset[str]:
-    """Extract the set of column names referenced in a compiled expression.
-
-    Walks the Lark parse tree and collects all ``col_ref`` node identifiers.
-    Called by check_derived_column_refs (plan-compile time) to validate that
-    referenced columns exist in the same table and that no cycles exist.
-
-    Args:
-        compiled: A pre-compiled expression from compile_expr.
-
-    Returns:
-        A frozenset of column name strings.
-    """
-    refs: set[str] = set()
-    for subtree in compiled.tree.iter_subtrees():
-        if subtree.data == "col_ref":
-            refs.add(str(subtree.children[0]))
-    return frozenset(refs)
-
-
 def _is_null(value: Any) -> bool:
     """Return True when *value* is None or a float NaN."""
     if value is None:
@@ -290,7 +270,7 @@ def apply_derived(
             failed. The text names the output column, the row index and a reason
             word only (see the module docstring); nothing is chained.
     """
-    col_refs = _get_column_refs(config.compiled)
+    col_refs = column_refs(config.compiled)
     reason: str | None = None
     try:
         visible = {ref: row_context[ref] for ref in col_refs}

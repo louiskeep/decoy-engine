@@ -18,6 +18,11 @@ API:
     One-time parse per column expression. Raises ValidationError on
     any expression outside the closed grammar.
 
+  column_refs(compiled) -> frozenset[str]
+    The column names an expression (or one parse subtree of it) reads.
+    The one walk for `col_ref` nodes: the plan's existence and cycle
+    checks, the generate-input resolver and numeric typing all ask it.
+
   evaluate(compiled, row_context) -> value
     Per-row evaluation. row_context is {column_name: value}. Raises
     KeyError when a referenced column is absent from the context.
@@ -192,6 +197,15 @@ def compile_expr(expr_string: str) -> CompiledExpression:
     _rewrite_if_calls(tree)
 
     return CompiledExpression(source=expr_string, tree=tree)
+
+
+def column_refs(compiled: CompiledExpression | lark.Tree[Any]) -> frozenset[str]:
+    """The names of every column `compiled` reads, from any position in the tree.
+
+    Takes a compiled expression or one subtree of its parse tree.
+    """
+    tree = compiled.tree if isinstance(compiled, CompiledExpression) else compiled
+    return frozenset(str(t.children[0]) for t in tree.iter_subtrees() if t.data == "col_ref")
 
 
 def _rewrite_if_calls(tree: lark.Tree[Any]) -> None:
