@@ -1310,7 +1310,8 @@ same configs:
   but generates later (`generate_column_forward_reference`), `group_by` equal to `order_by`
   (`grouped_series_group_by_equals_order_by`), the formula rules below, `weighted` reference
   weights whose length differs from a `sequence` parent's `row_count`
-  (`reference_weights_length_mismatch`), and every other parse rule a type's transform has. Those
+  (`reference_weights_length_mismatch`; any other parent is checked against its real keys at
+  run), and every other parse rule a type's transform has. Those
   keep the transform's own code, such as `derived_aggregate_op_missing`,
   `derived_bounds_inverted`, `grouped_series_generator_invalid`,
   `windowed_date_min_exceeds_max` or `group_key_length_odd`; `generate_option_invalid` is used
@@ -1389,10 +1390,13 @@ child can point at a generated parent's keys.
   to draw from (both required).
 - `distribution`: how draws are spread across the parent values: `random`
   (default), `sequential`, `weighted`, or `fitted` (below). Any other value is refused.
-- `weights`: per-value weights, required when `distribution` is `weighted`. Against a
-  `sequence` parent with no nulls, the list must have one weight per parent row.
+- `weights`: per-value weights, required when `distribution` is `weighted`. The list must have
+  one weight per distinct parent key. Against a `sequence` parent with no nulls that is one per
+  parent row, checked at plan compile; for any other parent the run checks the real key count and
+  refuses a mismatch with `runtime.reference_weights_length_mismatch`. It never falls back to
+  uniform draws.
 - `min_per_parent` / `max_per_parent`: optional per-parent cardinality bounds
-  (0 = unbounded). These bounds do not compose with `sequential`.
+  (0 = unbounded). These bounds do not compose with `sequential`. See "Per-parent bounds" below.
 - `snapshot_file` / `source_column`: only with `distribution: fitted` (below).
   Any other distribution refuses them with `config.generate_option_unknown`.
 
@@ -1400,6 +1404,50 @@ child can point at a generated parent's keys.
 parents and 60 children almost every parent gets 1 to 4 children. A source
 where a few parents hold most of the children, or many parents hold none, loses
 that shape. `distribution: fitted` keeps it.
+
+#### Per-parent bounds (`min_per_parent`, `max_per_parent`)
+
+A positive bound is exact: every distinct parent key gets at least `min_per_parent` and at most
+`max_per_parent` child rows, or the config is refused. Nothing is repaired on a best-effort basis.
+
+With `P` distinct non-null parent keys and `N` child rows the bounds can hold exactly when
+`min_per_parent * P <= N` and, with a maximum, `N <= max_per_parent * P`. Equality fits on both
+sides.
+
+| When | Refused | Code |
+| --- | --- | --- |
+| Validate | `min_per_parent` above a positive `max_per_parent` | `config.generate_per_parent_bounds_conflict` |
+| Validate | a positive bound with `distribution: fitted` | `config.generate_fitted_reference_bounds_conflict` |
+| Validate | a positive bound with `null_probability` above 0 (nulls would undo the bounds) | `config.generate_per_parent_null_conflict` |
+| Validate | `max_per_parent` times the parent table's `row_count` is below the child `row_count` | `config.generate_per_parent_infeasible` |
+| Run | the bounds cannot hold for the real distinct parent keys | `runtime.generate_per_parent_infeasible` |
+
+Validate judges the maximum only, against the parent's `row_count`, which is an upper bound on
+`P`. A parent column that repeats or nulls keys has fewer, so the run checks both bounds on the
+keys it actually drew from. A caller that skips validation gets
+`runtime.generate_fitted_reference_bounds_conflict` for a bound on a fitted column, and
+`runtime.reference_bounds_unsatisfied` if a repaired column still breaks a bound. Each message is
+the fixed summary plus the table and column names.
+
+A bounded reference runs on the whole-table route. A capacity probe keeps the bounds and loosens
+them to its scaled row counts, so a config that passes at full size is never refused by its probe.
+
+#### Empty parent and `orphan_policy`
+
+When the parent column has no non-null keys and the child has rows, a `relationships` entry whose
+parent is `(reference_table, [reference_column])` and whose child is this table and column decides:
+
+| `orphan_policy` | Result |
+| --- | --- |
+| `fail` | the run stops with `runtime.reference_parent_pool_empty` |
+| `warn` | the column is null and one `warning.reference_parent_pool_empty` is raised, naming the table and column |
+| `preserve`, `remap`, or no matching relationship | the column is null, with no warning |
+
+The rule is the same on the in-memory, streamed and pinned routes. A pinned plan records the
+policy of each covered reference column as plan metadata (`reference_policies`), so the plan
+fingerprint follows the policy while the column's values and seed do not. A `fitted` column is
+the exception: an empty parent always stops with `plan.reference_parent_pool_empty`, whatever the
+policy.
 
 #### Fitted fan-out (`distribution: fitted`)
 

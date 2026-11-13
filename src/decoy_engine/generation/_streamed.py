@@ -63,6 +63,7 @@ from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
 from decoy_engine.generation._numeric_typing import restore_declared
 from decoy_engine.generation.kinds import cast_output_values, output_types
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
+from decoy_engine.generation.relational import reference_policies
 from decoy_engine.progress import get_active_channel
 
 if TYPE_CHECKING:
@@ -353,7 +354,7 @@ def run_generation(
     ``budget_bytes=None`` and no ``ledger`` is the explicit unbounded mode: no byte ceiling is
     enforced and no bounded-memory guarantee is made. ``partition(table, rows)`` overrides the
     batch layout (used to prove route-independence over irregular partitions). ``on_warning``
-    receives each fidelity-gate ``QualityWarning``; it never changes the generated tables.
+    receives each ``QualityWarning`` a route raises; it never changes the generated tables.
     """
     from decoy_engine.plan._seed import _normalize_job_seed_int
     from decoy_engine.plan.checks import check_faker_default_locale
@@ -423,6 +424,7 @@ def run_generation(
     counts: dict[str, int] = {}
     key_pools: dict[tuple[str, str], list[Any]] = {}
     referenced = _referenced_keys(tables)
+    policies = reference_policies(config)
 
     def _consume_table(
         t: dict[str, Any],
@@ -455,6 +457,8 @@ def run_generation(
                 stage=stage,
                 faker_payload=bounds.get((name, c["name"])),
                 numeric=g is not None and pa.types.is_integer(g),
+                reference_policy=policies.get((name, c["name"])),
+                on_warning=on_warning,
             )
             for c, g in zip(t["generate_columns"], generated, strict=True)
         ]

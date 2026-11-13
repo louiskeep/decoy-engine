@@ -167,7 +167,8 @@ def cfg_reference_repair() -> dict[str, Any]:
         "reference_table": "par",
         "reference_column": "k",
         "min_per_parent": 2,
-        "max_per_parent": 4,
+        # 14 children over the parent's three keys: a maximum of 4 could not hold them.
+        "max_per_parent": 5,
     }
     return fx.config([_t("child", 14, [ref]), _parent()])
 

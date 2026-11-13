@@ -69,6 +69,10 @@ class PinnedPlan:
     # means "no numeric columns", and also what a plan written before this field loads as; an
     # empty value is left out of ``to_dict`` and the fingerprint so those plans keep their bytes.
     numeric_types: tuple[tuple[str, str, str], ...] = ()
+    # ``(table, column, orphan policy)`` for each reference column a config relationship covers:
+    # what an empty parent does at execution. Plan metadata, never part of a column config, so
+    # it moves the fingerprint and no seed. Empty is left out like ``numeric_types``.
+    reference_policies: tuple[tuple[str, str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -96,6 +100,8 @@ class PinnedPlan:
         }
         if self.numeric_types:
             out["numeric_types"] = [list(n) for n in self.numeric_types]
+        if self.reference_policies:
+            out["reference_policies"] = [list(p) for p in sorted(self.reference_policies)]
         return out
 
     @classmethod
@@ -129,6 +135,7 @@ class PinnedPlan:
                     for s in data["statistical"]
                 ),
                 numeric_types=_numeric_types(data),
+                reference_policies=_reference_policies(data),
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise PinnedModeError(
@@ -157,6 +164,32 @@ def _numeric_entry(n: Any) -> tuple[str, str, str]:
     if dtype not in NUMERIC_TYPE_NAMES:
         raise ValueError("unknown numeric type")
     return (table, column, dtype)
+
+
+def _reference_policies(data: dict[str, Any]) -> tuple[tuple[str, str, str], ...]:
+    """Decode the optional field strictly: absent means none; an entry is three strings."""
+    if "reference_policies" not in data:
+        return ()
+    raw = data["reference_policies"]
+    if not isinstance(raw, list):
+        raise TypeError("reference_policies is not a list")
+    return tuple(reference_policy_entry(p) for p in raw)
+
+
+def reference_policy_entry(entry: Any) -> tuple[str, str, str]:
+    """One ``(table, column, policy)`` entry, or ``TypeError``/``ValueError`` naming no value."""
+    from decoy_engine.relationships import OrphanPolicy
+
+    if (
+        not isinstance(entry, (list, tuple))
+        or len(entry) != 3
+        or not all(isinstance(v, str) for v in entry)
+    ):
+        raise TypeError("reference_policies entry is not three strings")
+    table, column, policy = entry
+    if policy not in {p.value for p in OrphanPolicy}:
+        raise ValueError("unknown orphan policy")
+    return (table, column, policy)
 
 
 def runtime_identity() -> tuple[tuple[str, str], ...]:
@@ -234,4 +267,6 @@ def fingerprint(plan: PinnedPlan) -> str:
     }
     if plan.numeric_types:
         payload["numeric_types"] = [list(n) for n in plan.numeric_types]
+    if plan.reference_policies:
+        payload["reference_policies"] = [list(p) for p in sorted(plan.reference_policies)]
     return hashlib.sha256(_canonical(payload)).hexdigest()

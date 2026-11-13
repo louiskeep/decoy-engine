@@ -15,6 +15,7 @@ Public API:
         RelationshipGraph,
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
+        normalize_orphan_policy_lookup,
         # Namespace registry
         NamespaceBinding,
         NamespaceConfigError,
@@ -26,6 +27,8 @@ The two builders compose: `build_namespace_registry` runs first (raises on
 ambiguity), then `check_orphan_fk_policy_completeness` validates orphan
 policies and returns a lookup, then `build_relationship_graph` consumes
 both and produces the resolved `RelationshipGraph`.
+`normalize_orphan_policy_lookup` is the one reader of the config's policies:
+the completeness check and generation both call it.
 
 Source patterns documented in each submodule header. DAG construction
 draws from networkx + dbt's manifest dependency model (immutable artifact,
@@ -42,6 +45,7 @@ from decoy_engine.relationships._graph import (
     RelationshipGraph,
     build_relationship_graph,
     check_orphan_fk_policy_completeness,
+    normalize_orphan_policy_lookup,
 )
 from decoy_engine.relationships._namespace import (
     NamespaceBinding,
@@ -60,4 +64,5 @@ __all__ = [
     "build_namespace_registry",
     "build_relationship_graph",
     "check_orphan_fk_policy_completeness",
+    "normalize_orphan_policy_lookup",
 ]

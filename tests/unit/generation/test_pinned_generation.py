@@ -103,9 +103,9 @@ def _config(snapshot: str, seed: int = 11, **overrides: Any) -> dict[str, Any]:
                 "reference_table": "zeta_customers",
                 "reference_column": "id",
                 "distribution": "random",
-                "min_per_parent": 1,
+                # 25 children over 40 parents: a positive minimum would be infeasible, and a
+                # bounded reference takes no null injection.
                 "max_per_parent": 3,
-                "null_probability": 0.1,
             },
         ],
     }
@@ -711,3 +711,115 @@ def test_token_inside_the_snapshot_file_is_refused_without_echo(
         compile_pinned_plan(_config(str(bad)), REF)
     assert exc.value.code == "pinned_live_token"
     assert "${" not in str(exc.value) and "SECRET" not in str(exc.value)
+
+
+# ---- GEN-REL: the compiled reference policy ----------------------------------------------------
+
+
+def _family_config(policy: str | None, parent_rows: int = 4) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "global_settings": {"seed": 3},
+        "tables": [
+            {
+                "name": "parents",
+                "row_count": parent_rows,
+                "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
+            },
+            {
+                "name": "kids",
+                "row_count": 9,
+                "generate_columns": [
+                    {
+                        "name": "pid",
+                        "type": "reference",
+                        "reference_table": "parents",
+                        "reference_column": "id",
+                    }
+                ],
+            },
+        ],
+    }
+    if policy is not None:
+        config["relationships"] = [
+            {
+                "parent": {"table": "parents", "columns": ["id"]},
+                "children": [{"table": "kids", "columns": ["pid"]}],
+                "orphan_policy": policy,
+            }
+        ]
+    return config
+
+
+def test_reference_policy_is_plan_metadata_not_a_column_or_seed_input() -> None:
+    bare = compile_pinned_plan(_family_config(None), REF)
+    with_policy = compile_pinned_plan(_family_config("fail"), REF)
+    assert bare.reference_policies == ()
+    assert with_policy.reference_policies == (("kids", "pid", "fail"),)
+    assert with_policy.tables == bare.tables
+    assert fingerprint(with_policy) != fingerprint(bare)
+    assert execute_pinned(with_policy, 9)["kids"].equals(execute_pinned(bare, 9)["kids"])
+
+
+def test_plan_without_reference_policies_keeps_its_serialized_form() -> None:
+    plan = compile_pinned_plan(_family_config(None), REF)
+    assert "reference_policies" not in plan.to_dict()
+    again = PinnedPlan.from_dict(json.loads(json.dumps(plan.to_dict())))
+    assert again.reference_policies == () and fingerprint(again) == fingerprint(plan)
+    with_policy = compile_pinned_plan(_family_config("warn"), REF)
+    stripped = {k: v for k, v in with_policy.to_dict().items() if k != "reference_policies"}
+    assert fingerprint(PinnedPlan.from_dict(stripped)) == fingerprint(plan)
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "fail",
+        [["kids", "pid"]],
+        [["kids", "pid", "fail", "extra"]],
+        [["kids", "pid", "FAIL"]],
+        [["kids", "pid", "abandon-leaky"]],
+        [["kids", 3, "fail"]],
+        [{"table": "kids", "column": "pid", "policy": "fail"}],
+    ],
+)
+def test_serialized_reference_policies_decode_strictly(stored: Any) -> None:
+    good = compile_pinned_plan(_family_config("fail"), REF).to_dict()
+    assert good["reference_policies"] == [["kids", "pid", "fail"]]
+    with pytest.raises(PinnedModeError) as exc:
+        PinnedPlan.from_dict({**good, "reference_policies": stored})
+    assert exc.value.code == "pinned_plan_malformed"
+    assert "leaky" not in str(exc.value)
+    assert exc.value.__cause__ is None
+
+
+@pytest.mark.parametrize("entry", [("kids", "pid", "abandon-leaky"), ("kids", "pid", 7), ("kids",)])
+def test_hand_built_plan_with_a_bad_policy_is_refused_before_any_draw(
+    entry: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.generation import synthesize
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a column was drawn from a plan with a malformed policy")
+
+    monkeypatch.setattr(synthesize, "_generate_column", boom)
+    plan = compile_pinned_plan(_family_config("fail"), REF)
+    bad = dataclasses.replace(plan, reference_policies=(entry,))
+    with pytest.raises(PinnedModeError) as exc:
+        execute_pinned(bad, 1)
+    assert exc.value.code == "pinned_plan_malformed"
+    assert "leaky" not in str(exc.value)
+
+
+def test_pinned_execute_honors_fail_for_an_empty_parent() -> None:
+    from decoy_engine.generation.pool import GenerationError
+
+    assert (
+        execute_pinned(compile_pinned_plan(_family_config(None, 0), REF), 1)["kids"]
+        .column("pid")
+        .to_pylist()
+        == [None] * 9
+    )
+    with pytest.raises(GenerationError) as exc:
+        execute_pinned(compile_pinned_plan(_family_config("fail", 0), REF), 1)
+    assert exc.value.code == "reference_parent_pool_empty"
+    assert exc.value.code.namespace == "runtime"

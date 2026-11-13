@@ -122,6 +122,74 @@ def test_failure_at_a_later_table_aborts_without_a_partial_commit(
     assert _staging_dirs(tmp_path) == [], "staging was not removed"
 
 
+def _empty_parent_plan(policy: str) -> Any:
+    config = fx.config(
+        [
+            fx.table("parent", 0, [{"name": "id", "type": "sequence", "start": 1}]),
+            fx.table(
+                "child",
+                200,
+                [
+                    {"name": "cid", "type": "sequence", "start": 1},
+                    {
+                        "name": "pid",
+                        "type": "reference",
+                        "reference_table": "parent",
+                        "reference_column": "id",
+                    },
+                ],
+            ),
+        ]
+    )
+    config["relationships"] = [
+        {
+            "parent": {"table": "parent", "columns": ["id"]},
+            "children": [{"table": "child", "columns": ["pid"]}],
+            "orphan_policy": policy,
+        }
+    ]
+    return plan_of(config)
+
+
+def test_reference_pool_refusal_aborts_the_sink_before_any_child_batch(tmp_path: Path) -> None:
+    """GEN-REL: the pool check runs when the stream is built, so nothing of the child is written."""
+    from decoy_engine.generation.pool import GenerationError
+
+    target = tmp_path / "out"
+    with pytest.raises(GenerationError) as exc:
+        generate_tables_streamed(
+            _empty_parent_plan("fail"), sink=ParquetTransactionalSink(target), batch_rows=64
+        )
+    assert exc.value.code == "reference_parent_pool_empty"
+    assert not target.exists(), "a partial commit reached the target"
+    assert _staging_dirs(tmp_path) == [], "staging was not removed"
+
+
+def test_reference_pool_check_runs_once_per_stream_not_once_per_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.generation import relational
+
+    calls: list[int] = []
+    real = relational.check_reference_pool
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_column_streams, "check_reference_pool", counting)
+    seen: list[Any] = []
+    result = generate_tables_streamed(
+        _empty_parent_plan("warn"),
+        sink=ParquetTransactionalSink(tmp_path / "out"),
+        batch_rows=64,
+        on_warning=seen.append,
+    )
+    assert result.mode == "streamed"
+    assert pq.ParquetFile(tmp_path / "out" / "child.parquet").metadata.num_row_groups == 4
+    assert len(calls) == 1 and len(seen) == 1
+
+
 def test_writer_close_failure_aborts_and_preserves_the_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

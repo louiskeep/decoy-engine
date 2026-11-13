@@ -90,7 +90,12 @@ class TestOrphanPolicyConflict:
         with pytest.raises(PlanCompileError) as exc:
             _graph(_rels(), policy_a="remap", policy_b="fail")
         assert exc.value.code == "orphan_policy_conflict"
-        assert "remap" in str(exc.value) and "fail" in str(exc.value)
+        assert exc.value.path == "relationships[child.('id',)]"
+        # GEN-REL AT-6r: the two ends are named, the conflicting policy tokens are not.
+        assert "child.id" in exc.value.message
+        for token in ("remap", "fail"):
+            assert token not in str(exc.value)
+        assert exc.value.__cause__ is None and exc.value.__context__ is None
 
     def test_identical_policies_pass(self) -> None:
         graph = _graph(_rels(), policy_a="remap", policy_b="remap")

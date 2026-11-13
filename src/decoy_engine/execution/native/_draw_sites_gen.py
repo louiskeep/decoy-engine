@@ -132,15 +132,16 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         provider_version=f"{_V6} (GenDeriveContext); CPython Mersenne Twister",
         notes=(
             "One Random advanced across all rows: a partition cannot resume mid-stream. "
-            "Cardinality repair (generators/columns.py:596-656) adds rng.shuffle/choices "
-            "on the same stream. V1 mirror generators/columns.py:507. The fitted fan-out "
+            "Cardinality repair (generation/relational/_cardinality.py:198) adds rng.shuffle "
+            "and rng.randrange on the same stream; both generators route to it. V1 mirror "
+            "generators/columns.py:507. The fitted fan-out "
             "allocator (generation/statistical/_fanout.py:305) takes the same Random, seeded "
             "with the pinned snapshot digest (FanoutSpec.seed_digest), and shuffles degrees "
             "to parents, then the child row order."
         ),
         mirror_call_sites=(
             "generators/columns.py:507",
-            "generators/columns.py:596",
+            "generation/relational/_cardinality.py:198",
             "generation/statistical/_fanout.py:305",
         ),
     ),

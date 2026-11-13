@@ -28,7 +28,6 @@ TRUTH_TEST_BASELINE: dict[str, int] = {
     "config/_generate_unique.py": 1,
     "config/_tables.py": 1,
     "execution/_chunked.py": 1,
-    "execution/_probe_scale.py": 2,
     "execution/_transforms_gate.py": 1,
     "execution/_transforms_table.py": 1,
     "execution/native/_plan.py": 1,

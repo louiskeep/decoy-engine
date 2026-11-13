@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import per_parent_bounds
 from decoy_engine.generation._numeric_typing import numeric_plan
 from decoy_engine.generation.kinds import (
     constant_arrow_type,
@@ -210,7 +211,7 @@ def classify_plan(
         )
 
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:
-        if int(col.get("min_per_parent") or 0) > 0 or int(col.get("max_per_parent") or 0) > 0:
+        if any(per_parent_bounds(col)):
             return decline(table, col, "reference_cardinality_repair")
         if col.get("distribution") == "fitted":
             return decline(table, col, "reference_fitted_fanout")

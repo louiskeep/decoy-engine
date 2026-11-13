@@ -43,6 +43,7 @@ from decoy_engine.config._generate_option_catalog import (
     generate_option_catalog,
 )
 from decoy_engine.config._generate_options import refuse_unlisted_generate_families
+from decoy_engine.config._generate_relational import per_parent_bounds, per_parent_problems
 from decoy_engine.config._generate_type_checks import (
     parse_output_type,
     refuse_fixed_width_output_types,
@@ -89,7 +90,12 @@ from decoy_engine.config._subset import (
     SubsetPredicateConfig,
     SubsetSeedConfig,
 )
-from decoy_engine.config._tables import ColumnConfig, TableConfig, classify_table_kinds
+from decoy_engine.config._tables import (
+    ColumnConfig,
+    TableConfig,
+    classify_table_kinds,
+    generate_columns_of,
+)
 from decoy_engine.config._targets import (
     FileTarget,
     GCSTarget,
@@ -150,12 +156,15 @@ __all__ = [
     "classify_table_kinds",
     "declares_unique",
     "distinct_categories",
+    "generate_columns_of",
     "generate_option_catalog",
     "override_sources",
     "parse_delivery_config",
     "parse_output_type",
     "parse_pipeline_config",
     "parse_relationship_config",
+    "per_parent_bounds",
+    "per_parent_problems",
     "post_scan_gate_applies",
     "post_scan_integrity_requested",
     "refuse_fixed_width_output_types",

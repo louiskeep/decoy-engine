@@ -25,5 +25,38 @@ def test_docstring_names_rows_that_must_hold_distinct_values_and_the_null_case()
     doc = unique_capacity_ok.__doc__ or ""
     assert "distinct" in doc
     assert "null_reusable" in doc
-    module_doc = __import__("decoy_engine.generation.pool._capacity", fromlist=["_"]).__doc__
+    module_doc = __import__("decoy_engine._capacity", fromlist=["_"]).__doc__
     assert "must hold distinct values" in module_doc
+
+
+def test_the_pool_export_is_a_facade_over_the_foundation_leaf(monkeypatch):
+    """GEN-REL: config and generation share one predicate without a config-to-generation import."""
+    import decoy_engine._capacity as foundation
+    from decoy_engine.generation.pool import _capacity as facade
+
+    assert foundation.unique_capacity_ok(5, 6) is False
+    seen = []
+
+    def spy(pool_size, rows, null_reusable=False):
+        seen.append((pool_size, rows, null_reusable))
+        return True
+
+    monkeypatch.setattr(foundation, "unique_capacity_ok", spy)
+    assert unique_capacity_ok(5, 6) is True
+    assert facade.unique_capacity_ok(0, 9, null_reusable=True) is True
+    assert seen == [(5, 6, False), (0, 9, True)]
+
+
+def test_the_foundation_leaf_imports_nothing_from_the_engine():
+    import ast
+    from pathlib import Path
+
+    import decoy_engine._capacity as foundation
+
+    tree = ast.parse(Path(foundation.__file__).read_text(encoding="utf-8"))
+    imported = [
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module != "__future__"
+    ] + [a.name for node in ast.walk(tree) if isinstance(node, ast.Import) for a in node.names]
+    assert imported == []

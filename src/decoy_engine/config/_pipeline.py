@@ -45,6 +45,7 @@ from pydantic_core import PydanticCustomError, ValidationError
 from decoy_engine import reasons
 from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._generate_options import problem_details
+from decoy_engine.config._generate_relational import per_parent_bounds, per_parent_problems
 from decoy_engine.config._generate_unique import cross_table_unique_problems
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
@@ -329,6 +330,36 @@ class PipelineConfig(BaseModel):
                     state[parent_name] = GRAY
                     path.append(parent_name)
                     stack.append((parent_name, iter(deps.get(parent_name, ()))))
+        return self
+
+    @model_validator(mode="after")
+    def _per_parent_bounds_valid(self) -> PipelineConfig:
+        """GEN-REL: a reference column's per-parent bounds must be able to hold.
+
+        Runs after the reference graph is known valid. Only the maximum is judged against the
+        parent's declared `row_count`; the run re-checks both bounds on the real key count.
+        """
+        if not any(
+            any(per_parent_bounds(c.model_extra or {}))
+            for t in self.tables
+            for c in t.generate_columns
+        ):
+            return self
+        problems = per_parent_problems(
+            [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "generate_columns": [
+                        {**(c.model_extra or {}), "name": c.name, "type": c.type}
+                        for c in t.generate_columns
+                    ],
+                }
+                for t in self.tables
+            ]
+        )
+        if problems:
+            raise ValidationError.from_exception_data("PipelineConfig", problem_details(problems))
         return self
 
     @model_validator(mode="after")

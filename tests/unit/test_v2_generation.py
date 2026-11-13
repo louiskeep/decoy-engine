@@ -1556,9 +1556,12 @@ class TestReferenceEdgeCases:
         ]
 
     @pytest.mark.usefixtures("lenient_generate_checks")
-    def test_weighted_size_mismatch_falls_back_to_uniform(self):
-        # parent pool has 5 unique values; weights has only 3 -> V1 sets weights
-        # to None (uniform). v2 mirrors.
+    def test_weighted_size_mismatch_is_refused_at_run(self):
+        # parent pool has 5 unique values; weights has only 3. V1 falls back to uniform draws;
+        # v2 refuses rather than draw a distribution the config did not ask for (GEN-REL E1).
+        from decoy_engine import reasons
+        from decoy_engine.generation.pool import GenerationError
+
         child = {
             "name": "customer_id",
             "type": "reference",
@@ -1567,7 +1570,9 @@ class TestReferenceEdgeCases:
             "distribution": "weighted",
             "weights": [1, 1, 1],  # wrong size
         }
-        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(self._two_table(child))
+        with pytest.raises(GenerationError) as info:
+            _v2_run_multi(self._two_table(child))
+        assert info.value.code == reasons.runtime.REFERENCE_WEIGHTS_LENGTH_MISMATCH
 
     def test_unknown_distribution_is_refused_at_validation(self):
         # V1 warned and used random, v2 silently used random. GEN-STRICT E1 refuses the typo
