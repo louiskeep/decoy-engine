@@ -698,3 +698,45 @@ def test_apply_derived_sees_only_compiled_refs(monkeypatch: pytest.MonkeyPatch) 
     ) == [3]
     refs = set(derived._get_column_refs(config.compiled))
     assert seen == [refs, refs] == [{"a", "b"}, {"a", "b"}]
+
+
+class TestMissingCellRule:
+    """AT-E2-1, 2, 4, 6: NaT and pd.NA are missing cells in every null_propagation mode."""
+
+    @staticmethod
+    def _apply(expression: str, row: dict, mode: str = "explicit_null") -> object:
+        from decoy_engine.transforms.derived import DerivedConfig, apply_derived
+
+        cfg = DerivedConfig.from_dict({"expression": expression, "null_propagation": mode})
+        return apply_derived(cfg, row, column="c", row_index=0)
+
+    @pytest.mark.parametrize("missing", ["NaT", "NA", "np_nat"])
+    def test_explicit_null_yields_none_for_a_missing_date(self, missing: str) -> None:
+        import numpy as np
+        import pandas as pd
+
+        cell = {"NaT": pd.NaT, "NA": pd.NA, "np_nat": np.datetime64("NaT")}[missing]
+        row = {"a": cell, "b": pd.Timestamp("2020-02-02")}
+        assert self._apply("case_when(a < b, 1, 0)", row) is None
+
+    def test_decimal_nan_is_missing(self) -> None:
+        from decimal import Decimal
+
+        assert self._apply("a + 1", {"a": Decimal("NaN")}) is None
+
+    @pytest.mark.parametrize(("mode", "sub"), [("sentinel", ""), ("default", 0)])
+    def test_sentinel_and_default_substitute_for_nat(self, mode: str, sub: object) -> None:
+        import pandas as pd
+
+        assert self._apply("a", {"a": pd.NaT}, mode) == sub
+
+    def test_substituted_nat_that_then_fails_raises_value_free_text(self) -> None:
+        import pandas as pd
+
+        with pytest.raises(ValueError) as info:
+            self._apply("a / 0", {"a": pd.NaT}, "default")
+        assert "NaT" not in str(info.value)
+
+    @pytest.mark.parametrize("text", ["NaT", ""])
+    def test_text_nat_and_empty_string_are_values(self, text: str) -> None:
+        assert self._apply('concat(a, "!")', {"a": text}) == f"{text}!"

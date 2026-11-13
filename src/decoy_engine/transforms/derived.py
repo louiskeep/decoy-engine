@@ -62,13 +62,13 @@ Error handling:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any
 
 from decoy_engine import reasons
 from decoy_engine.errors import ValidationError
 from decoy_engine.expressions import CompiledExpression, compile_expr, evaluate
+from decoy_engine.internal.pandas_missing import is_null_cell
 from decoy_engine.plan._errors import PlanCompileError
 
 # Valid null_propagation values.
@@ -205,11 +205,8 @@ def _get_column_refs(compiled: CompiledExpression) -> frozenset[str]:
     return frozenset(refs)
 
 
-def _is_null(value: Any) -> bool:
-    """Return True when *value* is None or a float NaN."""
-    if value is None:
-        return True
-    return isinstance(value, float) and math.isnan(value)
+# One missing-cell rule with the masking kernels and formula (NaT and pd.NA count).
+_is_null = is_null_cell
 
 
 def _coerce_context(
