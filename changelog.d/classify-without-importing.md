@@ -1,4 +1,4 @@
-### Fixed (isolated probe child, 2026-11-13)
+### Fixed (isolated probe child hang, nightly, 2026-11-13)
 
 - Classifying a run failure no longer imports engine modules. The classifier used to import every
   registered error family, including `quality.dp` with opendp, scikit-learn and scipy's OpenBLAS.
