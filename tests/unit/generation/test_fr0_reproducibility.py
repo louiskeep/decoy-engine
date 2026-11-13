@@ -38,12 +38,7 @@ def test_fresh_column_and_its_dependents_are_excluded() -> None:
                 [
                     {"name": "k", "type": "sequence", "start": 1},
                     {"name": "f", "type": "sequence", "start": 1, "determinism": "fresh"},
-                    {
-                        "name": "dep",
-                        "type": "formula",
-                        "formula": "f'{f}-x'",
-                        "references": ["f"],
-                    },
+                    {"name": "dep", "type": "derived", "expression": "f + 1"},
                     {"name": "d2", "type": "derived", "expression": "dep + 1"},
                     {"name": "agg", "type": "derived_aggregate", "op": "count", "column": "d2"},
                     {"name": "ok", "type": "categorical", "categories": ["a", "b"]},

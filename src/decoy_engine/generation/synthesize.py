@@ -42,11 +42,14 @@ from decoy_engine.generation._numeric_typing import numeric_plan, restore_declar
 from decoy_engine.generation._statistical_column import (
     arrow_table,
     statistical_generate,
+    warn_on_table_fidelity,
     warn_on_unseen_parents,
 )
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
 from decoy_engine.generation.kinds import (
     LookupList,
+    condition_values,
+    conditional_tables,
     constant_values,
     lookup_digests,
     parametric_values,
@@ -55,7 +58,7 @@ from decoy_engine.generation.kinds._lookup import lookup_column_values
 from decoy_engine.generation.relational import reference_draw_extras, reference_policies
 from decoy_engine.generation.relational._aggregate import aggregate_values, with_aggregates
 from decoy_engine.generation.relational._self_reference import reference_parents, self_reference
-from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
+from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec, select_table
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
@@ -215,27 +218,16 @@ def _generate_tables_from_config(
 
             fill_referenced_formula_columns(gcols, data, seed, derive_key, table_name=name)
         tbl = arrow_table(data, table_name=name, statistical_specs=statistical_specs, columns=gcols)
-        # Generation-time fidelity warn-gate (deferred follow-up 5,
-        # 2026-06-12): score statistical columns against their source
-        # snapshot and warn below global_settings.fidelity_warn_threshold.
-        # Warn-only; output bytes are untouched. Lazy import mirrors the
-        # `statistical` dispatch so non-statistical configs never pay it.
-        if any(c.get("type") == "statistical" for c in gcols):
-            from decoy_engine.generation._fidelity_gate import (
-                fidelity_warn_threshold,
-                warn_on_low_fidelity,
-            )
-
-            warn_on_low_fidelity(
-                gcols,
-                data,
-                table_name=name,
-                threshold=fidelity_warn_threshold(config),
-                statistical_specs=statistical_specs,
-                snapshot_index_for_column=snapshot_index_for_column,
-                snapshot_artifacts=snapshot_artifacts,
-                on_warning=on_warning,
-            )
+        warn_on_table_fidelity(
+            config,
+            gcols,
+            data,
+            table_name=name,
+            statistical_specs=statistical_specs,
+            snapshot_index_for_column=snapshot_index_for_column,
+            snapshot_artifacts=snapshot_artifacts,
+            on_warning=on_warning,
+        )
         pools[name] = tbl
         out[name] = tbl
     return with_aggregates(config, out)
@@ -340,7 +332,7 @@ def _generate_column(
     if kind == "sequence":
         values: list[Any] = _sequence(col, n, numeric_type is not None)
     elif kind == "categorical":
-        values = _categorical(col, n, seed, derive_key)
+        values = _categorical(col, n, seed, derive_key, generated)
     elif kind == "faker":
         values = _faker(
             col, n, seed, derive_key, instance_default_locale, provider_snapshot=provider_snapshot
@@ -378,20 +370,11 @@ def _generate_column(
         # Parity tests wrap the scalar generator by this module's name for it.
         values = aggregate_values(generate_derived_aggregate_column, col, n, generated or {})
     elif kind in ("grouped_series", "windowed_date", "group_key"):
-        from decoy_engine.generation._grouped_windowed_generators import (
-            _group_key_generate,
-            _grouped_series_generate,
-            _windowed_date_generate,
-        )
+        from decoy_engine.generation._grouped_windowed_generators import grouped_windowed_values
 
-        if kind == "grouped_series":
-            values = _grouped_series_generate(col, n, seed, generated or {})
-        elif kind == "windowed_date":
-            values = _windowed_date_generate(
-                col, n, seed, generated or {}, pools, siblings, reference_date=reference_date
-            )
-        else:
-            values = _group_key_generate(col, n, seed, generated or {})
+        values = grouped_windowed_values(
+            col, n, seed, generated or {}, pools, siblings, reference_date=reference_date
+        )
     else:
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that
@@ -427,7 +410,9 @@ def _sequence(col: dict[str, Any], n: int, numeric: bool = False) -> list[Any]:
     return SequenceStream(col, numeric=numeric).next_batch(0, n)
 
 
-def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:
+def _categorical(
+    col: dict[str, Any], n: int, seed: int, derive_key: Any = None, generated: Any = None
+) -> list[Any]:
     """Weighted / uniform random choice over ``categories``, parity-frozen vs V1
     ``_generate_categorical_column`` (``columns.py:321-353``).
 
@@ -437,6 +422,10 @@ def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None)
     is uniform. We reuse V1 ``GenDeriveContext`` for the per-column derivation
     (import V1's helper, do not reinvent), so seed-only output is byte-identical
     to V1's under the same ``seed`` + ``derive_key=None``.
+
+    With ``condition_on`` each row draws from the table its parent value selects in
+    ``generated`` (``kinds.conditional_tables``), one ``choices`` call per row on the same
+    ``Random``.
     """
     if col.get("unique") is True:
         from decoy_engine.generation._unique import unique_categorical
@@ -450,7 +439,15 @@ def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None)
     # Instance-local Random: parity-preserving (same Mersenne Twister state
     # initialization as random.seed); thread-safe (no module-global mutation).
     rng = random.Random(col_seed)
-    return rng.choices(cats, weights=weights, k=n)
+    if col.get("condition_on") is None:
+        return rng.choices(cats, weights=weights, k=n)
+    parents = condition_values(col, generated)
+    marginal, tables = conditional_tables(col)
+    out: list[Any] = []
+    for i in range(n):
+        population, cum_weights, _ = select_table(tables, marginal, parents, i)
+        out.append(rng.choices(population, cum_weights=cum_weights)[0])
+    return out
 
 
 def _faker(

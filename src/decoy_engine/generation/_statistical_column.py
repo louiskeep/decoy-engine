@@ -4,7 +4,7 @@ Module-size decomposition (tests/sentry/test_module_size.py ALLOWLIST):
 ``synthesize.py``'s own docstring has flagged the `statistical`/`derived`/
 `formula` per-type dispatch branches as the standing decomposition target
 since DPS Scope B (2026-07-22); this module carries the `statistical`
-branch out, mirroring the existing `transforms/derived_aggregate.py` split
+branch out (with the per-table fidelity warn-gate), mirroring the existing `transforms/derived_aggregate.py` split
 the same allowlist entry names as precedent.
 
 Behavior is unchanged: this is a pure code move, not a rewrite.
@@ -19,9 +19,13 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.generation.kinds import cast_output_columns, output_types
+from decoy_engine.generation.kinds import cast_output_columns, conditional_tables, output_types
 from decoy_engine.generation.pool import QualityWarning, emit_generation_warning
-from decoy_engine.generation.statistical import StatisticalSpec, conditional_fallback_counts
+from decoy_engine.generation.statistical import (
+    StatisticalSpec,
+    conditional_fallback_counts,
+    fallback_counts,
+)
 from decoy_engine.generators.derivation import GenDeriveContext
 
 _log = logging.getLogger(__name__)
@@ -123,6 +127,40 @@ def arrow_table(
     return pa.table(arrays)
 
 
+def warn_on_table_fidelity(
+    config: dict[str, Any],
+    generate_columns: list[dict[str, Any]],
+    data: dict[str, list[Any]],
+    *,
+    table_name: str,
+    statistical_specs: dict[tuple[str, str], StatisticalSpec],
+    snapshot_index_for_column: dict[tuple[str, str], int],
+    snapshot_artifacts: list[dict[str, Any]],
+    on_warning: Callable[[QualityWarning], None] | None,
+) -> None:
+    """Generation-time fidelity warn-gate for one finished table (deferred follow-up 5,
+    2026-06-12): score statistical columns against their source snapshot and warn below
+    global_settings.fidelity_warn_threshold. Warn-only; output bytes are untouched. Lazy import
+    mirrors the `statistical` dispatch so non-statistical configs never pay it."""
+    if not any(c.get("type") == "statistical" for c in generate_columns):
+        return
+    from decoy_engine.generation._fidelity_gate import (
+        fidelity_warn_threshold,
+        warn_on_low_fidelity,
+    )
+
+    warn_on_low_fidelity(
+        generate_columns,
+        data,
+        table_name=table_name,
+        threshold=fidelity_warn_threshold(config),
+        statistical_specs=statistical_specs,
+        snapshot_index_for_column=snapshot_index_for_column,
+        snapshot_artifacts=snapshot_artifacts,
+        on_warning=on_warning,
+    )
+
+
 def warn_on_unseen_parents(
     col: dict[str, Any],
     n: int,
@@ -132,21 +170,32 @@ def warn_on_unseen_parents(
     statistical_specs: dict[tuple[str, str], StatisticalSpec],
     on_warning: Callable[[QualityWarning], None] | None,
 ) -> None:
-    """After a conditional statistical column is drawn, report the rows whose parent had no fitted
-    combination and drew from the column's overall counts. One record per column, only when such
-    rows exist. Names and counts only; output bytes are untouched."""
-    if col.get("type") != "statistical":
+    """After a conditional column is drawn, report the rows whose parent had no fitted combination
+    (`statistical`) or no `by` entry (`categorical`) and drew from the column's overall mix. One
+    record per column, only when such rows exist. Names and counts only; output bytes are
+    untouched. Both providers count through `select_table`, the one parent keying."""
+    if n <= 0:
         return
-    spec = statistical_specs.get((table_name, str(col.get("name"))))
-    if spec is None or spec.condition_on is None or n <= 0:
+    column, condition_on = str(col.get("name")), col.get("condition_on")
+    if col.get("type") == "categorical" and condition_on is not None:
+        provider = "categorical"
+        # The draw already refused a missing parent column, so the values are there.
+        counts = fallback_counts(conditional_tables(col)[1], data[condition_on], n)
+    elif col.get("type") == "statistical":
+        provider = "statistical"
+        spec = statistical_specs.get((table_name, column))
+        if spec is None or spec.condition_on is None:
+            return
+        column, condition_on = spec.column, spec.condition_on
+        counts = conditional_fallback_counts(spec, data.get(spec.condition_on) or [], n)
+    else:
         return
-    counts = conditional_fallback_counts(spec, data.get(spec.condition_on) or [], n)
     if counts.rows == 0:
         return
     detail = {
         "table": table_name,
-        "column": spec.column,
-        "condition_on": spec.condition_on,
+        "column": column,
+        "condition_on": condition_on,
         "rows": counts.rows,
         "rows_null_parent": counts.rows_null_parent,
         "rows_total": n,
@@ -154,15 +203,15 @@ def warn_on_unseen_parents(
         "parent_values_capped": counts.parent_values_capped,
     }
     line = (
-        f"generation_condition_parent_unseen: table={table_name} column={spec.column} "
-        f"condition_on={spec.condition_on} rows={counts.rows} "
+        f"generation_condition_parent_unseen: table={table_name} column={column} "
+        f"condition_on={condition_on} rows={counts.rows} "
         f"rows_null_parent={counts.rows_null_parent} rows_total={n} "
         f"parent_values={counts.parent_values} capped={counts.parent_values_capped}"
     )
     record = QualityWarning(
         code=reasons.warning.GENERATION_CONDITION_PARENT_UNSEEN,
-        provider="statistical",
-        column=spec.column,
+        provider=provider,
+        column=column,
         detail=detail,
     )
     emit_generation_warning(record, _log, line, on_warning)

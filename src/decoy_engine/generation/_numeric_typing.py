@@ -12,8 +12,8 @@ reads which column comes resolved from ``config.iter_generate_input_refs``, so a
 another table (a date anchored to a parent column, a parent's aggregate over its children)
 counts against the column it reads and not against a same-named column of its own table:
 
-* formula references, aggregate input, group labels, window anchors and statistical conditioning
-  read the cell as text, so they keep it text;
+* formula references, aggregate input, group labels, window anchors and statistical or
+  categorical conditioning read the cell as text, so they keep it text;
 * a ``derived`` expression is judged per use (see ``_numeric_derived``): arithmetic and numeric
   comparisons are safe, ``+``, ``==`` or ``in`` against strings are not;
 * a relationship is safe only when every paired column is generated and has the same planned
@@ -145,6 +145,7 @@ READERS: dict[str, Reader] = {
         True, "matched to the parent key by equality; both ends have the same planned type"
     ),
     "statistical.condition_on": Reader(False, "matched against snapshot category labels as text"),
+    "categorical.condition_on": Reader(False, "matched against the declared by keys as text"),
     "reference.reference_column": Reader(
         True, "copies the parent cell and its type; the group is checked together"
     ),

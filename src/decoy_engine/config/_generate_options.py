@@ -22,7 +22,6 @@ report consume the edges and hold no option-key table of their own.
 from __future__ import annotations
 
 import ast
-import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -32,11 +31,13 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from decoy_engine import reasons
 from decoy_engine.config._generate_type_checks import (
     OUTPUT_TYPE_KINDS,
+    by_entries,
     clip_bound,
     constant_value,
     finite,
     high_bound,
     output_type_value,
+    weights_list,
 )
 from decoy_engine.config._generate_unique import unique_flag
 from decoy_engine.errors import PipelineValidationError
@@ -58,12 +59,13 @@ __all__ = [
 _TYPE = str(reasons.config.GENERATE_OPTION_TYPE)
 _RANGE = str(reasons.config.GENERATE_OPTION_RANGE)
 _VALUE = str(reasons.config.GENERATE_OPTION_VALUE_UNKNOWN)
-_WEIGHTS = str(reasons.config.GENERATE_WEIGHTS_INVALID)
 _FORMULA = str(reasons.config.GENERATE_FORMULA_INVALID)
 UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
 
 Problem = tuple[tuple[str | int, ...], str]
-Check = Callable[[Any, Mapping[str, Any]], list[Problem]]
+# A check may add fixed, value-free hint text after the code's summary.
+Found = Problem | tuple[tuple[str | int, ...], str, str]
+Check = Callable[[Any, Mapping[str, Any]], Sequence[Found]]
 
 _OK: list[Problem] = []
 
@@ -103,6 +105,9 @@ class TypeOptions:
     ``one_of`` names keys of which exactly one must be given (a `lookup` column's `file` or
     `codeset`): none is ``missing`` on the first, and each one after the first given is
     ``generate_option_value_unknown``.
+
+    ``together`` names keys that are given all or none (a conditional categorical's
+    `condition_on` and `by`): when one is given, each other one not given is ``missing``.
     """
 
     keys: Mapping[str, OptionSpec]
@@ -110,6 +115,7 @@ class TypeOptions:
     closed_by: str | None = None
     plan_required: tuple[str, ...] = ()
     one_of: tuple[str, ...] = ()
+    together: tuple[str, ...] = ()
 
 
 def _is_int(value: Any) -> bool:
@@ -228,44 +234,6 @@ def generate_family_problems(config: Mapping[str, Any]) -> list[tuple[str, str]]
     return found
 
 
-def _weight_ok(w: Any) -> bool:
-    """A non-negative weight the generators can turn into a finite float.
-
-    Ints compare directly (`math.isfinite` overflows on a huge int); an int too large for a
-    float is refused because the samplers call `float()` on it.
-    """
-    if type(w) is float:
-        return math.isfinite(w) and w >= 0
-    if type(w) is int:
-        if w < 0:
-            return False
-        try:
-            float(w)
-        except OverflowError:
-            return False
-        return True
-    return False
-
-
-def _weights(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
-    """A list of non-negative finite int or float with a positive sum (bool is not a number)."""
-    if not isinstance(value, list):
-        return [((), _TYPE)]
-    bad: list[Problem] = [((i,), _WEIGHTS) for i, w in enumerate(value) if not _weight_ok(w)]
-    if bad:
-        return bad
-    categories = extras.get("categories")
-    # Categorical weights pair with categories; a reference's pair with the parent (plan check).
-    if extras.get("type") == "categorical" and isinstance(categories, list):
-        if len(value) != len(categories):
-            return [((), _WEIGHTS)]
-    try:
-        total = math.fsum(value)
-    except OverflowError:
-        return [((), _WEIGHTS)]
-    return _OK if math.isfinite(total) and total > 0 else [((), _WEIGHTS)]
-
-
 _S = OptionSpec(_str)
 _B = OptionSpec(_bool)
 _I = OptionSpec(_int_at_least(None))
@@ -323,9 +291,13 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
     "categorical": TypeOptions(
         {
             "categories": OptionSpec(_categories),
-            "weights": OptionSpec(_weights),
+            "weights": OptionSpec(weights_list),
+            # An earlier column whose value picks the `by` entry the row draws from.
+            "condition_on": OptionSpec(_str, ref_kind="column"),
+            "by": OptionSpec(by_entries),
         },
         required=("categories",),
+        together=("condition_on", "by"),
     ),
     "formula": TypeOptions(
         {
@@ -339,7 +311,7 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
             "reference_table": _S,
             "reference_column": _S,
             "distribution": OptionSpec(_distribution),
-            "weights": OptionSpec(_weights),
+            "weights": OptionSpec(weights_list),
             "min_per_parent": OptionSpec(_int_at_least(0)),
             "max_per_parent": OptionSpec(_int_at_least(0)),
             # A self-reference only; its range depends on the table's row count, so
@@ -490,7 +462,11 @@ def _family_keys(type_: str, extras: Mapping[str, Any]) -> tuple[tuple[str, ...]
     return tuple(required), frozenset(foreign)
 
 
-def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
+def _given(key: str, extras: Mapping[str, Any]) -> bool:
+    return key in extras and (extras[key] is not None or key not in _NONE_MEANS_ABSENT)
+
+
+def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Found]:
     """Every problem with a column's flat options, in a stable order, as (location, code).
 
     Reads ``extras`` and never changes it. A `None` value means "not given" only for the keys in
@@ -498,7 +474,7 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
     missing, and any other key with None is a type error. Nothing here quotes a submitted value.
     """
     spec = GENERATE_OPTIONS[type_]
-    found: list[Problem] = []
+    found: list[Found] = []
     check_input = {**extras, "type": type_}
     family_required, foreign = _family_keys(type_, extras)
     for key, value in extras.items():
@@ -520,7 +496,7 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
             continue
         if option.check is None:
             continue
-        found.extend(((key, *rel), code) for rel, code in option.check(value, check_input))
+        found.extend(((key, *p[0]), *p[1:]) for p in option.check(value, check_input))
     given_missing = [k for k in spec.required if _missing(k, extras.get(k))]
     found.extend(((k,), "missing") for k in given_missing)
     found.extend(((k,), "missing") for k in family_required if extras.get(k) is None)
@@ -528,6 +504,8 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
     if spec.one_of and not given:
         found.append(((spec.one_of[0],), "missing"))
     found.extend(((k,), _VALUE) for k in given[1:])
+    if any(_given(k, extras) for k in spec.together):
+        found.extend(((k,), "missing") for k in spec.together if not _given(k, extras))
     return found
 
 

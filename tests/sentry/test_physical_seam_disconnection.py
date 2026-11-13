@@ -336,7 +336,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # live at the `execution` parent level and import NOTHING from
             # `execution.physical` (the import-direction sweeps above stay green); the
             # physical package only reads them (`_snapshot` calls the shared preparation
-            # so capture records the same routing facts as a real run).
+            # so capture records the same routing facts as a real run). A conditional
+            # categorical's width also reads its `by` entries, through `config`.
             "src/decoy_engine/execution/_mem_estimate_schema.py",
             # Byte-estimate Arrow-type pricing: the classifier module and the cost-label
             # additions it reads. Both sit beside `_mem_estimate_schema.py`, import only

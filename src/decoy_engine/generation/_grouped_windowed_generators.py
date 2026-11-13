@@ -5,7 +5,8 @@ LOC ceiling (best-practices section 4.1). These functions mirror the lazy-import
 pattern already used for ``_referenced_formula.fill_referenced_formula_columns``
 and ``_fidelity_gate.warn_on_low_fidelity``.
 
-Called from ``generation/synthesize._generate_column`` when:
+Called from ``generation/synthesize._generate_column`` through ``grouped_windowed_values``, which
+dispatches on the column type:
   kind == "grouped_series"  -> _grouped_series_generate
   kind == "windowed_date"   -> _windowed_date_generate
   kind == "group_key"       -> _group_key_generate
@@ -205,3 +206,24 @@ def _group_key_generate(
     # _normalize_job_seed_int fits in 8 bytes (same as _normalize_job_seed).
     seed_bytes = seed.to_bytes(8, "big")
     return apply_group_key(config, df, seed=seed_bytes, namespace=namespace)
+
+
+def grouped_windowed_values(
+    col: dict[str, Any],
+    n: int,
+    seed: int,
+    generated: dict[str, list[Any]],
+    pools: Mapping[str, pa.Table] | None = None,
+    siblings: Sequence[Mapping[str, Any]] = (),
+    *,
+    reference_date: str | None = None,
+) -> list[Any]:
+    """The values of a `grouped_series`, `windowed_date` or `group_key` column."""
+    kind = col.get("type")
+    if kind == "grouped_series":
+        return _grouped_series_generate(col, n, seed, generated)
+    if kind == "windowed_date":
+        return _windowed_date_generate(
+            col, n, seed, generated, pools, siblings, reference_date=reference_date
+        )
+    return _group_key_generate(col, n, seed, generated)

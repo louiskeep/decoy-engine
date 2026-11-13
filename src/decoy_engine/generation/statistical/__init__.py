@@ -23,7 +23,14 @@ from decoy_engine.generation.statistical._fanout import (
     fitted_reference_values,
 )
 from decoy_engine.generation.statistical._numeric_shape import add_numeric_shape
-from decoy_engine.generation.statistical._sample import conditional_fallback_counts, sample_column
+from decoy_engine.generation.statistical._sample import (
+    DISTINCT_PARENT_CAP,
+    FallbackCounts,
+    conditional_fallback_counts,
+    fallback_counts,
+    sample_column,
+    select_table,
+)
 from decoy_engine.generation.statistical._spec import (
     StatisticalSpec,
     StatisticalSpecError,
@@ -33,7 +40,9 @@ from decoy_engine.generation.statistical._spec import (
 )
 
 __all__ = [
+    "DISTINCT_PARENT_CAP",
     "CellFormat",
+    "FallbackCounts",
     "FanoutSpec",
     "StatisticalSpec",
     "StatisticalSpecError",
@@ -43,12 +52,14 @@ __all__ = [
     "cell_format_arrow_type",
     "cell_format_member_ok",
     "conditional_fallback_counts",
+    "fallback_counts",
     "fanout_spec_from_snapshot",
     "fitted_reference_values",
     "learn_cell_format",
     "load_spec",
     "sample_column",
     "scrub_cell_format",
+    "select_table",
     "spec_from_dict",
     "spec_to_dict",
 ]

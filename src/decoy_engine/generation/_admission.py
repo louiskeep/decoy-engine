@@ -250,6 +250,9 @@ def classify_plan(
             result = decline(table, col, f"family_declined:{kind}")
         elif kind == "sequence":
             result = admit(table, col, numeric.get((table, col["name"])) or pa.string())
+        elif kind == "categorical" and col.get("condition_on") is not None:
+            # Reads a sibling row by row, and the batch core has no sibling-input seam yet.
+            result = decline(table, col, "categorical_condition_on")
         elif kind == "categorical":
             arrow_type, reason = categorical_arrow_type(col)
             result = admit(table, col, arrow_type) if arrow_type else decline(table, col, reason)

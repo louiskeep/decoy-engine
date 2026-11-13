@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.config import categorical_categories
 from decoy_engine.generation._faker_pool import POOL_ELIGIBLE_LOCALE_PAIRS
 from decoy_engine.generation.kinds import (
     constant_payload_bound,
@@ -153,7 +154,8 @@ def sequence_payload_bound(col: dict[str, Any], rows: int) -> int:
 
 
 def categorical_payload_bound(col: dict[str, Any]) -> int | None:
-    cats = col.get("categories", ["Category A", "Category B"])
+    # A conditional column also draws every `by` entry's categories.
+    cats = categorical_categories(col)
     if not isinstance(cats, list) or not cats:
         return None
     if all(isinstance(c, str) for c in cats):

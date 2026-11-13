@@ -43,8 +43,9 @@ from __future__ import annotations
 
 import random
 from bisect import bisect_right
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 from decoy_engine import reasons
 from decoy_engine.generation.statistical._cell_format import (
@@ -290,14 +291,18 @@ def _conditional_lookup(spec: StatisticalSpec) -> dict[str, tuple[list[str], lis
     return {k: _positive_weight_only(v, w) for k, (v, w) in _conditional_tables(spec).items()}
 
 
-def _select_table(
-    conditional: dict[str, tuple[list[str], list[float]]],
-    marginal: tuple[list[Any], list[float]],
-    parent_values: list[Any],
+_W = TypeVar("_W")
+
+
+def select_table(
+    conditional: Mapping[str, tuple[Sequence[Any], _W]],
+    marginal: tuple[Sequence[Any], _W],
+    parent_values: Sequence[Any],
     i: int,
-) -> tuple[list[Any], list[float], bool]:
+) -> tuple[Sequence[Any], _W, bool]:
     """The table row `i` draws from and whether it is the marginal fallback. The one place the
-    parent is keyed (`str`, None included), shared by the sampler and the fallback counter."""
+    parent is keyed (`str`, None included), shared by the fitted sampler, the YAML conditional
+    categorical and the fallback counter. A table is any (values, weights) pair."""
     parent = parent_values[i] if i < len(parent_values) else None
     table = conditional.get(str(parent))
     if table is None:
@@ -323,16 +328,22 @@ class FallbackCounts(NamedTuple):
 def conditional_fallback_counts(
     spec: StatisticalSpec, parent_values: list[Any], n: int
 ) -> FallbackCounts:
-    """Count the rows `sample_column` draws from the marginal for lack of a joint cell. Selects
-    through `_select_table` and never draws."""
+    """Count the rows `sample_column` draws from the marginal for lack of a joint cell."""
     if spec.kind != "categorical" or spec.condition_on is None:
         return FallbackCounts(0, 0, 0)
-    conditional = _conditional_lookup(spec)
+    return fallback_counts(_conditional_lookup(spec), parent_values, n)
+
+
+def fallback_counts(
+    conditional: Mapping[str, Any], parent_values: Sequence[Any], n: int
+) -> FallbackCounts:
+    """Count the rows of `n` whose parent key has no table in `conditional`. Selects through
+    `select_table` and never draws."""
     rows = rows_null = 0
     capped = False
     keys: set[str] = set()
     for i in range(n):
-        if _select_table(conditional, ([], []), parent_values, i)[2]:
+        if select_table(conditional, ([], []), parent_values, i)[2]:
             parent = parent_values[i] if i < len(parent_values) else None
             rows += 1
             rows_null += parent is None
@@ -467,9 +478,10 @@ def sample_column(
         out = []
         for i in range(n):
             rng.seed(col_seed + start + i)
-            t_values, t_weights = values, weights
+            t_values: Sequence[Any] = values
+            t_weights = weights
             if spec.condition_on is not None and parent_values is not None:
-                t_values, t_weights, _ = _select_table(
+                t_values, t_weights, _ = select_table(
                     conditional, (values, weights), parent_values, i
                 )
             value = rng.choices(t_values, weights=t_weights, k=1)[0]

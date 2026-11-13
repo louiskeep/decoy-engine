@@ -228,11 +228,17 @@ class _FakerView:
 
 
 def _check_categories(table: str, col: dict[str, Any]) -> None:
-    """Refuse a list Arrow cannot type, the inference ``pa.table`` applies at run."""
+    """Refuse a list Arrow cannot type, the inference ``pa.table`` applies at run.
+
+    A conditional column's list is every category it can draw: the top-level list and each
+    `by` entry's, which the run's inference sees together.
+    """
     import pyarrow as pa
 
-    categories = col.get("categories")
-    if not isinstance(categories, list):
+    from decoy_engine.config import categorical_categories
+
+    categories = categorical_categories(col) if isinstance(col.get("categories"), list) else None
+    if categories is None:
         return
     mixed = False
     try:
@@ -332,14 +338,15 @@ def _check_input_edges(
     whether the source table exists, the source column exists in it, and an input read while the
     column is drawn was generated earlier. The generators read siblings in declared order, so a
     later or missing name gives nulls, an empty aggregate, one group or a crash, never the
-    intended value. An input in another table, or one read after its table is filled (a
-    per-parent aggregate's child column), is ready whenever it exists: its table is finished
-    before the read.
+    intended value. A formula with `references` is not ready for such a read either: it holds
+    None until the post-pass after every other column is drawn. An input in another table, or
+    one read after its table is filled (a per-parent aggregate's child column, a formula's
+    `references`), is ready whenever it exists: its table is finished before the read.
     """
     from decoy_engine.config import generate_columns_of, iter_generate_input_refs
 
     col = cols[index]
-    earlier = {c["name"] for c in cols[:index]}
+    earlier = {c["name"] for c in cols[:index] if not _has_references(c)}
     for edge in iter_generate_input_refs(tables[table], col):
         if edge.must_be_earlier:
             ready = edge.source_column in earlier

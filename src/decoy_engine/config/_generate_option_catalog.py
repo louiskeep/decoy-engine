@@ -81,6 +81,8 @@ def _closed_branch(type_: str, spec: TypeOptions, shared: list[str]) -> dict[str
     }
     if spec.one_of:
         then["oneOf"] = [{"required": [k]} for k in spec.one_of]
+    if spec.together:
+        then["dependentRequired"] = {k: [o for o in spec.together if o != k] for k in spec.together}
     nested: list[dict[str, Any]] = []
     for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items():
         for value, keys in by_value.items():

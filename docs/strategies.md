@@ -998,7 +998,8 @@ that read them.
 expression) and `derived_aggregate` (intra-table scalar aggregate). Neither
 implements `conditioned_on`: `case_when` is a conditional expression construct
 in the closed grammar; `conditioned_on` is a separate planned parameter on the
-`categorical` strategy (per-row nested weight tables) and is not yet built.
+`categorical` strategy (per-row nested weight tables). For generated columns it is built as
+`condition_on` with `by` on a `categorical` column (see [categorical](#categorical)).
 
 `grouped_series`, `windowed_date` and `group_key` are built; their keys are in
 the table under [Options are checked per type](#options-are-checked-per-type).
@@ -1273,7 +1274,7 @@ take it.
 |---|---|---|---|
 | `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length`, `output_type` | |
 | `faker` | `faker_type` | `locale`, `faker_kwargs`, `output_type` | |
-| `categorical` | `categories` | `weights`, `output_type` | |
+| `categorical` | `categories` | `weights`, `condition_on`, `by`, `output_type` | |
 | `reference` | `reference_table`, `reference_column` | `distribution`, `weights`, `min_per_parent`, `max_per_parent`, `root_count`, `snapshot_file`, `source_column` | `weights` if `distribution: weighted` |
 | `formula` | `formula` | `references`, `output_type` | |
 | `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` | |
@@ -1383,6 +1384,52 @@ Draws each row from a fixed category pool.
 - `categories`: the pool. The values must fit one Arrow column type (`[1, 2.5]` and
   `["a", null]` do; `["a", 1]` does not).
 - `weights`: optional, one non-negative number per category with a positive sum.
+- `condition_on` and `by`: optional, and given together (either one alone is `missing` on the
+  other). `condition_on` names an earlier column of the table, of any type except a `formula`
+  with `references` (that formula is filled only after every other column is drawn); `by` maps a
+  value of that column to its own mix, an entry with `weights` (for the top-level `categories`)
+  or with `categories` and optional `weights`:
+
+  ```yaml
+  - {name: region, type: categorical, categories: [north, south]}
+  - name: tier
+    type: categorical
+    categories: [basic, plus, premium]   # the fallback mix
+    weights: [5, 3, 2]
+    condition_on: region
+    by:
+      north: {weights: [2, 3, 5]}
+      south: {categories: [basic, plus], weights: [9, 1]}
+  ```
+
+  Each row draws from the entry its parent value selects. The parent is matched by its text, the
+  rule a fitted `condition_on` uses: `1` matches the key `"1"`, `true` matches `"True"` and a null
+  parent matches `"None"`. So every `by` key must be a quoted string; a YAML `1:` or `true:` key
+  is refused (`generate_option_type`, at the key's position; the message says to quote it). An
+  entry with another key is `generate_option_unknown`, an entry with neither key, a `categories`
+  that is not a non-empty list or a `by` that is not a mapping is `generate_option_type`, and entry
+  weights follow the `weights` rule against the entry's own categories, else the top-level ones
+  (`generate_weights_invalid`). Locations name an entry by position, never by its key.
+  `condition_on` naming a later or missing column, or a `formula` with `references`, is
+  `plan.generate_column_forward_reference`, and
+  the top-level and entry categories together must fit one Arrow type
+  (`plan.generate_categories_mixed`). `unique: true` with `condition_on` is
+  `generate_unique_conflict`.
+- A row whose parent value has no `by` entry draws from the top-level `categories` and `weights`.
+  On the whole-table route the run then reports `warning.generation_condition_parent_unseen` once
+  for the column, with `provider: categorical` and the same detail keys as a fitted
+  `condition_on` (row counts and a capped distinct-key count, never a value). Pinned mode draws the
+  same rows and raises no warning, as for a fitted `condition_on`. The streaming route declines
+  the column (`categorical_condition_on`) and the run stays on the whole-table route.
+- The column draws one value per row from its one seeded stream, so it consumes as many draws as a
+  plain column; its seed hashes `condition_on` and `by` with the rest of the column, so its values
+  differ from the plain column's. A plain `categorical` keeps its bytes and its type.
+- The column's type is the type of every category it can draw (top-level and entries). The
+  parent column is read as text, so a `sequence` parent stays text, as under a fitted
+  `condition_on`.
+- If the conditioning column is missing from the generated data at run time (a config that
+  skipped the checks), the run refuses with `runtime.categorical_condition_column_unavailable`
+  rather than sending every row to the fallback mix.
 
 ### reference
 
@@ -1738,6 +1785,12 @@ the formula scope provides, such as `abs` or `sqrt` (`round` and `random` are in
 (`generate_formula_name_unknown`), wraps a sibling in braces as `{a} * 2` (`generate_formula_template_syntax`), or reads itself or a later formula
 that has `references` (`generate_column_forward_reference`). Declare dependencies
 before the columns that read them.
+
+A formula with `references` is filled after every other column of the table is drawn, so only
+another formula may read it. A column of any other type that reads it (a `derived` expression,
+a `condition_on`, a `group_by`, an `anchor`) is refused with `generate_column_forward_reference`,
+as a read of a later column is. A formula without `references` is drawn in declared order and any
+later column may read it.
 
 ### derived
 

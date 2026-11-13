@@ -41,6 +41,7 @@ READER_FILES = (
     "generation/_pinned_compile.py",
     "generation/_faker_pool.py",
     "generation/_grouped_windowed_generators.py",
+    "generation/kinds/_categorical.py",
     "generation/kinds/_constant.py",
     "generation/kinds/_output_type.py",
     "plan/checks/_lookup_tables.py",

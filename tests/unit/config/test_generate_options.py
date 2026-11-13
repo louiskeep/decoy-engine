@@ -615,6 +615,7 @@ def test_the_registered_inputs_are_exactly_these() -> None:
         if option.ref_kind is not None
     }
     assert registered == {
+        "categorical.condition_on": ("column", None, "inline"),
         "statistical.condition_on": ("column", None, "inline"),
         "derived.expression": ("expression", None, "inline"),
         "derived_aggregate.column": ("column_in_named_table", "from_table", "post_fill"),
@@ -858,3 +859,107 @@ def test_anchor_via_is_a_windowed_date_option() -> None:
     assert [(e["type"], tuple(e["loc"])) for e in errs] == [
         ("generate_option_type", ("tables", 0, "generate_columns", 1, "anchor_via"))
     ]
+
+
+# GEN-INHERIT E2, AT-2: `condition_on` and `by` on a categorical column ----------------------
+
+MISSING = "missing"
+UNIQUE_CONFLICT = str(reasons.config.GENERATE_UNIQUE_CONFLICT)
+
+
+def _conditional(**extra: Any) -> dict[str, Any]:
+    by = {"north": {"weights": [2, 1]}, "south": {"categories": ["x", "y", "z"]}}
+    return {**_col("categorical", condition_on="region", by=by), **extra}
+
+
+def _region() -> dict[str, Any]:
+    return {"name": "region", "type": "categorical", "categories": ["north", "south"]}
+
+
+def _spots(col: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
+    return [_spot(e) for e in _errors(_region(), col)]
+
+
+def test_condition_on_and_by_are_categorical_options() -> None:
+    keys = GENERATE_OPTIONS["categorical"].keys
+    assert {"condition_on", "by"} <= set(keys)
+    assert keys["condition_on"].ref_kind == "column" and keys["by"].ref_kind is None
+    PipelineConfig.model_validate(_config(_region(), _conditional()))
+
+
+@pytest.mark.parametrize(("given", "absent"), [("by", "condition_on"), ("condition_on", "by")])
+def test_by_and_condition_on_are_given_together(given: str, absent: str) -> None:
+    col = _conditional()
+    del col[absent]
+    assert _spots(col) == [(MISSING, (absent,))]
+    assert [_spot(e)[1] for e in _errors(_region(), {**col, absent: None})] == [(absent,)]
+
+
+def test_by_must_be_a_mapping() -> None:
+    assert _spots(_conditional(by=["north"])) == [(TYPE, ("by",))]
+    assert _spots(_conditional(by=None)) == [(TYPE, ("by",))]
+
+
+@pytest.mark.parametrize("key", [7731, 1.5, True, False, None])
+def test_a_key_that_is_not_text_is_refused_at_its_position_only(key: Any) -> None:
+    by = {"north": {"weights": [1, 1]}, key: {"weights": [1, 1]}}
+    errs = _errors(_region(), _conditional(by=by))
+    assert [_spot(e) for e in errs] == [(TYPE, ("by", 1))]
+    for text in (errs[0]["msg"], repr(errs)):
+        assert "7731" not in text and "1.5" not in text
+
+
+def test_a_bool_key_message_says_to_quote_it_as_its_text() -> None:
+    errs = _errors(_region(), _conditional(by={True: {"weights": [1, 1]}}))
+    assert '"True"' in errs[0]["msg"] and '"False"' in errs[0]["msg"]
+    assert errs[0]["msg"].startswith(reasons.lookup(TYPE)[0].summary)
+
+
+@pytest.mark.parametrize(
+    ("entry", "where"),
+    [
+        ({"weights": [1, 1], "bogus": 1}, (UNKNOWN_KEY, ("by", 0, "bogus"))),
+        ({"condition_on": "x", "weights": [1, 1]}, (UNKNOWN_KEY, ("by", 0, "condition_on"))),
+        ({}, (TYPE, ("by", 0))),
+        ("north", (TYPE, ("by", 0))),
+        (None, (TYPE, ("by", 0))),
+        ({"categories": "xy"}, (TYPE, ("by", 0, "categories"))),
+        ({"categories": []}, (TYPE, ("by", 0, "categories"))),
+        ({"categories": None}, (TYPE, ("by", 0, "categories"))),
+        ({"weights": None}, (TYPE, ("by", 0, "weights"))),
+        ({"weights": [1]}, (WEIGHTS, ("by", 0, "weights"))),
+        ({"weights": [1, -1]}, (WEIGHTS, ("by", 0, "weights", 1))),
+        ({"weights": [0, 0]}, (WEIGHTS, ("by", 0, "weights"))),
+        ({"weights": [1, True]}, (WEIGHTS, ("by", 0, "weights", 1))),
+        ({"categories": ["x", "y", "z"], "weights": [1, 1]}, (WEIGHTS, ("by", 0, "weights"))),
+    ],
+)
+def test_a_bad_entry_is_refused_at_its_nested_location(entry: Any, where: Any) -> None:
+    assert _spots(_conditional(by={"north": entry})) == [where]
+
+
+def test_entry_weights_pair_with_the_entry_categories_else_the_top_level_ones() -> None:
+    ok = {
+        "north": {"weights": [1, 3]},
+        "south": {"categories": ["x", "y", "z"], "weights": [1, 2, 3]},
+    }
+    PipelineConfig.model_validate(_config(_region(), _conditional(by=ok)))
+    assert _spots(_conditional(by={"north": {"weights": [1, 2, 3]}})) == [
+        (WEIGHTS, ("by", 0, "weights"))
+    ]
+
+
+def test_a_by_key_is_never_echoed() -> None:
+    by = {CANARY: {"weights": [1, 1], "bogus": 1}, "south": {"weights": [CANARY]}}
+    errs = _errors(_region(), _conditional(by=by))
+    assert {_spot(e) for e in errs} == {
+        (UNKNOWN_KEY, ("by", 0, "bogus")),
+        (WEIGHTS, ("by", 1, "weights", 0)),
+    }
+    for text in (repr(errs), *(e["msg"] for e in errs)):
+        assert CANARY not in text
+
+
+def test_unique_with_condition_on_is_a_conflict() -> None:
+    col = _conditional(unique=True)
+    assert (UNIQUE_CONFLICT, ("condition_on",)) in _spots(col)
