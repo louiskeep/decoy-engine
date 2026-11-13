@@ -415,3 +415,31 @@ new verdict file, `tests/unit/execution/test_scanml_m4_run.py`,
 
 Owner conditions unchanged: `classify_frame(..., subsample=False)` by default;
 `PipelineRunContext.post_scan_detectors` is `repr=False, compare=False`; dismissal rules unchanged.
+
+### Second main merge and the final checks
+
+Before pushing, main had moved to `dac26109` (#548, the post-scan gate core, which adds
+`blocked_error` to `_blocked.py`). `b3a6e8d4` merges it. One conflict, in `_blocked.py`: both
+helpers kept, and `raise_if_ner_blocked` now builds its error through main's `blocked_error`, so
+every raise outside the class goes through that one helper. Main's gate calls
+`post_scan_verdict(report)` with the default `warn` mode and runs no model pass, so its behavior is
+unchanged.
+
+All checks rerun on the source head `b3a6e8d4` (the record commit after it changes only this file):
+
+- Mutations: the same edits as above, with `tests/unit/execution/post_scan` added to the run (501
+  tests, all pass unmutated). Each went red with the same ids as on `e70ecbb6`: m1 30, m2 2, m3 3,
+  M-M4a 49 (adds main's `test_integrity_adds_the_column_suite_over_the_mask_tables`), M-M4b 9,
+  M-M4b2 6, M-M4b3 8, M-M4c 2, M-M4d 2, M-M4e 2, M-M4f 10, M-M4g 3, M-M4g2 7, M-M4g3 20,
+  M-M4sub 1. Each reverted by hand, `git diff` empty.
+- ruff check, ruff format, mypy on the seven touched `src` files: pass.
+- `registry_renumber.py --check --main origin/main`, `ratchet_check.py --base origin/main`,
+  `check_fragment.py --base origin/main`: exit 0.
+- `GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps sentry,layers,licenses,tests <84 paths>`
+  (the list above plus #548's `tests/unit/execution/post_scan/test_gate.py`) against main
+  `dac26109`, rc 0: sentry 5333 passed, 3 failed, 31 errors (main 5328, 3, 31); layers 15; licenses
+  63; tests 7365 passed, 2 failed, 31 errors, 99 skipped (main 7294, 2, 31, 85). The same 34
+  failing ids on both, no branch-only id, no main failure passing; collected 7497 against 7412.
+- `DECOY_REQUIRE_NER=1 pytest -m ner -n 2` in the NER venv: 53 passed, 10 skipped (import skips
+  only); no NER test skipped.
+- `pytest tests/integration/compat_corpus`: 5 passed, 1 skipped (pre-GA capture).
