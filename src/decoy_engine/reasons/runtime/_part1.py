@@ -393,7 +393,7 @@ OUT_OF_CORE_REORDER_DISK_BUDGET_INVALID = _d(
 OUT_OF_CORE_REORDER_DISK_BUDGET_TOO_SMALL = _d(
     "out_of_core_reorder_disk_budget_too_small",
     "Out of core reorder disk budget too small.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 OUT_OF_CORE_REORDER_FAN_IN_INVALID = _d(
     "out_of_core_reorder_fan_in_invalid", "Out of core reorder fan in invalid."

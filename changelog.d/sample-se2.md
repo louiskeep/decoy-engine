@@ -1,3 +1,0 @@
-### Added (the sample stage inside a run, SAMPLE SE2, 2026-11-12)
-
-A `SubsetRequest` made by `decoy_engine.subset.sample_request` now runs inside `run_pipeline`. Tables with no relationship edge are read as their first N rows, with no row count and no key load, and every other table goes through the subset closure. `quality_metrics["subset"]["sample"]` records the rows, the seed tables, the rows read from each edgeless table and the columns whose values may differ from a full run. `ExecutionResult.sample_source_rows` (hidden from `repr`, off unless `display_rows` is set) holds the first kept source rows per table. `RunResult.sample` is an optional marker; a record without it reads as before and is written without the key.

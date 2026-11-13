@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decoy_engine import errors, reasons
 from decoy_engine.reason_adapter import reason_from_exception
-from decoy_engine.reasons import UNRELEASED, RetryClass, get
+from decoy_engine.reasons import RetryClass, get
 
 _CODE = "process_out_of_memory"
 
@@ -14,7 +14,7 @@ def test_memory_error_identity() -> None:
     assert (record.namespace, record.code) == ("decoy", _CODE)
     assert record.retry_class is RetryClass.ENVIRONMENT_REPAIR
     assert _CODE in errors.CAPACITY_REASON_CODES
-    assert get("decoy", _CODE).since == UNRELEASED
+    assert get("decoy", _CODE).since == "1.25.0"
 
 
 def test_memory_error_message_is_fixed_and_value_free() -> None:
