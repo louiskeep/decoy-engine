@@ -48,6 +48,7 @@ from decoy_engine.relationships._namespace import (
     NamespaceConfigError,
     NamespaceRegistry,
     build_namespace_registry,
+    composite_bindings,
 )
 
 __all__ = [
@@ -60,4 +61,5 @@ __all__ = [
     "build_namespace_registry",
     "build_relationship_graph",
     "check_orphan_fk_policy_completeness",
+    "composite_bindings",
 ]

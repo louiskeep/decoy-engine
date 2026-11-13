@@ -229,3 +229,37 @@ def test_every_config_resolvable_runtime_guard_has_a_mapping_entry_or_a_reason()
     assert found - mapped - set(EXCLUDED_GUARDS) == set()
     assert all(EXCLUDED_GUARDS.values())
     assert mapped - found == set()
+
+
+def _group(**member: Any) -> dict[str, Any]:
+    cols = [
+        {"name": "city", "strategy": "passthrough", "coherent_with": ["state", "zip"]},
+        {"name": "state", "strategy": "passthrough", "coherent_with": ["city", "zip"]},
+        {"name": "zip", "strategy": "fpe", "coherent_with": ["city", "state"], **member},
+    ]
+    return {"tables": [{"name": "members", "columns": cols}]}
+
+
+def test_a_coherent_with_member_gets_its_namespace_from_the_group() -> None:
+    check_required_strategy_settings(_group())
+    check_required_strategy_settings(_group(namespace="explicit"))
+
+
+def test_the_shipped_example_passes() -> None:
+    import yaml
+
+    path = Path(__file__).resolve().parents[4] / "examples" / "complex_healthcare_claims.yaml"
+    check_required_strategy_settings(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def test_a_column_with_no_explicit_and_no_derived_namespace_is_refused() -> None:
+    config = _config("fpe", provider_config={"charset": "digits"})
+    with pytest.raises(PlanCompileError) as exc:
+        check_required_strategy_settings(config)
+    assert exc.value.code == "fpe_requires_namespace"
+    # A neighbour's coherent_with does not bind a column that is not in the group.
+    group = _group()
+    group["tables"][0]["columns"].append({"name": "other", "strategy": "fpe"})
+    with pytest.raises(PlanCompileError) as exc:
+        check_required_strategy_settings(group)
+    assert exc.value.path == "tables.members.columns.other.namespace"

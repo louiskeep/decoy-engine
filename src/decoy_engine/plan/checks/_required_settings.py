@@ -19,6 +19,7 @@ from typing import Any
 
 from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.relationships import composite_bindings
 
 __all__ = [
     "REQUIREMENTS_BY_STRATEGY",
@@ -129,6 +130,9 @@ def check_required_strategy_settings(config: dict[str, Any]) -> None:
         PlanCompileError: the code of the missing setting's descriptor.
     """
     tables = config.get("tables")
+    # A coherent_with member's namespace comes from its group's binding, so the column need not
+    # declare one. The registry owns that rule; ask it instead of restating it.
+    _, derived = composite_bindings(config)
     for table in tables if isinstance(tables, list) else []:
         if not isinstance(table, dict):
             continue
@@ -137,6 +141,11 @@ def check_required_strategy_settings(config: dict[str, Any]) -> None:
             if not isinstance(strategy, str):
                 continue
             for req in requirements_for(strategy):
+                if (
+                    req.path == ("namespace",)
+                    and (table.get("name", "?"), col.get("name", "?")) in derived
+                ):
+                    continue
                 if _applies(req, col) and _missing(_lookup(col, req.path)):
                     raise PlanCompileError(
                         code=req.code,
