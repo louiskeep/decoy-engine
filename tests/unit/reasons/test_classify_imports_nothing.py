@@ -13,16 +13,14 @@ import sys
 import textwrap
 
 from decoy_engine.reason_adapter import reason_from_exception
-from decoy_engine.reasons import Phase
 
 _CHILD = textwrap.dedent(
     """
     import sys
     from decoy_engine.reason_adapter import reason_from_exception
-    from decoy_engine.reasons import Phase
     from decoy_engine._progress_events import safe_error_class
     before = set(sys.modules)
-    record = reason_from_exception(MemoryError(), phase=Phase.RUN)
+    record = reason_from_exception(MemoryError())
     assert safe_error_class("DpError") == "DpError"
     roots = ("decoy_engine", "sklearn", "scipy", "opendp")
     added = sorted(m for m in set(sys.modules) - before if m.split(".")[0] in roots)
@@ -49,5 +47,5 @@ def test_a_family_exception_from_an_imported_module_still_classifies() -> None:
 
     # An unregistered code on a family class is `unregistered_reason`; a class the adapter did not
     # recognise at all would be `unexpected_error`.
-    record = reason_from_exception(DpError(code="no_such_code", message="m"), phase=Phase.RUN)
+    record = reason_from_exception(DpError(code="no_such_code", message="m"))
     assert (record.namespace, record.code) == ("decoy", "unregistered_reason")
