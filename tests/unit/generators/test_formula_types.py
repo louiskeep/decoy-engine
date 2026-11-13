@@ -131,14 +131,18 @@ def _check_fidelity(cols: list[dict[str, Any]], null_p: float, tables: list[dict
         assert type(o) is type(s)
 
 
-@pytest.mark.parametrize("null_p", [0.0, 0.5])
-@pytest.mark.parametrize("name", sorted({**_EXAMPLES, **_EXTRA_EXAMPLES}))
+# The nullable grouped-series cell is exempt: it is not a candidate type, so a missing cell binds "".
+_CELLS = [
+    (name, null_p)
+    for name in sorted({**_EXAMPLES, **_EXTRA_EXAMPLES})
+    for null_p in (0.0, 0.5)
+    if (name, null_p) != ("grouped_series", 0.5)
+]
+
+
+@pytest.mark.parametrize(("name", "null_p"), _CELLS)
 def test_formula_reads_the_source_column_type(name: str, null_p: float) -> None:
-    cols = {**_EXAMPLES, **_EXTRA_EXAMPLES}[name]
-    if name == "grouped_series" and null_p:
-        # The nullable grouped-series cell is exempt: it is not a candidate, so rule 2 binds "".
-        pytest.skip("grouped_series has no typed null branch")
-    _check_fidelity(cols, null_p)
+    _check_fidelity({**_EXAMPLES, **_EXTRA_EXAMPLES}[name], null_p)
 
 
 @pytest.mark.parametrize("null_p", [0.0, 0.5])
