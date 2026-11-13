@@ -385,6 +385,22 @@ def _with_when(access: ColumnAccess, entry: Mapping[str, Any]) -> ColumnAccess:
     return replace(merged, own_target=access.own_target)
 
 
+def scalar_creating_reads(entry: Mapping[str, Any]) -> frozenset[str]:
+    """The sibling columns a scalar entry that creates its own target reads, else empty.
+
+    The one read set both admission (`created_columns`) and execution ordering use, so a
+    column accepted as created is always ordered after the columns it reads. An entry that
+    does not create its target, or whose reads cannot be named, orders after nothing.
+    """
+    declare = SURFACE_DECLARATIONS.get(f"scalar:{entry.get('strategy')}")
+    if declare is None:
+        return frozenset()
+    access = _with_when(declare(entry), entry)
+    if access.own_target != OWN_TARGET_CREATES or access.reads_unknown:
+        return frozenset()
+    return access.reads - {entry.get("name")}
+
+
 def created_columns(
     table_entry: Mapping[str, Any], source_columns: Iterable[str], registry: Any
 ) -> frozenset[str]:
