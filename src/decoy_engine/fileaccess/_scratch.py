@@ -19,13 +19,13 @@ import secrets
 import stat
 import sys
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import suppress
-from typing import Any
+from typing import Any, TypeVar
 
 from decoy_engine.fileaccess._component import validate_component
 from decoy_engine.fileaccess._entry import is_ambient, require_ambient
-from decoy_engine.fileaccess._errors import deny
+from decoy_engine.fileaccess._errors import deny, guarded, guarded_iter
 from decoy_engine.fileaccess._output import (
     _call,
     _close,
@@ -53,6 +53,7 @@ _MARKER = ".decoy-arena"
 _MAGIC = b"decoy-arena-v1:"
 _DISPLAY = "engine.scratch"
 _ISSUER = object()
+T = TypeVar("T")
 
 
 def _open(name: str, dir_fd: int | None = None, *, directory: bool = True) -> int:
@@ -352,4 +353,22 @@ def _make_dir(parent_fd: int, name: str) -> int:
     return fd
 
 
-__all__ = ["ARENA_PREFIX", "ScratchArena"]
+def scratch_native(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+    """Run one native call (DuckDB, pyarrow) on scratch, under every policy, value-free.
+
+    The mapping is `_errors.guarded`'s, strict whatever the policy, by type, never by text:
+    memory failures keep their class (`passes_by_type`, or rebuilt over scrubbed text by
+    `resurface_scrubbed`, so `is_memory_failure` still matches), a resource-errno `OSError`
+    keeps its class rebuilt errno-only, a denial passes, and anything else becomes
+    `FileAccessReadError("engine.scratch")`. Each new error is raised after the `except` block,
+    so neither `__context__` nor `__cause__` holds the library's text.
+    """
+    return guarded(_DISPLAY, True, fn, *args, **kwargs)
+
+
+def scratch_native_iter(batches: Iterable[T]) -> Iterator[T]:
+    """Each pull of a native batch iterator under `scratch_native`'s mapping."""
+    return guarded_iter(_DISPLAY, True, batches)
+
+
+__all__ = ["ARENA_PREFIX", "ScratchArena", "scratch_native", "scratch_native_iter"]

@@ -12,6 +12,15 @@ from tests.sentry.fa.resolve import ProjectIndex, Scope, build_import_map, modul
 CURRENT_SUFFIXES = ("fileaccess._entry.current", "fileaccess.current")
 
 
+@dataclass(frozen=True)
+class CallEdge:
+    """One resolved call: the callee's qualified name and the call node, which keeps the
+    positional arguments, the keywords and, for an attribute call, the receiver."""
+
+    callee: str
+    call: ast.Call
+
+
 @dataclass
 class FuncDef:
     qualname: str  # module.Class.func
@@ -19,8 +28,9 @@ class FuncDef:
     node: ast.FunctionDef | ast.AsyncFunctionDef
     kwonly: set[str]
     decorators: list[str]
-    calls: set[str] = field(default_factory=set)
+    calls: list[CallEdge] = field(default_factory=list)
     uses_current: bool = False
+    scope: Scope | None = None
 
 
 @dataclass
@@ -33,8 +43,8 @@ class Graph:
         """Qualified names of every function that can reach a `current()` call."""
         rev: dict[str, set[str]] = defaultdict(set)
         for name, f in self.funcs.items():
-            for callee in f.calls:
-                rev[callee].add(name)
+            for edge in f.calls:
+                rev[edge.callee].add(name)
         seen = {n for n, f in self.funcs.items() if f.uses_current}
         queue = deque(seen)
         while queue:
@@ -92,8 +102,9 @@ def _collect(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             qual = f"{mod}.{owner}{node.name}"
             kwonly = {a.arg for a in node.args.kwonlyargs}
-            fd = FuncDef(qual, mod, node, kwonly, [_decorator_name(d) for d in node.decorator_list])
             fn_scope = scope.child(build_import_map(node.body, mod, is_pkg))
+            decorators = [_decorator_name(d) for d in node.decorator_list]
+            fd = FuncDef(qual, mod, node, kwonly, decorators, scope=fn_scope)
             cls = owner.rstrip(".")
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Call):
@@ -101,18 +112,18 @@ def _collect(
                     if target is not None and target != "<dynamic>":
                         if target.endswith(CURRENT_SUFFIXES):
                             fd.uses_current = True
-                        fd.calls.add(target)
-                        # a class constructor runs its __init__
-                        fd.calls.add(f"{target}.__init__")
+                        fd.calls.append(CallEdge(target, sub))
+                        # a class constructor runs its __init__, with the same call node
+                        fd.calls.append(CallEdge(f"{target}.__init__", sub))
                     elif (
                         isinstance(sub.func, ast.Attribute)
                         and isinstance(sub.func.value, ast.Name)
                         and sub.func.value.id == "self"
                         and cls
                     ):
-                        fd.calls.add(f"{mod}.{cls}.{sub.func.attr}")
+                        fd.calls.append(CallEdge(f"{mod}.{cls}.{sub.func.attr}", sub))
                     elif isinstance(sub.func, ast.Name):
-                        fd.calls.add(f"{mod}.{sub.func.id}")
+                        fd.calls.append(CallEdge(f"{mod}.{sub.func.id}", sub))
             funcs[qual] = fd
             _collect(node.body, mod, f"{owner}{node.name}.", fn_scope, index, funcs, is_pkg)
         elif isinstance(node, ast.ClassDef):

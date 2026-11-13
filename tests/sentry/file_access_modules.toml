@@ -55,6 +55,13 @@ ambient_guards = [
   # LIB L0.1 allocator: calls require_ambient for any caller path.
   "decoy_engine/fileaccess/_protected_dir.py",
 ]
+
+# F25 plan 4.1. Exact, both ways: an unlisted module fails, and so does a listed module with no
+# such call. Each producer slice adds its modules when they start calling.
+# Modules that release a scratch arena path (`ScratchArena.local_path`, the one path release).
+# `scratch_native` membership is derived from the scanner (`tests/sentry/fa/rules.py`).
+scratch_path_release = []
+
 # Documented exception (owner decision 2026-10-31, A-4 x F13): file paths a third-party library
 # opens that come only from OPERATOR-set process environment, never from a job config or a caller
 # argument. The sink scan cannot see them (the library opens the file), so each entry names the
