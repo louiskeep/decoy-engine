@@ -17,6 +17,7 @@ through ``PandasExecutionAdapter.run_single``, confirming:
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -598,3 +599,24 @@ def test_constant_expression_fills_every_row() -> None:
     table = _float_table({"a": [1.0, 2.0, 3.0], "d": [0.0, 0.0, 0.0]})
     out = _run_table(table, [("a", _col("passthrough")), ("d", _derived("1 + 1"))])
     assert out.column("d").to_pylist() == [2.0, 2.0, 2.0]
+
+
+def test_at_e2_3_null_timestamp_feeds_derived_as_a_null_cell() -> None:
+    """A parquet-style null timestamp reaches the handler as NaT and must write null."""
+    table = pa.table(
+        {
+            "a": pa.array([None, datetime(2020, 1, 1)], type=pa.timestamp("us")),
+            "b": pa.array([datetime(2020, 2, 2)] * 2, type=pa.timestamp("us")),
+            "c": pa.array(["x", "y"], type=pa.string()),
+        }
+    )
+    per_column = [
+        ("a", _col("passthrough")),
+        ("b", _col("passthrough")),
+        ("c", _col("derived", provider_config=(("expression", "case_when(a < b, 1, 0)"),))),
+    ]
+    plan = _plan([("t", TableSeed(per_column=tuple(per_column), per_group=()))])
+    result = PandasExecutionAdapter().run_single(
+        plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+    )
+    assert result.output.column("c").to_pylist() == [None, 1]

@@ -19,6 +19,7 @@ from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.generation._dob_anchor import anchored_date_of_birth
 from decoy_engine.generators.derivation import TABLE_KEY
 from decoy_engine.internal.crypto import hmac_hex
+from decoy_engine.internal.pandas_missing import is_null_cell
 
 
 def _formula_hash_keyed(value: str, local_seed: int) -> str:
@@ -203,7 +204,7 @@ class _FormulaMixin:
             scope["index"] = i
             for ref in references:
                 val = out.at[i, ref]
-                if val is None or (isinstance(val, float) and pd.isna(val)):
+                if is_null_cell(val):
                     null_subs[ref] = null_subs.get(ref, 0) + 1
                     val = ""
                 scope[ref] = val

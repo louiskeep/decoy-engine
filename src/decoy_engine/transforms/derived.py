@@ -21,10 +21,10 @@ Validation timing:
     and run_config_only_checks. Validation never mutates (per engine rule).
 
 Null propagation modes:
-  explicit_null  Output is None when any referenced column value is None or NaN.
-  sentinel       None/NaN column values are replaced with "" before evaluation;
+  explicit_null  Output is None when any referenced column value is missing (None, NaN, NaT or pd.NA).
+  sentinel       missing column values (None, NaN, NaT, pd.NA) are replaced with "" before evaluation;
                  the expression always runs.
-  default        None/NaN column values are coerced to 0; the expression always
+  default        missing column values (None, NaN, NaT, pd.NA) are coerced to 0; the expression always
                  runs.
 
 Bounds:
@@ -62,13 +62,13 @@ Error handling:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any
 
 from decoy_engine import reasons
 from decoy_engine.errors import ValidationError
 from decoy_engine.expressions import CompiledExpression, compile_expr, evaluate
+from decoy_engine.internal.pandas_missing import is_null_cell
 from decoy_engine.plan._errors import PlanCompileError
 
 # Valid null_propagation values.
@@ -90,11 +90,11 @@ class DerivedConfig:
         compiled: The pre-compiled Lark expression (compiled once at parse time).
         bounds: Optional {min, max} dict to clip numeric output. None means
             no clipping.
-        null_propagation: How null/NaN input column values are handled.
+        null_propagation: How missing (None, NaN, NaT or pd.NA) input column values are handled.
             "explicit_null" (default): output is None if any referenced column
-            is None/NaN.
-            "sentinel": None/NaN is replaced with "" before evaluation.
-            "default": None/NaN is coerced to 0 before evaluation.
+            is missing.
+            "sentinel": a missing value is replaced with "" before evaluation.
+            "default": a missing value is coerced to 0 before evaluation.
     """
 
     expression: str
@@ -205,11 +205,8 @@ def _get_column_refs(compiled: CompiledExpression) -> frozenset[str]:
     return frozenset(refs)
 
 
-def _is_null(value: Any) -> bool:
-    """Return True when *value* is None or a float NaN."""
-    if value is None:
-        return True
-    return isinstance(value, float) and math.isnan(value)
+# One missing-cell rule with the masking kernels and formula (NaT and pd.NA count).
+_is_null = is_null_cell
 
 
 def _coerce_context(
@@ -221,7 +218,7 @@ def _coerce_context(
 
     Returns:
         A (possibly coerced) context dict, or None when explicit_null
-        mode has detected a null/NaN in any referenced column (signalling
+        mode has detected a missing cell in any referenced column (signalling
         that the output should be None).
     """
     if null_propagation == "explicit_null":
@@ -283,7 +280,7 @@ def apply_derived(
     Returns:
         The expression result, optionally clipped by bounds, or None when
         null_propagation is "explicit_null" and any referenced column is
-        None/NaN.
+        missing (None, NaN, NaT or pd.NA).
 
     Raises:
         ValueError: A referenced key is missing from `row_context` or evaluation
@@ -296,7 +293,7 @@ def apply_derived(
         visible = {ref: row_context[ref] for ref in col_refs}
         ctx = _coerce_context(visible, col_refs, config.null_propagation)
         if ctx is None:
-            # explicit_null mode: a referenced column was null/NaN.
+            # explicit_null mode: a referenced column was missing.
             return None
         result = evaluate(config.compiled, ctx)
     except Exception as exc:
