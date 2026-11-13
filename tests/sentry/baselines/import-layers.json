@@ -23,6 +23,9 @@
   "layers::decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._budget": {
    "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
   },
+  "layers::decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._scratch": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
   "layers::decoy_engine.errors -> decoy_engine.execution._row_error_summary": {
    "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
   },

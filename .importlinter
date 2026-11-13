@@ -29,6 +29,7 @@ ignore_imports =
     decoy_engine.declared_casting._eligibility -> decoy_engine.execution._errors
     decoy_engine.declared_casting._quarantine_local -> decoy_engine.execution._errors
     decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._budget
+    decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._scratch
     decoy_engine.errors -> decoy_engine.execution._row_error_summary
     decoy_engine.fileaccess._errors -> decoy_engine.execution._isolated_common
     decoy_engine.generation._bounds -> decoy_engine.execution.out_of_core._budget
