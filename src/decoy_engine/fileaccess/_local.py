@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import BinaryIO, Literal, TextIO
 
 from decoy_engine.fileaccess import _durable
+from decoy_engine.fileaccess._component import validate_publication_leaf
 from decoy_engine.fileaccess._errors import deny
 from decoy_engine.fileaccess._output import (
     CREATES_PARENTS,
@@ -283,8 +284,9 @@ def _make_stage_dir(
 
 def _probe_dir(path: str) -> os.stat_result:
     """`lstat` of a directory on a durable chain, for its device (the mount boundary) and its
-    owner; it needs search permission on the directory above, not read permission on this one."""
-    return os.stat(path, follow_symlinks=False)
+    owner; it needs search permission on the directory above, not read permission on this one.
+    A failure keeps only its errno, like every other call on the chain."""
+    return _call(os.stat, path, follow_symlinks=False)
 
 
 def _sync_up(directory: Path, strict_levels: int) -> None:
@@ -509,6 +511,8 @@ class LocalOutputDir:
         *,
         label: StageLabel,
     ) -> LocalOutputTxn:
+        if label in DURABLE_LABELS:
+            validate_publication_leaf(self._target.name, self._field_key)
         return LocalOutputTxn(self._target, kind, mode, label)
 
     def ensure_dir(self) -> None:
@@ -525,6 +529,7 @@ class LocalOutputDir:
         return _open_dir(self._target.parent)
 
     def lock(self, timeout_s: float) -> AbstractContextManager[None]:
+        validate_publication_leaf(self._target.name, self._field_key)
         if sys.platform == "win32":  # the msvcrt lock is the Windows arm (F22 5.8); no fallback
             raise LockUnavailable(errno.ENOSYS)
         return _durable._held_lock(self._parent_fd, self._target.name, timeout_s)

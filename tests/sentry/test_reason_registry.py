@@ -536,12 +536,6 @@ UNCLASSIFIED: dict[str, str] = {
     # identity (decoy.file_access_denied, reason_adapter._FIXED); these two have none yet.
     "FileAccessReadError": "a library failure on an authorized file; text is the encoded position",
     "FileAccessUnavailable": "no policy where one is required, or an unservable strict route",
-    # F22 a1b file-access errors carry an errno name only and have no code until the publication
-    # codes register in slice a3, which removes these four entries (owner decision 2026-11-12).
-    "CommitUncertain": "output bound but its fsync chain failed; errno name only, code in a3",
-    "LockUnavailable": "the destination lock cannot be taken; errno name only, code in a3",
-    "LockTimeout": "the destination lock was held past the deadline; errno name only, code in a3",
-    "LeafTooLarge": "a bounded member read over its limit; errno name only, code in a3",
     # A-4 x F13: an internal carrier between the file provider and the admission boundary, which
     # rebuilds it into one closed-set class; it never reaches a caller.
     "KeptFileFailure": "internal carrier; the admission boundary rebuilds it, never raised to callers",

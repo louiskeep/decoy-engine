@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import Kind, Outcome, RetryClass, Severity
+from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, RetryClass, Severity
 
 __all__ = [
     "CLEANUP_FAILED",
@@ -14,7 +14,10 @@ __all__ = [
     "ISOLATED_RUN_TIMED_OUT",
     "ISOLATED_WORKER_DIED",
     "ISOLATED_WORKER_OUT_OF_MEMORY",
+    "PUBLICATION_COMMIT_UNCERTAIN",
     "PUBLICATION_FAILED",
+    "PUBLICATION_LOCK_TIMEOUT",
+    "PUBLICATION_LOCK_UNAVAILABLE",
     "PUBLICATION_PARTIAL",
     "REASON_CONTEXT_TOO_LARGE",
     "REASON_RECORD_INVALID",
@@ -155,4 +158,31 @@ UNSUPPORTED_SCHEMA_VERSION = _d(
     "unsupported_schema_version",
     "A record uses a schema version this reader does not support.",
     retry=RetryClass.NEVER,
+)
+
+# F22 output publication (`decoy_engine.publication`, docs/publication.md): the outcomes of
+# judging and binding an output unit under its destination lock, and the publishing sink's
+# refusals. Each text is fixed; no path, table name or OS message rides with a code.
+_p = _catalog.decoy("decoy_engine.publication")
+
+PUBLICATION_LOCK_UNAVAILABLE = _p(
+    "publication_lock_unavailable",
+    "The output destination cannot be locked on this filesystem.",
+    retry=RetryClass.ENVIRONMENT_REPAIR,
+    outcome=Outcome.PUBLICATION,
+    since=UNRELEASED,
+)
+PUBLICATION_LOCK_TIMEOUT = _p(
+    "publication_lock_timeout",
+    "Another writer held the output destination lock past the deadline.",
+    retry=RetryClass.RETRY_OPERATION,
+    outcome=Outcome.PUBLICATION,
+    since=UNRELEASED,
+)
+PUBLICATION_COMMIT_UNCERTAIN = _p(
+    "publication_commit_uncertain",
+    "The output is visible but its durability could not be confirmed.",
+    retry=RetryClass.RETRY_OPERATION,
+    outcome=Outcome.PUBLICATION,
+    since=UNRELEASED,
 )
