@@ -26,3 +26,11 @@ from decoy_engine._memory_limit import parse_megabytes
 )
 def test_parse_megabytes(limit: str | None, expected: int | None) -> None:
     assert parse_megabytes(limit) == expected
+
+
+def test_require_megabytes_refuses_a_malformed_limit() -> None:
+    from decoy_engine._memory_limit import require_megabytes
+
+    assert require_megabytes("512MB") == 512
+    with pytest.raises(ValueError):
+        require_megabytes("512 MB")
