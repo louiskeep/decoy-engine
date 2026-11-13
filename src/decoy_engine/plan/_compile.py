@@ -497,8 +497,9 @@ def run_config_only_checks(
     run accepts).
 
     Profile-dependent checks (basic_uniqueness / pool_capacity /
-    null_bearing_int / namespace + FK graph / composite wiring) stay
-    compile-time-only.
+    null_bearing_int / FK graph / composite wiring) stay compile-time-only.
+    The namespace check that reads the config alone runs here: a `coherent_with` group with two
+    different explicit namespaces raises `namespace_ambiguity`, as `compile_plan` does.
 
     Raises:
         PlanCompileError: on the first failing check.

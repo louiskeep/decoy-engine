@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import re
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,14 @@ SATISFIED: dict[str, dict[str, Any]] = {
     "code_set": {"namespace": "ns", "provider_config": {"mode": "gen"}},
     "nested": {"provider_config": {"strategy": "redact", "target": "$.a"}},
 }
+
+_EMPTY = Profile(
+    schema_version=1,
+    tables=(),
+    relationships=(),
+    profiled_at=datetime(2026, 1, 1),
+    decoy_engine_version="0.1.0",
+)
 
 
 def _config(strategy: str, **column: Any) -> dict[str, Any]:
@@ -99,7 +108,7 @@ def test_satisfied_columns_pass() -> None:
         check_required_strategy_settings(_config(strategy, **column))
 
 
-@pytest.mark.parametrize("value", [None, "", {}, []])
+@pytest.mark.parametrize("value", [None, "", "  ", 0, 5, {}, [], False])
 def test_missing_means_absent_none_empty_string_or_empty_collection(value: Any) -> None:
     config = _config("hash", namespace=value)
     with pytest.raises(PlanCompileError) as exc:
@@ -263,3 +272,44 @@ def test_a_column_with_no_explicit_and_no_derived_namespace_is_refused() -> None
     with pytest.raises(PlanCompileError) as exc:
         check_required_strategy_settings(group)
     assert exc.value.path == "tables.members.columns.other.namespace"
+
+
+def _one_sided_group(**ref: Any) -> dict[str, Any]:
+    """Only `city` declares coherent_with; `zip` is merely referenced."""
+    return {
+        "tables": [
+            {
+                "name": "members",
+                "columns": [
+                    {"name": "city", "strategy": "passthrough", "coherent_with": ["zip"]},
+                    {"name": "zip", "strategy": "fpe", "deterministic": True, **ref},
+                ],
+            }
+        ]
+    }
+
+
+def test_a_referenced_member_is_bound_by_the_group_and_passes() -> None:
+    from decoy_engine.relationships import build_namespace_registry, composite_bindings
+
+    config = _one_sided_group()
+    check_required_strategy_settings(config)
+    bound, members = composite_bindings(config)
+    assert ("members", "zip") in members
+    assert bound == {("members", ("city", "zip")): "composite/members/city__zip"}
+    # Step 3 of the registry accepts the deterministic referenced member too.
+    build_namespace_registry(config, _EMPTY)
+
+
+def test_conflicting_group_namespaces_raise_ambiguity_at_registry_and_validate() -> None:
+    from decoy_engine.relationships import build_namespace_registry
+
+    config = _group(namespace="one")
+    config["tables"][0]["columns"][0]["namespace"] = "two"
+    for call in (
+        lambda: run_config_only_checks(config),
+        lambda: build_namespace_registry(config, _EMPTY),
+    ):
+        with pytest.raises(PlanCompileError) as exc:
+            call()
+        assert exc.value.code == "namespace_ambiguity"

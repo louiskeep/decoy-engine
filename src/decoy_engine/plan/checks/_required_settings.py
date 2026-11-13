@@ -108,9 +108,8 @@ def _lookup(entry: Mapping[str, Any], path: tuple[str, ...]) -> Any:
 
 
 def _missing(value: Any) -> bool:
-    if value is None or value == "":
-        return True
-    return isinstance(value, (list, tuple, set, frozenset, Mapping)) and len(value) == 0
+    """Every required setting is a name, so anything but a non-blank string is missing."""
+    return not isinstance(value, str) or not value.strip()
 
 
 def _applies(req: StrategyRequirement, entry: Mapping[str, Any]) -> bool:
