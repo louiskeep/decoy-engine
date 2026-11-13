@@ -32,6 +32,22 @@ reason = "seeded P1 case: read row with a write mode"
 disposition = "read"
 
 [[entry]]
+module = "pf/seeded_read_row.py"
+function = "wrapped_write"
+sink = "os.open"
+ordinal = 0
+reason = "seeded P1 case: read row whose _call-wrapped os.open passes write flags"
+disposition = "read"
+
+[[entry]]
+module = "pf/seeded_read_row.py"
+function = "wrapped_read"
+sink = "os.open"
+ordinal = 0
+reason = "seeded control: read row whose _call-wrapped os.open passes read-only flags"
+disposition = "read"
+
+[[entry]]
 module = "pf/seeded_private_row.py"
 function = "save"
 sink = "open"

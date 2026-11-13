@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 190 (asserted by the sentry).
+# Count: 194 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -330,7 +330,7 @@ reason = "the isolated child reads its payload and writes its staged output; the
 
 [[entry]]
 module = "decoy_engine/execution/_pipeline_route_exec.py"
-function = "run_out_of_core_route"
+function = "resolve_temp_disk_budget"
 sink = "shutil.disk_usage"
 ordinal = 0
 rule = "`default_ooc_temp_root()`, `tempfile.gettempdir()`"
@@ -1080,6 +1080,16 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 
 [[entry]]
 module = "decoy_engine/fileaccess/_local.py"
+function = "_open_dir"
+sink = "os.open"
+ordinal = 0
+disposition = "read"
+rule = "the FileRequest.locator of a request served by LocalFileAccess, an ancestor of it, or its stage directory, opened read-only as a directory so the creators in _output.py work beneath a held descriptor"
+owner = "cam"
+reason = "ambient CLI semantics (links followed, path as given), POSIX arm only: F22 5.0 rule 1 opens the deepest existing ancestor and makes each missing output parent under it"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
 function = "_sync_dir"
 sink = "os.open"
 ordinal = 0
@@ -1323,7 +1333,7 @@ reason = "package data"
 
 [[entry]]
 module = "decoy_engine/profiling/_scan_integrity.py"
-function = "_check"
+function = "key_facts"
 sink = "duckdb.connection.execute"
 ordinal = 0
 disposition = "read"
@@ -1731,12 +1741,32 @@ reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a 
 ambient_only = true
 
 [[entry]]
+module = "decoy_engine/declared_casting/_stream.py"
+function = "stage_typed_sources"
+sink = "pyarrow.parquet.ParquetWriter"
+ordinal = 0
+disposition = "private"
+rule = "path under the per-run root `engine_scratch_root` created by `protected_scratch_dir`, named by an opaque per-run counter (s0000), never by a table, column or edge name"
+owner = "cam"
+reason = "F06 typed staging copy of a declared out-of-core source; engine-owned scratch, read back only through `scratch_access_for`"
+
+[[entry]]
+module = "decoy_engine/declared_casting/_stream.py"
+function = "stage_typed_sources"
+sink = "pyarrow.parquet.ParquetWriter"
+ordinal = 1
+disposition = "private"
+rule = "path under the per-run root `engine_scratch_root` created by `protected_scratch_dir`, named by an opaque per-run counter (s0000), never by a table, column or edge name"
+owner = "cam"
+reason = "F06 typed staging copy of a declared out-of-core source; engine-owned scratch, read back only through `scratch_access_for`"
+
+[[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "open_private"
 sink = "os.open"
 ordinal = 0
 disposition = "private"
-rule = "a path under the out-of-core run's scratch arena (`ScratchArena.local_path`), named by an opaque per-run id, never by a table, column or edge name; O_NOFOLLOW, mode set to 0600 on the descriptor"
+rule = "a path under the out-of-core run's scratch arena (`ScratchArena.local_path`) or the subset stage's `engine_scratch_root`, named by an opaque per-run id, never by a table, column or edge name; O_NOFOLLOW, mode set to 0600 on the descriptor"
 owner = "cam"
 reason = "engine-owned staging and spill files hold source values, so they are created 0600 on their own descriptor whatever the umask"
 
@@ -1792,9 +1822,19 @@ function = "_open"
 sink = "os.open"
 ordinal = 0
 disposition = "read"
-rule = "O_RDONLY|O_DIRECTORY|O_NOFOLLOW: by path, the directory `_parent_base` returned (the system temp directory, a live issued root, or a caller path after `require_ambient`) and, in `_adopt`, a path at or below a live issued root (`_vet_live`) or an ambient caller path; otherwise the fresh pending root under its held base descriptor, or `.` under a held arena descriptor for `reader()`"
+rule = "O_RDONLY|O_DIRECTORY|O_NOFOLLOW: in `_adopt`, a path at or below a live issued root (`_vet_live`) or an ambient caller path; otherwise the fresh pending root under its held base descriptor, a validated component under a held arena descriptor (`remove` telling a real directory from a file), or `.` under a held arena descriptor for `reader()`"
 owner = "cam"
-reason = "the scratch arena opens its base and its fresh root by descriptor, and its reader's own descriptor; it creates nothing (F25 S1a, S2a-1b-i, plan 4.2)"
+reason = "the scratch arena opens its fresh root, its children and its reader's own descriptor by descriptor; it creates nothing (F25 S1a, S2a-1b-i, plan 4.2)"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_scratch.py"
+function = "_open_base"
+sink = "os.open"
+ordinal = 0
+disposition = "read"
+rule = "O_RDONLY|O_DIRECTORY, links followed: by path, the directory `_parent_base` returned (the system temp directory, a live issued root, or a caller path after `require_ambient`)"
+owner = "cam"
+reason = "the base was vetted by the policy and may be a link (macOS /tmp, a linked `under=`); it is opened before the pending root is allocated so a failed open leaves nothing behind"
 
 [[entry]]
 module = "decoy_engine/fileaccess/_scratch.py"

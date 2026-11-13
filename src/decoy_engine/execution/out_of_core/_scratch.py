@@ -1,12 +1,25 @@
-"""Private scratch helpers the out-of-core runner uses beneath its scratch arena."""
+"""Private scratch helpers the out-of-core runner uses beneath its scratch arena, and the subset
+stage's per-run root and reader (`engine_scratch_root`, `scratch_access_for`) until that stage
+moves onto the arena."""
 
 from __future__ import annotations
 
 import os
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
-from decoy_engine.fileaccess import ScratchArena, open_protected_dir
+from decoy_engine.fileaccess import ScratchArena, open_protected_dir, protected_scratch_dir
+
+if TYPE_CHECKING:
+    from decoy_engine.fileaccess._scratch import ScratchAccess
+
+
+def engine_scratch_root(parent: Path | None) -> AbstractContextManager[Path]:
+    """A private per-run root the engine creates, removed on every exit.
+
+    Under a caller-named `parent` (ambient policy only) or the system temp directory."""
+    return protected_scratch_dir(parent, prefix="decoy-ooc-run-")
 
 
 def open_private(path: Path) -> BinaryIO:
@@ -56,3 +69,13 @@ def scratch_arena(where: ScratchArena | Path) -> ScratchArena:
 def private_dir(path: Path) -> Path:
     """``mkdir -p`` in which every level it creates is 0700, whatever the umask."""
     return open_protected_dir(path, create=True, parents=True)
+
+
+def scratch_access_for(directory: Path) -> ScratchAccess:
+    """The reader for files the engine wrote under `directory`, a directory it created.
+
+    Transitional, for the Path arm of `stage_typed_sources` (the subset stage under
+    `engine_scratch_root`), which goes when that stage moves onto the arena; the reader itself is
+    issued only by `ScratchArena.reader`."""
+    with ScratchArena._adopt(directory) as adopted:  # non-owning: exit closes only its descriptor
+        return adopted.reader()

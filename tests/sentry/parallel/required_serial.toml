@@ -94,6 +94,9 @@ id = "tests/unit/execution/test_isolated_run.py::TestHangingChildHitsTimeout::te
 id = "tests/unit/execution/test_isolated_run.py::TestHwmContaminationGuard::test_parent_inflated_peak_does_not_leak_into_child_result"
 
 [[serial]]
+id = "tests/unit/execution/test_isolated_run.py::TestMemCapOom::test_low_mem_cap_classifies_oom_cleanly_not_an_opaque_crash"
+
+[[serial]]
 id = "tests/unit/execution/test_isolated_run.py::TestNormalJobCompletes::test_small_job_completes_with_correct_artifacts_and_plausible_peak"
 
 [[serial]]
