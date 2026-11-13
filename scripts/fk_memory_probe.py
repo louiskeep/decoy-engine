@@ -412,6 +412,7 @@ def _run_sequential(
         relationship_graph=make_graph(policy),
         namespace_registry=NamespaceRegistry(bindings=()),
         sink=sink,
+        config={},
     )
     mask_s = time.perf_counter() - mask_t0
     _, tm_peak = tracemalloc.get_traced_memory()
@@ -617,6 +618,7 @@ def _run_out_of_core(
                 memory_limit=memory_limit,
                 batch_rows=batch_rows,
                 key_provider=_PROBE_KEY,
+                config={},
             )
         finally:
             mask_s = time.perf_counter() - mask_t0
