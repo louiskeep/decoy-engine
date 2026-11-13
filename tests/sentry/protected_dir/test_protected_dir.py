@@ -115,7 +115,7 @@ def test_the_walk_is_not_vacuous(engine_sites: list[Site]) -> None:
         assert any(s.endswith(name) for s in CREATING), name
     entries = load_registry(REGISTRY)
     creators = [s for s in engine_sites if s.sink in CREATING and s.module not in FD_RELATIVE]
-    assert len(creators) >= 15
+    assert len(creators) >= 12  # c2 deleted atomic_commit, stage_tables and the worker stagers
     assert CATEGORIES - {"non_row"} <= {e.get("dir_category") for e in entries}
     assert any(
         e["module"] == ALLOCATOR and e.get("dir_category") == "protected_root" for e in entries
@@ -130,10 +130,7 @@ def test_no_protected_root_row_is_pending() -> None:
 
 def test_the_other_rows_have_their_expected_categories() -> None:
     expect = {
-        "decoy_engine/execution/_isolated_run.py::_write_payload::Path.mkdir::0": "protected_child",
-        "decoy_engine/execution/_isolated_worker.py::_stage_outputs::os.makedirs::0": "protected_child",
-        "decoy_engine/execution/_isolated_commit.py::stage_tables::Path.mkdir::0": "output_parent",
-        "decoy_engine/execution/_isolated_commit.py::atomic_commit::Path.mkdir::0": "output_parent",
+        "decoy_engine/execution/_isolated_worker.py::_StagingSink.__init__::os.makedirs::0": "protected_child",
         "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::Path.mkdir::0": "output_parent",
         "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::Path.mkdir::1": "published_output",
         "decoy_engine/fileaccess/_local.py::_LocalStageDir.create_dir::Path.mkdir::0": "published_output",

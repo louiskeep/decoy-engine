@@ -2,7 +2,7 @@
 
 Plan: docs/plans/2026-10-19-obs-1b-engine-log-leak-scrub.md section 2C. Every producer of the
 field is exercised with a sentinel that stands in for a data value or a path: child stderr,
-child stdout, the worker envelope, the in-process path, and both CommitError branches. Each
+child stdout, the worker envelope, the in-process path, and both publication branches. Each
 must keep the diagnostics (return code, signal, a stable reason, memory evidence) and must
 drop the sentinel. Routing reads the typed reason identity, never this text.
 """
@@ -253,7 +253,8 @@ class TestInProcess:
 
 
 class TestCommitErrorBranches:
-    """(e) in-process commit and (f) isolated-parent commit, with a path-bearing sentinel."""
+    """(e) in-process publication and (f) isolated-parent publication, with a path-bearing
+    sentinel: the text is the receipt's outcome and registered code (F22 G5)."""
 
     @pytest.mark.parametrize("isolate", [False, True], ids=["in_process_293", "isolated_560"])
     def test_a_failed_commit_drops_the_output_path_and_os_text(self, tmp_path, isolate):
@@ -275,14 +276,12 @@ class TestCommitErrorBranches:
         assert result.isolated is isolate
         assert result.committed_output_dir is None
         assert result.outputs is None
-        assert result.error == (
-            "CommitError: staged output could not be committed (errno=ENOTEMPTY)"
-        )
+        assert result.error == "publication refused: publication_target_occupied"
         assert _SENTINEL not in result.error
         assert str(tmp_path) not in result.error
         # Behavior unchanged: the target is untouched and no staging is left behind.
         assert (output_dir / "preexisting.txt").read_text() == "do not clobber me"
-        assert not list(output_dir.parent.glob("_decoy_isolated_stage_*"))
+        assert not list(output_dir.parent.glob("._decoy_publication_pending_*"))
 
 
 class TestSummaryBuilders:
@@ -310,12 +309,24 @@ class TestSummaryBuilders:
         coded.code = code  # type: ignore[attr-defined]
         assert exception_error_text(coded) == "ValueError"
 
-    def test_a_commit_error_without_an_os_cause_has_no_errno(self):
-        from decoy_engine.execution._isolated_commit import CommitError
+    def test_a_failed_publication_text_carries_the_errno_name_only(self):
+        from decoy_engine.publication import CommitReceipt
 
-        assert commit_error_text(CommitError(_SENTINEL)) == (
-            "CommitError: staged output could not be committed"
+        receipt = CommitReceipt(
+            outcome="failed",
+            operation_id="op-1",
+            reason_code="publication_failed",
+            result_id=None,
+            descriptor_digest=None,
+            vault_digest=None,
+            artifacts=(),
+            visible=False,
+            durable=False,
+            os_error="ENOSPC",
         )
+        assert commit_error_text(receipt) == "publication failed: publication_failed (errno=ENOSPC)"
+        bare = dataclasses.replace(receipt, os_error=None)
+        assert commit_error_text(bare) == "publication failed: publication_failed"
 
 
 class TestGovernorStillReroutes:

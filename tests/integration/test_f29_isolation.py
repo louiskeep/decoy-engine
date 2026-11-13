@@ -74,13 +74,13 @@ def test_a_failed_commit_is_a_publication_reason_on_both_commit_branches(
     cfg, sources = fk_job(tmp_path)
     out = tmp_path / "out"
     out.mkdir()
-    (out / "occupied.txt").write_text("x")  # a non-empty target makes the atomic rename fail
+    (out / "occupied.txt").write_text("x")  # a non-empty target without a descriptor: refused
     result = run_pipeline_isolated(
         cfg, sources, engine_version=ENGINE_VERSION, isolate=isolate, output_dir=out
     )
     assert result.outcome == "crashed"
     assert result.reason is not None
-    assert result.reason.code == "publication_failed"
+    assert result.reason.code == "publication_target_occupied"  # F22 plan 4.1 E3
     ctx = result.reason.context
     assert ctx.operation is Operation.COMMIT and ctx.storage_ref == "output"
     assert ctx.publication_state is PublicationState.NOT_PUBLISHED

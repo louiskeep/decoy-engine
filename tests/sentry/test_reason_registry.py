@@ -136,6 +136,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("plan/_checks_dp.py", "_raise"): _HELPER,
     ("profile/_csv_reader.py", "source_refusal"): _HELPER,
     ("publication/_publish.py", "_receipt"): _HELPER,
+    ("execution/_isolated_commit.py", "_failed"): _HELPER,
     ("plan/_checks_top_code.py", "_reject_unusable_bound"): _HELPER,
     # -- re-wraps of an already-registered exception code ------------------------------------
     ("execution/_chunked_when_guard.py", "PositionalWhenGuard.check_schema"): _REWRAP,

@@ -11,18 +11,6 @@
   "entry::decoy_engine/declared_casting/_stream.py::stage_typed_sources::pyarrow.parquet.ParquetWriter::1": {
    "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
   },
-  "entry::decoy_engine/execution/_isolated_run.py::_write_payload::pyarrow.parquet.write_table::0": {
-   "reason": "staged source copies (real data). V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
-  },
-  "entry::decoy_engine/execution/_isolated_worker.py::_stage_outputs::pyarrow.parquet.write_table::0": {
-   "reason": "staged job outputs. V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
-  },
-  "entry::decoy_engine/execution/_isolated_worker.py::_stage_row_errors::open::0": {
-   "reason": "staged row-error file. V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
-  },
-  "entry::decoy_engine/execution/_isolated_worker.py::_write_envelope_file::Path.write_text::0": {
-   "reason": "result envelope. V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
-  },
   "entry::decoy_engine/execution/native/_pool_quality.py::measure_pool_quality::pyarrow.parquet.write_table::0": {
    "reason": "cleartext source/masked pairs spool written at the umask inside the temp_dir connect_duckdb restricts to 0700; unlinked in finally"
   },

@@ -88,10 +88,10 @@ class TestPostRunStepsClassified:
         envelope = _isolated_worker._run(_payload(tmp_path))
         assert envelope["outcome"] == "oom_killed"
 
-    def test_memory_error_in_stage_row_errors_is_oom_killed(self, tmp_path, monkeypatch):
+    def test_memory_error_in_row_errors_is_oom_killed(self, tmp_path, monkeypatch):
         monkeypatch.setattr(_isolated_worker, "run_pipeline", lambda *a, **k: _fake_result())
         monkeypatch.setattr(_isolated_worker, "_finalize_outputs", lambda *a, **k: [])
-        monkeypatch.setattr(_isolated_worker, "_stage_row_errors", _raising(MemoryError()))
+        monkeypatch.setattr(_isolated_worker, "_row_errors", _raising(MemoryError()))
         envelope = _isolated_worker._run(_payload(tmp_path))
         assert envelope["outcome"] == "oom_killed"
 

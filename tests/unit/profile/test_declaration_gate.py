@@ -265,13 +265,15 @@ class Staging:
                 return _real(*args, **kwargs)
 
             monkeypatch.setattr(isolated_mod, name, spy)
-        write = isolated_mod.pq.write_table
+        import pyarrow.parquet as pq  # the module the isolated route stages through
+
+        write = pq.write_table
 
         def spy_write(*args: Any, **kwargs: Any) -> Any:
             self.calls.append("pq.write_table")
             return write(*args, **kwargs)
 
-        monkeypatch.setattr(isolated_mod.pq, "write_table", spy_write)
+        monkeypatch.setattr(pq, "write_table", spy_write)
 
 
 @pytest.mark.parametrize("isolate", [True, False])

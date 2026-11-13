@@ -3,9 +3,9 @@
 How the engine creates, stages and binds an output directory, and what it promises about the
 result. This page grows with the F22 publication work (plan
 `docs/plans/2026-10-30-f22-publication-replan.md`); each section says what is in place today.
-The reference sink commits through `publish_unit` on every route that uses it (below). Later
-parts add vault-before-output ordering and the isolated route on the same bind; until those
-sections exist here, the engine does not claim them.
+The reference sink commits through `publish_unit` on every route that uses it, and so does
+the isolated route (`run_pipeline_isolated`, both modes; below). A later part adds
+vault-before-output ordering; until that section exists here, the engine does not claim it.
 
 Platforms: Linux and macOS, on both the ambient policy (`LocalFileAccess`, the CLI default) and
 the strict policies (`RootedFileAccess`, `PreopenedFileAccess`). Windows keeps its plain path
@@ -326,6 +326,43 @@ the run with that error, and nothing of this attempt is bound.
 its Parquet files, and the target's parent holds the empty lock file `.<leaf>.decoy-lock`
 (never removed). A consumer that lists every file of an output directory sees both. Unit
 files are `0600` and unit directories `0700`.
+
+## The isolated route on `publish_unit`
+
+`run_pipeline_isolated(..., output_dir=..., request=PublicationRequest(...))` publishes through
+`publish_unit` in both modes, and the receipt is `IsolatedRunResult.publication_receipt`.
+Without a `request` the run is its own attempt (a fresh `operation_id`); a request carrying a
+vault is refused with `ValueError` before anything runs.
+
+- **Isolated (`isolate=True`).** The parent opens a `publication` stage beside `output_dir`
+  before it spawns the child and hands the child that stage's path. The child stages plain
+  Parquet files there, `<table>.parquet`, owner-only from creation, and nothing else: no
+  descriptor, no lock file, no rename, no nested unit. Its row errors travel in its result
+  envelope, not as a file. When the child reports `completed`, the parent, not the child,
+  decides what is staged: the envelope's table names must each be one path component (no
+  separator, no `..`, no repeat), and the stage must hold exactly those files, each a regular
+  file. A child-written `_decoy_publication.json`, an extra file, a directory, a link or a
+  missing table is refused (`failed`, `publication_failed`) and nothing is bound. The parent
+  sets the stage to `0700` and each admitted file to `0600` through the entry's own descriptor
+  (no link followed) before reading it; a file its owner cannot read is refused, not repaired.
+  `publish_unit` then measures every size, SHA-256 and row count itself and writes the
+  descriptor. The payload's source copies are written owner-only from creation, so the route
+  works under a umask that strips owner bits (`0o477`).
+- **In-process fallback (`isolate=False`).** The tables are staged as `<table>.parquet` in a
+  `publication` stage beside `output_dir` and bound by `publish_unit`, as `publish_tables` does.
+
+| Publication ends | `outcome` | `committed_output_dir` | `reason` |
+|---|---|---|---|
+| `published` or `already_committed` | `completed` | `output_dir` | none |
+| refused (another result, anything else at the target, the lock), `operation_conflict` | `crashed` | none | the receipt's code |
+| the stage refused, a staging write, the descriptor write or the rename failed | `crashed` | none | `publication_failed` |
+| bound, but a chain fsync failed (`commit_uncertain`) | `crashed` | none | `publication_commit_uncertain`, publication state `unknown` |
+
+`error` is then `publication <outcome>: <code>`, with ` (errno=<name>)` when an operating-system
+call failed: never a path, table name or operating-system message text. On every outcome but a
+bind the stage is gone when the call returns, and a killed child leaves nothing at
+`output_dir`. Without an `output_dir` the child stages into the run's own scratch, the parent
+admits and reads the tables back the same way, and nothing is published.
 
 ## Named limits
 

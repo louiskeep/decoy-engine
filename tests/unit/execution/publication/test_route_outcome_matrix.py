@@ -1,7 +1,8 @@
 """`test_route_outcome_matrix` (c1b part): every engine route that binds output through the
 reference sink returns a receipt, a retry is `already_committed` and a different result under
 the same `operation_id` is `operation_conflict` with the bound unit untouched (plan 4.2, 7.2;
-class 4). The isolated parent and fallback and `publish_tables` are c2's and a3's rows.
+class 4). The isolated parent and fallback are c2's rows (`test_route_outcome_matrix_isolated`,
+below); `publish_tables` is a3's.
 
 Each route is proven to be the one that ran (its own telemetry), and the receipt is read where
 the route returns it: `run_sequential` and `run_fk_out_of_core` (spied where the pipeline calls
@@ -195,3 +196,57 @@ def test_descriptor_describes_every_staged_table(
     assert sorted(a["path"] for a in bound["artifacts"]) == sorted(staged)
     if route in STREAMED:
         assert [sorted(s) for s in seen if s] == [sorted(staged)]
+
+
+ISOLATED = ["isolated_parent", "isolated_fallback"]
+
+
+@pytest.mark.parametrize("route", ISOLATED)
+def test_route_outcome_matrix_isolated(route: str, tmp_path: Path) -> None:
+    """c2 rows: the isolated parent and the in-process fallback publish through `publish_unit`
+    and return the receipt on `IsolatedRunResult.publication_receipt`; a retry is
+    `already_committed`; a different result under the same `operation_id` is
+    `operation_conflict`, reported as a classified failure with the bound unit untouched.
+
+    Red before c2 (start commit `f9054196`): `run_pipeline_isolated` takes no `request` (it is
+    forwarded to the child and cannot be serialized) and the result has no receipt."""
+    from decoy_engine.execution import run_pipeline_isolated
+    from tests.unit.execution.publication._isolated_support import ENGINE_VERSION, job, sources
+
+    leaf = tmp_path / "out"
+
+    def run(rows: int) -> Any:
+        cfg = job(tmp_path, rows)
+        result = run_pipeline_isolated(
+            cfg,
+            sources(cfg),
+            engine_version=ENGINE_VERSION,
+            output_dir=leaf,
+            isolate=route == "isolated_parent",
+            request=PublicationRequest("op-1"),
+        )
+        assert result.isolated is (route == "isolated_parent")  # the route that ran
+        return result
+
+    first = run(3)
+    receipt = first.publication_receipt
+    assert first.outcome == "completed" and first.committed_output_dir == str(leaf)
+    assert receipt is not None and (receipt.outcome, receipt.durable) == ("published", True)
+    before = snapshot(leaf)
+
+    again = run(3)
+    assert again.outcome == "completed"
+    retry = again.publication_receipt
+    assert retry is not None
+    assert (retry.outcome, retry.result_id) == ("already_committed", receipt.result_id)
+    assert snapshot(leaf) == before
+
+    conflict = run(5)
+    refused = conflict.publication_receipt
+    assert conflict.outcome == "crashed" and conflict.committed_output_dir is None
+    assert refused is not None and refused.outcome == "operation_conflict"
+    assert conflict.reason is not None
+    assert conflict.reason.code == "publication_operation_conflict"
+    assert refused.result_id != receipt.result_id  # non-vacuity: 5 rows really is another result
+    assert snapshot(leaf) == before
+    assert stages_left(tmp_path) == []

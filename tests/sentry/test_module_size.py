@@ -94,7 +94,7 @@ ALLOWLIST: dict[str, int] = {
     # no casting logic of its own lives in these routers.
     "src/decoy_engine/execution/_pipeline_route_exec.py": 632,
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 672,
+    "src/decoy_engine/execution/_isolated_run.py": 625,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
