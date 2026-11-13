@@ -206,3 +206,48 @@ def serializer_label(node: ast.AST) -> str | None:
 
 def serializer_sites() -> list[str]:
     return scan(serializer_label, "phase.py", "verification/postmask")
+
+
+# ----- one applicability predicate ------------------------------------------------------------
+
+APPLIES_HOME = "decoy_engine/config/_post_scan.py::post_scan_gate_applies::"
+GATE = "execution/pipeline/_post_scan.py"
+
+
+def _reads(node: ast.AST, word: str) -> bool:
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call) and _name(n.func) == f"post_scan_{word}_requested":
+            return True
+        if _name(n) == word or (isinstance(n, ast.Constant) and n.value == word):
+            return True
+    return False
+
+
+def applies_label(node: ast.AST) -> str | None:
+    """An `and`/`or` that weighs declared relationships against `post_scan.integrity`."""
+    if isinstance(node, ast.BoolOp):
+        ops = node.values
+        if any(_reads(o, "relationships") for o in ops) and any(
+            _reads(o, "integrity") for o in ops
+        ):
+            return "applies-decision"
+    return None
+
+
+def required_label(node: ast.AST) -> str | None:
+    """`required` set from anything but a `post_scan_gate_applies(...)` call."""
+    targets: list[ast.expr] = []
+    value: ast.expr | None = None
+    if isinstance(node, ast.Assign):
+        targets, value = node.targets, node.value
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets, value = [node.target], node.value
+    if value is None or not any(_name(t) == "required" for t in targets):
+        return None
+    ok = isinstance(value, ast.Call) and _name(value.func) == "post_scan_gate_applies"
+    return None if ok and not isinstance(node, ast.AugAssign) else "required-assign"
+
+
+def applies_sites() -> list[str]:
+    decisions = [k for k in scan(applies_label, ".") if not k.startswith(APPLIES_HOME)]
+    return decisions + scan(required_label, GATE)

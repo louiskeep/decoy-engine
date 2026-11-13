@@ -64,6 +64,8 @@ REPO_ROOT = ENGINE_ROOT.parents[1]
 GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline.py",
     "execution/pipeline/_subset_stage.py",
+    # PS-7: the post-scan gate core checks outputs before commit; no physical import.
+    "execution/pipeline/_post_scan.py",
     "execution/_pipeline_routing.py",
     "execution/_pipeline_routing_signals.py",
     "execution/_pipeline_chunk_route.py",
@@ -406,6 +408,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # SAMPLE SE2: the sample's exact/approximate column label reads config and the
             # strategy vocabulary only.
             "src/decoy_engine/execution/pipeline/_sample.py",
+            # PS-7: the post-scan gate core, not yet wired; imports nothing from
+            # `execution.physical`.
+            "src/decoy_engine/execution/pipeline/_post_scan.py",
             # RUN-STREAM E3: `route_summary` reads recorded quality_metrics blocks and imports
             # nothing from `execution.physical`.
             "src/decoy_engine/execution/pipeline/_route_summary.py",

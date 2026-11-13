@@ -43,6 +43,7 @@ from __future__ import annotations
 from decoy_engine.verification.postmask._blocked import (
     PostScanBlockedError,
     PostScanVerdict,
+    blocked_error,
     post_scan_verdict,
     severity_counts,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "ResidualPIIFinding",
     "Severity",
     "TableBatches",
+    "blocked_error",
     "check_keys",
     "from_lazy",
     "from_table",

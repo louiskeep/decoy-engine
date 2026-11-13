@@ -1,5 +1,5 @@
-"""The four post-scan choke points: one blocking decision, one pass-through rule, one key core
-and one reason-identity serializer.
+"""The post-scan choke points: one blocking decision, one pass-through rule, one key core, one
+reason-identity serializer and one applicability predicate.
 
 Each is a shrink-only ratchet over `_scan.py` site keys (`tests/sentry/baselines/post-scan-*`).
 A new site fails, and a removed site must leave its baseline. The seeded cells plant the breach
@@ -20,6 +20,7 @@ SENTRIES: dict[str, Callable[[], list[str]]] = {
     "post-scan-pass-through": scan.pass_through_sites,
     "post-scan-key-core": scan.key_core_sites,
     "post-scan-reason-identity": scan.serializer_sites,
+    "post-scan-gate-applies": scan.applies_sites,
 }
 
 
@@ -179,3 +180,36 @@ def test_building_the_mapping_inline_in_the_blocked_module_is_flagged() -> None:
     rel = "verification/postmask/_blocked.py"
     planted = _real(rel) + '\n\ndef _p(r):\n    return {"namespace": r.namespace, "code": r.code}\n'
     assert len(_keys(scan.serializer_label, planted, rel)) == 1
+
+
+# ----- one applicability predicate ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(config):\n    return bool(config.relationships) or integrity\n",
+        'def f(c):\n    return c.get("relationships") and post_scan_integrity_requested(c)\n',
+    ],
+)
+def test_weighing_keys_against_integrity_outside_the_predicate_is_flagged(source: str) -> None:
+    found = _keys(scan.applies_label, source, "execution/_job_estimate.py")
+    assert [k.split("::")[2] for k in found] == ["applies-decision"]
+
+
+def test_the_predicate_itself_is_the_one_permitted_site() -> None:
+    rel = "config/_post_scan.py"
+    found = _keys(scan.applies_label, _real(rel), rel)
+    assert found and all(k.startswith(scan.APPLIES_HOME) for k in found)
+
+
+def test_setting_required_from_a_local_expression_in_the_gate_is_flagged() -> None:
+    real = _real(scan.GATE)
+    planted = real.replace(
+        "self.required = post_scan_gate_applies(config)",
+        'self.required = bool(config.get("relationships")) or post_scan_integrity_requested(config)',
+    )
+    assert planted != real
+    found = _keys(scan.required_label, planted, scan.GATE)
+    assert [k.split("::")[2] for k in found] == ["required-assign"]
+    assert _keys(scan.applies_label, planted, scan.GATE)
