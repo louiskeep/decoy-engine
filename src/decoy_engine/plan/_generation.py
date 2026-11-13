@@ -262,7 +262,7 @@ def read_and_pin_snapshots(
     there (`fileaccess.config_relative`). Both result maps stay keyed by the declared string,
     so the plan bytes and the config hash never see the resolved path.
     """
-    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+    from decoy_engine.generation.statistical import StatisticalSpecError, parse_snapshot_json
 
     pinned: dict[str, ReadSnapshot] = {}
     failures: dict[str, Any] = {}
@@ -293,12 +293,9 @@ def read_and_pin_snapshots(
         raw = read.raw
         digest = read.sha256
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            failures[path] = StatisticalSpecError(
-                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
-                message=f"snapshot_file {shown!r} could not be read: {exc}",
-            )
+            parsed = parse_snapshot_json(raw, shown=shown)
+        except StatisticalSpecError as exc:
+            failures[path] = exc
             continue
         guard = snapshot_content_guard.get()
         if guard is not None:

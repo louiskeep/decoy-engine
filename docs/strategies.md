@@ -959,13 +959,15 @@ Common parameters:
   through unchanged. Bounds apply only when the expression produces a real
   number (int or float, but not bool). `min > max` is rejected at config-parse
   with `PlanCompileError(derived_bounds_inverted)`.
-- `null_propagation` (str, default `explicit_null`): controls how `None` or
-  `NaN` values in referenced columns are handled.
+- `null_propagation` (str, default `explicit_null`): controls how null values
+  in referenced columns are handled. A null is `None`, a float NaN of any
+  type, `Decimal('NaN')`, `pd.NaT`, `numpy.datetime64('NaT')` or `pd.NA`; the
+  strings `"NaT"` and `""` are values, not nulls.
   - `explicit_null` (default): output is `None` when any referenced column
-    is `None` or `NaN`.
-  - `sentinel`: `None`/`NaN` values in referenced columns are replaced with
+    is null.
+  - `sentinel`: null values in referenced columns are replaced with
     `""` before evaluation; the expression always runs.
-  - `default`: `None`/`NaN` values in referenced columns are coerced to `0`
+  - `default`: null values in referenced columns are coerced to `0`
     before evaluation; the expression always runs.
 
 Validation timing:

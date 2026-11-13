@@ -43,7 +43,6 @@ behind its own opt-in.
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -61,6 +60,7 @@ from decoy_engine.generation.statistical._numeric_shape import (
     numeric_shape_withheld,
     redacted_fix_hint,
 )
+from decoy_engine.generation.statistical._snapshot_io import parse_snapshot_json
 from decoy_engine.profiling import (
     POLICY_RAW,
     POLICY_REDACTED,
@@ -201,13 +201,7 @@ def _load_snapshot(path: str, field_key: str = "snapshot_file") -> tuple[str, di
             message=f"snapshot_file {shown!r} could not be read: {failure}",
         )
     digest = hashlib.sha256(raw).hexdigest()
-    try:
-        snap = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise StatisticalSpecError(
-            code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
-            message=f"snapshot_file {shown!r} could not be read: {exc}",
-        ) from exc
+    snap = parse_snapshot_json(raw, shown=shown)
     if not isinstance(snap, dict):
         raise StatisticalSpecError(
             code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,

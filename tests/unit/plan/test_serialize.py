@@ -299,6 +299,24 @@ def test_plan_from_yaml_rejects_non_json_payload_with_matching_digest(tmp_path):
     assert exc.value.code == "dp_pinned_snapshot_payload_not_json"
 
 
+@pytest.mark.dp_certified
+def test_at_e1_8_embedded_non_utf8_payload_maps_to_not_json_without_context(tmp_path):
+    import base64
+    import hashlib
+
+    plan = _compiled_dp_plan(tmp_path)
+    data = __import__("yaml").safe_load(plan_to_yaml(plan))
+    bad = b'{"a": "\xff"}'
+    data["generation"]["snapshots"][0]["payload_b64"] = base64.b64encode(bad).decode("ascii")
+    data["generation"]["snapshots"][0]["sha256"] = hashlib.sha256(bad).hexdigest()
+
+    with pytest.raises(PlanCompileError) as exc:
+        plan_from_yaml(__import__("yaml").safe_dump(data, sort_keys=False))
+    assert exc.value.code == "dp_pinned_snapshot_payload_not_json"
+    assert exc.value.__cause__ is None
+    assert exc.value.__context__ is None
+
+
 def test_plan_from_yaml_without_generation_block_round_trips_none(tmp_path):
     """A Plan compiled with no generate_columns has no `generation` key at
     all on the wire (guide section 4.7); it must deserialize back to
