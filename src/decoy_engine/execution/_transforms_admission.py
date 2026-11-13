@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from decoy_engine.config import post_scan_sink_kind
 from decoy_engine.execution._transforms_gate import (
     PER_TABLE_TRANSFORMS_PRESENT,
     find_table_config,
@@ -75,8 +74,6 @@ def check_rejections_before_preparation(
     vault_writer: Any,
     post_validation: bool,
     resolved_substrate: str,
-    sink: Any = None,
-    source_loader_present: bool = False,
 ) -> None:
     """Raise what routing would raise for this job, from the profile, graph and the
     residency of the sources alone, so a job that is going to be rejected never
@@ -101,12 +98,7 @@ def check_rejections_before_preparation(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
-        post_scan_resident=post_scan_resident_for(
-            config,
-            sink_kind=post_scan_sink_kind(sink),
-            caller_sources=caller_sources,
-            source_loader_present=source_loader_present,
-        ),
+        post_scan_resident=post_scan_resident_for(config),
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     if execution_mode == "sequential":

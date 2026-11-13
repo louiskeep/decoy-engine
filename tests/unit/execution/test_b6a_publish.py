@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.config import PipelineConfig
-from decoy_engine.errors import ConfigError, RowErrorsFailedError
+from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _b6a_support as b6a
@@ -341,9 +341,7 @@ def test_non_routed_runs_never_enter_the_new_code(
         if case in ("sequential", "out_of_core"):
             run_dir = tmp_path / label
             run_dir.mkdir()
-            # No sink: declared keys keep a sink job resident until a staged sink can be read
-            # back, so the bounded routes are reached without one (see the refusal test below).
-            results[label] = _fk_run(run_dir, case, None, **extra)
+            results[label] = _fk_run(run_dir, case, sink, **extra)
             continue
         cfg, src = shared_job
         kwargs: dict[str, Any] = {"auto_chunk_threshold_rows": 10_000}
@@ -361,16 +359,6 @@ def test_non_routed_runs_never_enter_the_new_code(
         assert new.outputs[name].equals(off.outputs[name], check_metadata=True)
     assert _strip_ms(new.quality_metrics) == _strip_ms(off.quality_metrics)
     assert "output" not in new.quality_metrics.get("auto_chunk", {})
-
-
-@pytest.mark.parametrize("mode", ["sequential", "out_of_core"])
-def test_an_explicit_bounded_route_with_a_sink_and_declared_keys_is_refused(
-    mode: str, tmp_path: Path
-) -> None:
-    sink = b6a.RecordingSink()
-    with pytest.raises(ConfigError, match="post_scan_keys_resident"):
-        _fk_run(tmp_path, mode, sink)
-    assert sink.calls == []
 
 
 # ---------------------------------------------------------------------------

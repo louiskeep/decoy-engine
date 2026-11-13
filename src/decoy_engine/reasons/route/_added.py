@@ -5,14 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, Phase, RetryClass, Severity
+from decoy_engine.reasons._types import Kind, Outcome, Phase, RetryClass, Severity
 
 __all__ = [
     "MIXED_GENERATE_MASK_CHUNKED",
     "MIXED_RUNTIME_DECLINED",
     "OUT_OF_CORE_INELIGIBLE",
     "POST_SCAN_INTEGRITY_REQUESTED",
-    "POST_SCAN_KEYS_RESIDENT",
     "POST_SCAN_MODELS_UNSUPPORTED",
     "POST_VALIDATION_REQUESTED",
     "SEQUENTIAL_INELIGIBLE",
@@ -26,12 +25,6 @@ POST_VALIDATION_REQUESTED = _d(
 POST_SCAN_INTEGRITY_REQUESTED = _d(
     "post_scan_integrity_requested",
     "The Post-scan integrity checks need the full frame resident.",
-)
-POST_SCAN_KEYS_RESIDENT = _d(
-    "post_scan_keys_resident",
-    "The declared relationship keys must be checked, and this route cannot read its output "
-    "or its inputs back, so the job stays resident.",
-    since=UNRELEASED,
 )
 MIXED_GENERATE_MASK_CHUNKED = _d(
     "mixed_generate_mask_chunked",

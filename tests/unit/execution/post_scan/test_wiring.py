@@ -1,7 +1,7 @@
 """AT-16, AT-20, AT-25, AT-14 and AT-24: the post-scan gate wired into `run_pipeline` (plan 4.5).
 
 Every route that returns resident outputs runs the gate before its result is visible; a route that
-holds a sink keeps the job resident, so `observed_commit` is only reached by a gate that ran.
+reads its output back to block is deferred: it is checked as before and the result says so.
 A blocking verdict commits nothing. All values are made up.
 """
 
@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine import reasons, run_pipeline
+from decoy_engine.execution._chunked_input import capture_source_facts
 from decoy_engine.execution._publication_observer import observed_commit
 from decoy_engine.execution.pipeline import _post_scan
 from decoy_engine.execution.pipeline._post_scan import PostScanGate
@@ -140,15 +141,19 @@ def test_at16_a_gate_that_ran_lets_the_commit_through() -> None:
     assert sink.calls == [("commit",)]
 
 
+DEFERRED = {"namespace": "post_scan", "code": "gate_deferred_route"}
+
+
 @pytest.mark.parametrize("integrity", [False, True], ids=["keys", "integrity"])
-def test_at16_a_sink_job_stays_resident_so_the_gate_runs_before_anything_streams(
+def test_at16_a_sink_job_is_not_withheld_and_says_the_gate_was_deferred(
     tmp_path: Path, integrity: bool
 ) -> None:
     sink = RecordingSink()
     config = _config(tmp_path, broken=True, integrity=integrity)
-    exc = _blocked(lambda: _run(config, "auto", sink=sink))
-    assert exc.reason == DUPLICATES
-    assert sink.calls == []
+    result, _ = _run(config, "auto", sink=sink)
+    assert result.quality_metrics["post_scan_gate_deferred"] == DEFERRED
+    assert ("commit",) in sink.calls
+    assert ("verdict" in result.quality_metrics.get("post_scan_integrity", {})) is False
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -190,16 +195,22 @@ def test_at20_integrity_adds_the_column_suite_to_the_same_report(tmp_path: Path)
     assert {"keys", "verdict", "residual_pii", "fk_preservation"} <= set(report)
 
 
-def test_at20_lazy_inputs_are_re_read_in_batches_and_the_report_is_stamped(
-    tmp_path: Path,
-) -> None:
+def test_at20_lazy_inputs_defer_the_gate_and_the_run_is_not_withheld(tmp_path: Path) -> None:
     cfg, _, lazy = subset_sup.job(tmp_path)
     cfg["subset"] = None
-    result, routes = _run(cfg, "sequential", sources=lazy)
-    assert routes == ["sequential"]
-    report = result.quality_metrics["post_scan_integrity"]
-    assert report["verdict"]["blocking"] is False
-    assert {k["table"] for k in report["keys"]} >= {"customers", "orders", "items"}
+    result, _ = _run(cfg, "sequential", sources=lazy)
+    assert result.quality_metrics["post_scan_gate_deferred"] == DEFERRED
+
+
+def test_at20_a_gate_re_reads_lazy_inputs_in_batches_and_reports(tmp_path: Path) -> None:
+    cfg, data, lazy = subset_sup.job(tmp_path)
+    kinds = {name: "mask" for name in lazy}
+    gate = PostScanGate(
+        {"relationships": cfg["relationships"]}, source_facts=capture_source_facts(lazy, kinds)
+    )
+    gate.run_resident(data, lazy, kinds)
+    assert gate.report is not None and gate.report["verdict"]["blocking"] is False
+    assert {k["table"] for k in gate.report["keys"]} >= {"customers", "orders", "items"}
 
 
 def test_at25_a_gate_that_never_ran_is_refused_after_the_route(
@@ -302,20 +313,15 @@ def test_at24_a_subset_run_with_a_broken_key_still_blocks(tmp_path: Path) -> Non
     assert exc.reason == DUPLICATES
 
 
-def test_a_lazy_input_that_changes_before_the_gate_reads_it_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_lazy_input_that_changes_before_the_gate_reads_it_is_refused(tmp_path: Path) -> None:
     cfg, data, lazy = subset_sup.job(tmp_path)
-    cfg["subset"] = None
-    real = PostScanGate.run_resident
-
-    def rewrite_then_run(self: PostScanGate, outputs: Any, sources: Any, kinds: Any) -> None:
-        pq.write_table(data["customers"].slice(0, 7), Path(cfg["sources"]["customers"]["path"]))
-        real(self, outputs, sources, kinds)
-
-    monkeypatch.setattr(PostScanGate, "run_resident", rewrite_then_run)
+    kinds = {name: "mask" for name in lazy}
+    gate = PostScanGate(
+        {"relationships": cfg["relationships"]}, source_facts=capture_source_facts(lazy, kinds)
+    )
+    pq.write_table(data["customers"].slice(0, 7), Path(cfg["sources"]["customers"]["path"]))
     with pytest.raises(Exception) as caught:
-        run_pipeline(cfg, lazy, engine_version=V, execution_mode="sequential")
+        gate.run_resident(data, lazy, kinds)
     assert getattr(caught.value, "code", None) == reasons.runtime.LAZY_SOURCE_CHANGED
 
 
@@ -393,12 +399,10 @@ def test_at20_the_mixed_route_with_no_sink_is_checked_over_its_stitched_outputs(
     assert {k["table"] for k in report["keys"]} == {"people", "accounts"}
 
 
-def test_at20_a_mixed_job_with_a_sink_stays_resident_and_is_checked(tmp_path: Path) -> None:
+def test_at20_a_mixed_job_with_a_sink_defers_the_gate(tmp_path: Path) -> None:
     sink = RecordingSink()
-    result, routes = _mixed_run(tmp_path, sink=sink)
-    assert "mixed" not in routes
-    assert result.quality_metrics["post_scan_integrity"]["verdict"]["blocking"] is False
-    assert sink.calls == []
+    result, _ = _mixed_run(tmp_path, sink=sink)
+    assert result.quality_metrics["post_scan_gate_deferred"] == DEFERRED
 
 
 def test_at24_an_excluded_edge_to_a_generated_parent_leaves_inherited_orphans_unblocked(

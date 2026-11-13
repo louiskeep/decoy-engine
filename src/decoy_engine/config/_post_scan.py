@@ -142,24 +142,6 @@ def post_scan_gate_applies(config: Mapping[str, Any]) -> bool:
     return bool(config.get("relationships")) or post_scan_integrity_requested(config)
 
 
-# `_snapshot._sink_class_token(None)`: the one name a run without a sink goes by.
-NO_SINK_CLASS_LABEL = "None"
-
-
-def post_scan_sink_kind(sink: object | None) -> str:
-    """The token a sink goes by in the readability decision: the no-sink name, else its class."""
-    if sink is None:
-        return NO_SINK_CLASS_LABEL
-    cls = type(sink)
-    return f"{cls.__module__}.{cls.__qualname__}"
-
-
-def post_scan_output_readable(sink_kind: str) -> bool:
-    """True when a route's output can be checked before it becomes visible. A run with no sink
-    hands its outputs back resident; no sink class can be read back from staged files yet."""
-    return sink_kind == NO_SINK_CLASS_LABEL
-
-
 def post_scan_model_setting(config: Mapping[str, Any]) -> str | None:
     """The post-scan setting that asks for a model check (`post_scan.detectors` other than
     regex, or `post_scan.ner_findings: fail`), or `None`. Only an enabled suite asks."""
@@ -177,18 +159,12 @@ def post_scan_model_setting(config: Mapping[str, Any]) -> str | None:
     return "post_scan.ner_findings" if block.get("ner_findings") == "fail" else None
 
 
-def post_scan_resident_reason(
-    config: Mapping[str, Any], *, output_readable: bool, input_baseline_readable: bool
-) -> ReasonCode | None:
-    """Why a job must stay on the resident route so the post-scan gate can run, or `None`.
+def post_scan_resident_reason(config: Mapping[str, Any]) -> ReasonCode | None:
+    """Why a job must stay on the resident route for the post-scan gate, or `None`.
 
     `post_scan.integrity` needs the whole output (the column suite is not streamed yet). Declared
-    keys alone need the output and the inputs re-readable: a route that can read back neither
-    stays resident, where the gate runs over the tables it holds."""
-    if not post_scan_gate_applies(config):
-        return None
+    keys alone never move a route: where the gate cannot read a route's inputs or output yet,
+    it defers and says so on the result."""
     if post_scan_integrity_requested(config):
         return reasons.route.POST_SCAN_INTEGRITY_REQUESTED
-    if not (output_readable and input_baseline_readable):
-        return reasons.route.POST_SCAN_KEYS_RESIDENT
     return None

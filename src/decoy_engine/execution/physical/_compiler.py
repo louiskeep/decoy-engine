@@ -440,11 +440,6 @@ def _post_scan_resident(inputs: Any) -> Any:
     from decoy_engine.execution.physical._inputs import thaw_config
 
     try:
-        return post_scan_resident_for(
-            thaw_config(inputs.config),
-            sink_kind=inputs.sink_class_token,
-            caller_sources=inputs.caller_sources,
-            source_loader_present=inputs.source_loader_present,
-        )
+        return post_scan_resident_for(thaw_config(inputs.config))
     except Exception:
         return None

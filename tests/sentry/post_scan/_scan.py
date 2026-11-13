@@ -326,27 +326,16 @@ def model_sites() -> list[str]:
     return [k for k in scan(model_label, ".") if not k.startswith(MODEL_HOME)]
 
 
-# ----- one route readability decision ---------------------------------------------------------
+# ----- one route residency decision ----------------------------------------------------------
 
 READABILITY_HOME = "decoy_engine/execution/_transforms_gate.py::post_scan_resident_for::"
 CONFIG_HOME = "decoy_engine/config/_post_scan.py"
-FACT_ARGS = {"sink_kind", "output_readable", "input_baseline_readable"}
 
 
 def readability_label(node: ast.AST) -> str | None:
-    """A readability decision made outside the one helper, or fed a literal instead of a fact."""
-    if not isinstance(node, ast.Call):
-        return None
-    name = _name(node.func)
-    if name in {
-        "post_scan_resident_reason",
-        "post_scan_output_readable",
-        "post_scan_output_unreadable",
-    }:
+    """A residency decision made outside the one helper."""
+    if isinstance(node, ast.Call) and _name(node.func) == "post_scan_resident_reason":
         return "decision-call"
-    if name == "post_scan_resident_for":
-        if any(k.arg in FACT_ARGS and isinstance(k.value, ast.Constant) for k in node.keywords):
-            return "literal-fact"
     return None
 
 

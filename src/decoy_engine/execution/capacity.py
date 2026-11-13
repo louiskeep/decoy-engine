@@ -77,7 +77,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine.config import FILE_SOURCE_PATH_FIELDS, NO_SINK_CLASS_LABEL
+from decoy_engine.config import FILE_SOURCE_PATH_FIELDS
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -370,12 +370,7 @@ def estimate_job_capacity(
             validators=(config.get("validators") or []),
             fidelity_report=False,
             vault_writer=None,
-            post_scan_resident=post_scan_resident_for(
-                config,
-                sink_kind=NO_SINK_CLASS_LABEL,
-                caller_sources=None,
-                source_loader_present=False,
-            ),
+            post_scan_resident=post_scan_resident_for(config),
             execution_mode="auto",
             graph=graph,
             resolved_substrate="pandas",
@@ -437,12 +432,7 @@ def estimate_job_capacity(
                 validators=(config.get("validators") or []),
                 fidelity_report=False,
                 vault_writer=None,
-                post_scan_resident=post_scan_resident_for(
-                    config,
-                    sink_kind=NO_SINK_CLASS_LABEL,
-                    caller_sources=None,
-                    source_loader_present=False,
-                ),
+                post_scan_resident=post_scan_resident_for(config),
                 execution_mode="auto",
                 graph=graph,
                 resolved_substrate="pandas",

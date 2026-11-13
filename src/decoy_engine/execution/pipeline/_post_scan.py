@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any, Final
 
 import pyarrow as pa
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
+from decoy_engine._lexeme import lexeme_columns_by_table
 from decoy_engine.config import (
     RelationshipConfig,
     parse_relationship_config,
@@ -35,6 +36,7 @@ from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
 from decoy_engine.profile import LazySource
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.progress import safe_error_class
+from decoy_engine.reasons import reason_ref_payload
 from decoy_engine.verification.postmask import (
     SCHEMA_VERSION,
     KeyResult,
@@ -78,8 +80,12 @@ class PostScanGate:
         *,
         budget_bytes: int | None = None,
         source_facts: Mapping[str, SourceFacts] | None = None,
+        deferred: bool = False,
     ) -> None:
         self.required = post_scan_gate_applies(config)
+        # True on a route whose inputs or output the gate cannot read back yet: the run is then
+        # checked report-only, as before the gate, and says so on its result.
+        self.deferred = deferred and self.required
         self.ran = False
         self.report: dict[str, Any] | None = None
         self.verdict: PostScanVerdict | None = None
@@ -110,6 +116,9 @@ class PostScanGate:
         raise if the verdict blocks."""
         if self.ran or not self.required:
             return
+        if self.deferred:
+            self._report_only(outputs, sources, table_kinds)
+            return
         failed: str | None = None
         keys: tuple[KeyResult, ...] = ()
         try:
@@ -136,11 +145,30 @@ class PostScanGate:
         if error is not None:
             raise error
 
+    def _report_only(
+        self,
+        outputs: Mapping[str, pa.Table],
+        sources: Mapping[str, pa.Table | LazySource],
+        table_kinds: Mapping[str, str],
+    ) -> None:
+        """The check a deferred route gets: the column suite over the mask tables the run still
+        holds, reported and never blocking. Declared keys alone get no check yet."""
+        self.ran = True
+        if not post_scan_integrity_requested(self._config):
+            return
+        masked = [n for n in outputs if table_kinds.get(n, "mask") == "mask" and n in sources]
+        if masked:
+            self.report = run_post_mask(
+                {n: materialize_source(sources[n]).to_pandas() for n in masked},
+                {n: outputs[n].to_pandas() for n in masked},
+                config=dict(self._config),
+            )
+
     def note_quarantined(self, table: str, rows: pa.Table, removed: Collection[int]) -> None:
         """Record the declared parent keys of `rows` (a table before quarantine filtered it) at
         the `removed` row indices. A relationship that cannot be read is left for the check to
         report."""
-        if not self.required or not removed:
+        if not self.required or self.deferred or not removed:
             return
         try:
             relationships = self._relationships()
@@ -163,7 +191,7 @@ class PostScanGate:
     def before_commit(self, sink: Any) -> None:
         """Refuse the commit when a required gate never ran. No sink's staged files can be checked
         yet, so every sink is refused; `ran` stays false, so a retry is refused too."""
-        if self.ran or not self.required:
+        if self.ran or not self.required or self.deferred:
             return
         report = {"schema_version": SCHEMA_VERSION, "pass_failed_with": _NOT_RUN}
         error = blocked_error(report, post_scan_verdict(report))
@@ -223,18 +251,32 @@ def active_gate() -> PostScanGate | None:
     return _ACTIVE.get()
 
 
+def _deferred(ctx: PipelineRunContext) -> bool:
+    """Whether the gate cannot read this run back yet: a sink publishes staged output, a loader
+    or a lazy source feeds tables the gate does not hold, and declared casting renders them per
+    chunk. Each of these routes runs as it did before the gate until it is made readable."""
+    return (
+        ctx.sink is not None
+        or ctx.source_loader is not None
+        or any(isinstance(s, LazySource) for s in ctx.caller_sources.values())
+        or bool(lexeme_columns_by_table(ctx.config))
+    )
+
+
 @contextmanager
 def bind_gate(ctx: PipelineRunContext) -> Iterator[PostScanGate]:
     """Bind one gate for the run. Its lazy-input snapshot is taken here, before any route reads."""
+    deferred = _deferred(ctx)
     facts = (
         capture_source_facts(ctx.caller_sources, ctx.table_kinds)
-        if post_scan_gate_applies(ctx.config)
+        if post_scan_gate_applies(ctx.config) and not deferred
         else {}
     )
     gate = PostScanGate(
         ctx.config,
         budget_bytes=ctx.out_of_core_budget_bytes,
         source_facts=facts,
+        deferred=deferred,
     )
     token = _ACTIVE.set(gate)
     try:
@@ -264,3 +306,7 @@ def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult)
         gate.before_commit(None)
     if gate.report is not None:
         result.quality_metrics["post_scan_integrity"] = gate.report
+    if gate.deferred:
+        result.quality_metrics["post_scan_gate_deferred"] = reason_ref_payload(
+            reasons.post_scan.GATE_DEFERRED_ROUTE.spec.ref
+        )

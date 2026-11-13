@@ -274,25 +274,10 @@ def test_inlining_the_model_test_in_the_route_guard_is_flagged() -> None:
     assert found
 
 
-# ----- one route readability decision -------------------------------------------------------
+# ----- one route residency decision -------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        "def f(c):\n    return post_scan_resident_reason(c, output_readable=True,"
-        " input_baseline_readable=True)\n",
-        "def f(c):\n    return post_scan_output_readable('None')\n",
-    ],
-)
-def test_a_readability_decision_outside_the_helper_is_flagged(source: str) -> None:
+def test_a_residency_decision_outside_the_helper_is_flagged() -> None:
+    source = "def f(c):\n    return post_scan_resident_reason(c)\n"
     found = _keys(scan.readability_label, source, "execution/x.py")
     assert [k.split("::")[2] for k in found] == ["decision-call"]
-
-
-def test_passing_a_literal_sink_kind_to_the_helper_is_flagged() -> None:
-    real = _real("execution/_job_estimate.py")
-    planted = real.replace("sink_kind=NO_SINK_CLASS_LABEL", "sink_kind='None'", 1)
-    assert planted != real
-    found = _keys(scan.readability_label, planted, "execution/_job_estimate.py")
-    assert [k.split("::")[2] for k in found] == ["literal-fact"]

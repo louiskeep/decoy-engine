@@ -406,8 +406,6 @@ def build_run_context(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
-        sink=sink,
-        source_loader_present=source_loader is not None,
     )
     return PipelineRunContext(
         config=config,
@@ -532,8 +530,6 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
         engine_version=ctx.engine_version,
         prepared_tables=ctx.prepared.prepared,
         mixed_admitted=mixed is not None,
-        sink=ctx.sink,
-        source_loader_present=ctx.source_loader is not None,
     )
     execution_plan_decision, route_chunked, keep_lazy = _pipeline_routing.decide_chunk_route(
         ctx.config,
