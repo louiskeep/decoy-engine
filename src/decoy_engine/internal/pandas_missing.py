@@ -22,7 +22,12 @@ def is_null_cell(value: Any) -> bool:
     if value is None:
         return True
     try:
-        return bool(value != value)
+        unequal = value != value
+        # An array-like cell compares element-wise: it is a container, not a missing cell, even
+        # when it holds a single NaN.
+        if getattr(unequal, "ndim", 0):
+            return False
+        return bool(unequal)
     except Exception:
         # `value != value` did not yield a plain bool. The reachable case is
         # pandas `pd.NA`, whose `!=` returns `pd.NA` and whose `bool()` raises:

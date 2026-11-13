@@ -20,7 +20,7 @@ import pyarrow as pa
 
 from decoy_engine.detection.detectors import counting_scope, decide_detector, run_all_detectors
 from decoy_engine.internal.pandas_compat import exact_int_types_mapper
-from decoy_engine.profiling import KEY_BATCH_ROWS, column_distinct
+from decoy_engine.profiling import KEY_BATCH_ROWS, column_distinct, passes_through
 from decoy_engine.verification.postmask._stream_input import TableBatches, key_batches
 
 
@@ -48,6 +48,17 @@ class ColumnFacts:
     source_distinct: int
     output_distinct: int
     detectors: tuple[DetectorRate, ...]
+    # Class names of uncoded failures on this one column: comparing source with output (identity
+    # and bytes_identical are then unavailable), and counting distinct values (that count is then
+    # 0). The detector rates are exact either way.
+    identity_error: str | None = None
+    distinct_error: str | None = None
+    # True when the failed count was the source's, so a zero source_distinct means unknown.
+    source_distinct_failed: bool = False
+
+    @property
+    def error(self) -> str | None:
+        return self.identity_error or self.distinct_error
 
     @property
     def source_constant(self) -> bool:
@@ -59,6 +70,7 @@ class _Tally:
     comparable: int = 0
     identical: int = 0
     same_bytes: bool = True
+    error: str | None = None
     # detector id -> [hits, non-null values, threshold, name hint]
     detectors: dict[str, list[float | bool]] | None = None
 
@@ -97,7 +109,12 @@ def _add_identity(tally: _Tally, src: pd.Series, out: pd.Series) -> None:
     present = src_o.notna() & out_o.notna()
     tally.comparable += int(present.sum())
     tally.identical += int((src_o[present] == out_o[present]).sum())
-    tally.same_bytes = tally.same_bytes and bool(src_o.equals(out_o))
+    # A null is NaN in a float column and pd.NA in an Arrow-typed integer one; `equals` treats
+    # NaN and None as one null but not NaN and pd.NA, so a float source against an int output of
+    # the same numbers would read as different.
+    tally.same_bytes = tally.same_bytes and bool(
+        src_o.where(src_o.notna(), None).equals(out_o.where(out_o.notna(), None))
+    )
 
 
 def _add_detectors(tally: _Tally, out: pd.Series, column: str) -> None:
@@ -140,11 +157,20 @@ def _counted(table: TableBatches) -> tuple[TableBatches, Callable[[], None]]:
     return replace(table, read=read), verify
 
 
-def _distinct(table: TableBatches, column: str, scratch: Path, limit: str) -> int:
+def _distinct_or_error(
+    table: TableBatches, column: str, scratch: Path, limit: str
+) -> tuple[int, str | None]:
+    """The count and no error, or zero and the class name of an uncoded failure counting this one
+    column. A short or long stream is not such a failure: `verify` refuses it for every column."""
     counted, verify = _counted(table)
-    count = column_distinct(key_batches(counted, [column]), scratch=scratch, memory_limit=limit)
+    try:
+        count = column_distinct(key_batches(counted, [column]), scratch=scratch, memory_limit=limit)
+    except Exception as exc:
+        if passes_through(exc):
+            raise
+        return 0, type(exc).__name__
     verify()
-    return count
+    return count, None
 
 
 def column_facts(
@@ -175,8 +201,15 @@ def column_facts(
     for src_batch, out_batch in pairs:
         for c in wanted:
             out_s = _series(out_batch, c)
-            if src_batch is not None and c in compared:
-                _add_identity(tallies[c], _series(src_batch, c), out_s)
+            if src_batch is not None and c in compared and tallies[c].error is None:
+                try:
+                    _add_identity(tallies[c], _series(src_batch, c), out_s)
+                except Exception as exc:
+                    # One column that cannot be compared (a list or map cell, say) must not
+                    # take the other columns down with it.
+                    if passes_through(exc):
+                        raise
+                    tallies[c].error = type(exc).__name__
             _add_detectors(tallies[c], out_s, c)
     for check in checks:
         check()
@@ -184,20 +217,27 @@ def column_facts(
     for c in wanted:
         t = tallies[c]
         has_source = source is not None and c in source.schema.names
+        distinct_failed = None
+        source_failed = False
+        distinct = [0, 0]
+        for n, (table, present) in enumerate(((source, has_source), (output, True))):
+            if present and table is not None:
+                distinct[n], err = _distinct_or_error(table, c, scratch, memory_limit)
+                distinct_failed = distinct_failed or err
+                source_failed = source_failed or (n == 0 and err is not None)
         facts[c] = ColumnFacts(
             table=output.name,
             column=c,
             source_rows=source.num_rows if source is not None else 0,
             output_rows=output.num_rows,
-            comparable_rows=t.comparable,
-            identical_rows=t.identical,
-            bytes_identical=aligned and c in compared and t.same_bytes,
-            source_distinct=(
-                _distinct(source, c, scratch, memory_limit)
-                if source is not None and has_source
-                else 0
-            ),
-            output_distinct=_distinct(output, c, scratch, memory_limit),
+            comparable_rows=0 if t.error else t.comparable,
+            identical_rows=0 if t.error else t.identical,
+            bytes_identical=aligned and c in compared and t.same_bytes and not t.error,
+            source_distinct=distinct[0],
+            output_distinct=distinct[1],
             detectors=_fired(t),
+            identity_error=t.error,
+            distinct_error=distinct_failed,
+            source_distinct_failed=source_failed,
         )
     return facts

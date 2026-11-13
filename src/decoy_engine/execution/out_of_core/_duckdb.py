@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import os
-import re
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -15,6 +14,7 @@ from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._scratch import private_dir
 from decoy_engine.execution.pipeline import detect_usable_cpus
+from decoy_engine.internal.memory_limit import parse_megabytes
 
 # `_budget.py` (`resolve_budget` / `resolve_ooc_memory_limit`) is the only
 # producer of the `memory_limit` string this module consumes, and it always
@@ -25,7 +25,6 @@ from decoy_engine.execution.pipeline import detect_usable_cpus
 # COPY options for a scratch Parquet file `precreate_private` made 0600: DuckDB writes that file
 # in place instead of a sibling temp file renamed over it with an umask-derived mode.
 PRIVATE_COPY = "FORMAT PARQUET, USE_TMP_FILE false"
-_MEMORY_LIMIT_MB_PATTERN = re.compile(r"^(\d+)MB\Z")
 
 # Per-thread working-set estimate DuckDB's own threads config is sized
 # against: each thread holds its own scan/build buffers on top of the shared
@@ -123,8 +122,8 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
 
 
 def _memory_limit_bytes(memory_limit: str | None) -> int | None:
-    match = None if memory_limit is None else _MEMORY_LIMIT_MB_PATTERN.match(memory_limit)
-    return None if match is None else int(match.group(1)) * 1024 * 1024
+    megabytes = parse_megabytes(memory_limit)
+    return None if megabytes is None else megabytes * 1024 * 1024
 
 
 def _threads_for_memory_limit(

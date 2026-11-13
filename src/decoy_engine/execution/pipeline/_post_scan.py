@@ -34,6 +34,7 @@ from decoy_engine.execution._chunked_input import SourceFacts, capture_source_fa
 from decoy_engine.execution._pipeline_sources import materialize_source
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
+from decoy_engine.internal.memory_limit import require_megabytes
 from decoy_engine.profile import LazySource
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.progress import safe_error_class
@@ -65,10 +66,6 @@ _NOT_RUN: Final = "PostScanGateNotRun"
 # A smaller cap starves DuckDB's hash join even at 100k keys (it fails to pin a block), so a small
 # run budget never takes the key scan below this.
 _FLOOR_MB: Final = 128
-
-
-def _megabytes(limit: str) -> int:
-    return int(limit.removesuffix("MB"))
 
 
 class PostScanGate:
@@ -104,8 +101,8 @@ class PostScanGate:
         """The key scan's DuckDB cap: its own fixed cap or the run's budget share, whichever is
         less, never below the working floor. The scan spills to its scratch directory past it."""
         budget = resolve_ooc_memory_limit(self._budget_bytes).memory_limit
-        capped = min(MEMORY_LIMIT, budget, key=_megabytes)
-        return f"{max(_FLOOR_MB, _megabytes(capped))}MB"
+        capped = min(MEMORY_LIMIT, budget, key=require_megabytes)
+        return f"{max(_FLOOR_MB, require_megabytes(capped))}MB"
 
     def run_resident(
         self,

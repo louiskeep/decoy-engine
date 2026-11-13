@@ -106,10 +106,9 @@ def test_facts_equal_whole_table_pandas(n: int, batch_rows: int, tmp_path: Path)
     assert set(facts) == set(COLUMNS)
     for col in COLUMNS:
         f = facts[col]
-        rate, identical, src_distinct = _source_identity(sf, "t", col, of["t"][col])  # type: ignore[misc]
+        identical, comparable, src_distinct = _source_identity(sf, "t", col, of["t"][col])  # type: ignore[misc]
         assert (f.source_rows, f.output_rows) == (n, n)
-        assert f.identical_rows == identical
-        assert f.identical_rows / f.comparable_rows == rate
+        assert (f.identical_rows, f.comparable_rows) == (identical, comparable)
         assert f.bytes_identical == policy[col].bytes_identical
         assert f.source_distinct == src_distinct == policy[col].source_distinct
         assert f.output_distinct == policy[col].output_distinct
