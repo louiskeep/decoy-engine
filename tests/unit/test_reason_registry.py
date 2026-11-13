@@ -536,14 +536,12 @@ def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> No
 
 
 def test_scanml_m5_route_refusal_is_registered_as_pending() -> None:
-    """SCAN-ML M5: one route refusal owned by PostScanRouteError, pending its release stamp."""
-    from decoy_engine.reasons._types import UNRELEASED
-
+    """SCAN-ML M5: one route refusal owned by PostScanRouteError, stamped at 1.25.0."""
     spec = reasons.find("route", "post_scan_models_unsupported")
     assert spec is not None
     assert (spec.owner, spec.since, spec.kind.value) == (
         "PostScanRouteError",
-        UNRELEASED,
+        "1.25.0",
         "failure",
     )
     assert not re.search(r"[{}%]", spec.summary)
