@@ -345,11 +345,10 @@ class IsolatedRunResult:
     user-facing quarantine surface (bucketize/date_shift `format_error`,
     code_set `mask_error`) -- silently dropping it would make a job's
     quarantine reporting depend on whether it happened to run isolated.
-    The worker stages it as `row_errors.json` alongside the output Parquet
-    (same staging directory, read back before commit-or-discard, same
-    discipline as `outputs`); each `RowErrorRecord` field is a plain
-    str/int, so unlike `StrategyTimingRecord`/`QualityWarning` it needs no
-    richer serialization.
+    The worker returns it in the result envelope, never as a file in the
+    stage, so the published unit holds only the tables; each `RowErrorRecord`
+    field is a plain str/int, so unlike `StrategyTimingRecord`/`QualityWarning`
+    it needs no richer serialization.
 
     Caveat for B5 (LOW-1): `outputs` round-trips through a Parquet
     write-then-read rather than being the in-memory `pa.Table` `run_pipeline`
