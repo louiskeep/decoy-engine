@@ -452,3 +452,58 @@ Checks on `cbd52d4a` (the fix head before this record; this record commit change
   through the core (the route guard moved into `_core.mask_chunked`): 1 red, the dispatcher test.
 
 The V2-LOG line about the cores repeating their entries' pre-read steps is closed by item 1.
+
+## Main merge after fix round 1 (2026-11-12)
+
+`1a2d702d` merges main `051b84cb` into the fix-round head `114febfc`. Main had moved past `75b81efe`
+(#539, #531, #529, #488, #540) to `051b84cb` (#547 sample stage inside the subset stage, #552
+chunked mask phase events, #553 relicense); #552 changes the chunked entries, so it is in this
+merge. Conflicts and resolution:
+
+- `execution/_chunked.py`: the entry stays the route guard plus `return
+  _chunked_oracle._mask_pipeline_chunked(...)`; main's `observe_chunked` import is dropped there.
+  Main's new post-read wrapper (`observe_chunked(table, ...)` around the empty iterator and around
+  `release_when_done(stream, state)`) moves into `_chunked_oracle._mask_declared`, so the entry
+  and the resident lane both get main's mask-phase events.
+- `execution/native/_chunked_entry.py`: the entry stays the route guard plus `return
+  _core.mask_chunked(...)`; main's `observe_chunked` replaces `get_active_channel().count_rows` in
+  `native/chunked/_core.py`, with main's comment.
+- `tests/sentry/test_physical_seam_disconnection.py`: both path-list blocks kept.
+- `tests/unit/test_reason_registry.py`: both sides kept (the M5 pending test and #539's blocked
+  error tests).
+- `tests/unit/execution/test_subset_run_guard_entries.py`: deleted, as main (#531) deleted it. Its
+  replacement `test_subset_run_entry_policy.py` requires `refuse_unapplied_subset` in the body of
+  each `REFUSES` entry; the same `IN_CORE` mapping as before follows `run_mask_pipeline_chunked`
+  and `run_mask_chunked` to the core each returns and checks the core calls the guard.
+
+After the merge, each core's pre-read sequence equals main's public entry: native, subset check,
+thread check, `prepare_declared_execution_sources(DeclarationRequest.for_chunks(config, table,
+None), file_access=..., registry=...)`; oracle, subset check, the same gate with `source_schema`.
+The route guard is the first statement of all five entries (sentry), and `config` stays a
+required keyword of `run_sequential`, `run_fk_out_of_core` and their wrappers. #531 does not route
+a subset run to a guarded entry (`resolve_subset` returns the config with `subset` set to None and
+`post_scan` unchanged, and the subset stage calls no masking entry), and changes no post-scan
+route. Main has no `reason_adapter` row for `PostScanRouteError`, so M5's stays. The
+secret-material census, re-derived, is unchanged by the merge.
+
+Checks on `1a2d702d` (this record's commit after it changes docs only):
+
+- `uv sync --frozen --extra dev --extra lint`; `GATES_WORKERS=2 scripts/dev/gates.sh --baseline
+  --steps ruff,format,mypy`: ruff PASS, format PASS, mypy 4 errors, the same 4 on main.
+- `registry_renumber.py --check --main origin/main`: "registry consistent", exit 0.
+  `ratchet_check.py --base origin/main`: exit 0. `check_fragment.py --base origin/main`: exit 0.
+- `pytest tests/integration/compat_corpus`: 5 passed, 1 skipped (the pre-GA real-artifact capture).
+- `GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps sentry,layers,licenses,tests <189
+  paths>` against main `051b84cb`: sentry 5313 passed, 3 failed, 31 errors (main 5269, 3, 31);
+  layers 15 passed; licenses 63 passed; tests 15191 passed, 2 failed, 31 errors, 2717 skipped
+  (main 15102, 2, 31, 2717). Failing ids identical, 34 each, no branch-only id, no main failure
+  passing: `test_serial_resources::test_the_required_serial_registry_is_marked` and the
+  `test_outbound_clients` set, which on main now holds 33 ids (no `google` in this venv). Collected
+  17941 against 17852 (+89, the M5 tests in this selection).
+- Mutations, each applied, run, and reverted by writing the saved line back: M-M5a 4 red, M-M5a2 2
+  red, M-M5a3 11 red, M-M5a4 2 red, M-M5a4b 1 red, the same ids as under "Fix round 1".
+- NER gate in a fresh venv (`UV_PROJECT_ENVIRONMENT=<venv-ner> uv sync --frozen --extra dev
+  --extra ner`, the `NER_MODEL_WHEELS` wheel downloaded with `curl --fail`, `sha256sum --check`
+  OK, `uv pip install --no-deps`): `DECOY_REQUIRE_NER=1 pytest -m ner -n 2`: 39 passed, 10 skipped,
+  every skip a module-level import skip for another extra (google, paramiko, hvac, mimesis, the
+  wheel builder, mutmut); no NER test skipped.

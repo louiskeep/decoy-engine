@@ -42,11 +42,6 @@ __all__ = ["GCSConfig", "GCSFileSink", "GCSFileSource"]
 _DEFAULT_CHUNK_BYTES = 1 * 1024 * 1024
 
 
-def _wrap_gcs_error(exc: Exception) -> Exception:
-    """Translate a GCS failure into a typed SDK error with fixed text (``_clients``)."""
-    return _clients.gcs_error(exc)
-
-
 class GCSConfig(ConnectorConfig):
     """Config for GCS source/sink.
 
@@ -85,7 +80,8 @@ def _build_gcs_client(config: GCSConfig):
     except ConnectorError:
         raise
     except Exception as exc:
-        raise _wrap_gcs_error(exc) from exc
+        err = _clients.gcs_error(exc)
+    raise err
 
 
 def _join_key(prefix: str, path: str) -> str:
@@ -125,7 +121,7 @@ class GCSFileSource(FileSource[GCSConfig]):
             _clients.gcs_get_bucket(self._client, self.config.bucket)
             self._bucket = self._client.bucket(self.config.bucket)
         except Exception as exc:
-            return CheckResult(ok=False, detail=str(_wrap_gcs_error(exc)))
+            return CheckResult(ok=False, detail=str(_clients.gcs_error(exc)))
         return CheckResult(ok=True)
 
     def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
@@ -139,41 +135,50 @@ class GCSFileSource(FileSource[GCSConfig]):
                     content_type=blob.content_type,
                     modified=blob.updated.isoformat() if blob.updated else None,
                 )
+            return
         except ConnectorError:
             raise
         except Exception as exc:
-            raise _wrap_gcs_error(exc) from exc
+            err = _clients.gcs_error(exc)
+        raise err
 
     def head(self, path: str) -> FileMeta:
         try:
             blob = self._bucket_or_build().blob(path)
             _clients.gcs_reload(blob)
+            return FileMeta(
+                path=path,
+                size=blob.size,
+                content_type=blob.content_type,
+                modified=blob.updated.isoformat() if blob.updated else None,
+            )
         except ConnectorError:
             raise
         except Exception as exc:
-            raise _wrap_gcs_error(exc) from exc
-        return FileMeta(
-            path=path,
-            size=blob.size,
-            content_type=blob.content_type,
-            modified=blob.updated.isoformat() if blob.updated else None,
-        )
+            err = _clients.gcs_error(exc)
+        raise err
 
     def open(self, path: str) -> Iterator[bytes]:
-        try:
-            blob = self._bucket_or_build().blob(path)
-            # Blob.open returns a file-like wrapping an HTTPS stream;
-            # iterate in chunks for bounded memory use.
-            with _clients.gcs_open(blob, "rb") as remote:
-                while True:
-                    chunk = remote.read(_DEFAULT_CHUNK_BYTES)
-                    if not chunk:
-                        return
-                    yield chunk
-        except ConnectorError:
-            raise
-        except Exception as exc:
-            raise _wrap_gcs_error(exc) from exc
+        yield from _stream_blob(self._bucket_or_build, path)
+
+
+def _stream_blob(get_bucket, path: str) -> Iterator[bytes]:
+    """The one GCS object read loop, shared by the source and the object store."""
+    try:
+        blob = get_bucket().blob(path)
+        # Blob.open returns a file-like wrapping an HTTPS stream;
+        # iterate in chunks for bounded memory use.
+        with _clients.gcs_open(blob, "rb") as remote:
+            while True:
+                chunk = remote.read(_DEFAULT_CHUNK_BYTES)
+                if not chunk:
+                    return
+                yield chunk
+    except ConnectorError:
+        raise
+    except Exception as exc:
+        err = _clients.gcs_error(exc)
+    raise err
 
 
 class GCSFileSink(FileSink[GCSConfig]):
@@ -207,26 +212,32 @@ class GCSFileSink(FileSink[GCSConfig]):
             _clients.gcs_get_bucket(self._client, self.config.bucket)
             self._bucket = self._client.bucket(self.config.bucket)
         except Exception as exc:
-            return CheckResult(ok=False, detail=str(_wrap_gcs_error(exc)))
+            return CheckResult(ok=False, detail=str(_clients.gcs_error(exc)))
         return CheckResult(ok=True)
+
+    def _blob(self, key: str):
+        try:
+            return self._bucket_or_build().blob(key)
+        except ConnectorError:
+            raise
+        except Exception as exc:
+            err = _clients.gcs_error(exc)
+        raise err
 
     def write(self, path: str, chunks: Iterator[bytes]) -> WriteResult:
         key = _join_key(self.config.prefix, path)
         bytes_written = 0
-        try:
-            blob = self._bucket_or_build().blob(key)
-            # google-cloud-storage's Blob.open("wb") streams the upload
-            # and handles resumable session negotiation internally for
-            # large writes. We don't need to manage parts ourselves.
-            with _clients.gcs_open(blob, "wb") as remote:
-                for chunk in chunks:
-                    if not chunk:
-                        continue
-                    remote.write(chunk)
-                    bytes_written += len(chunk)
-        except ConnectorError:
-            raise
-        except Exception as exc:
-            raise _wrap_gcs_error(exc) from exc
-
+        # Only the setup is translated. The remote I/O below is covered by
+        # _TranslatingFile, and an error from the caller's `chunks` iterator must reach
+        # the caller as raised, not relabelled "Unexpected GCS error".
+        blob = self._blob(key)
+        # google-cloud-storage's Blob.open("wb") streams the upload
+        # and handles resumable session negotiation internally for
+        # large writes. We don't need to manage parts ourselves.
+        with _clients.gcs_open(blob, "wb") as remote:
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                remote.write(chunk)
+                bytes_written += len(chunk)
         return WriteResult(path=key, bytes_written=bytes_written)

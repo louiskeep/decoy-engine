@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.config import PipelineConfig
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import KeyBinding
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
@@ -254,13 +255,14 @@ def test_deterministic_reuse_c1_faker_column_binds(tmp_path: Path) -> None:
     assert binding.required_prepasses == ()
 
 
-def test_faker_column_absent_from_source_declines_without_crashing(tmp_path: Path) -> None:
-    """A faker column the resident source lacks declines to bind (like the hash
-    path), never a bare KeyError from the resident-type probe (dennis MEDIUM-1)."""
+def test_faker_column_absent_from_source_is_refused_before_binding(tmp_path: Path) -> None:
+    """A faker column the resident source lacks is refused as a declared-but-missing column
+    before any binding, never a bare KeyError from the resident-type probe."""
     source = pa.table({"other": pa.array(["a", "b", "c"], type=pa.string())})
-    plan = _plan_for(tmp_path, source, [_faker_column(name="c")])
-    node = plan.tables[0].nodes[0]
-    assert node.execution is None
+    with pytest.raises(PipelineValidationError) as caught:
+        _plan_for(tmp_path, source, [_faker_column(name="c")])
+    assert caught.value.code == "source_file.declared_column_missing"
+    assert "column c" in str(caught.value)
 
 
 def test_deterministic_faker_when_binds_but_the_table_still_declines(tmp_path: Path) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import Kind, Outcome, RetryClass, Severity
+from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, RetryClass, Severity
 
 __all__ = [
     "CLEANUP_FAILED",
@@ -14,6 +14,7 @@ __all__ = [
     "ISOLATED_RUN_TIMED_OUT",
     "ISOLATED_WORKER_DIED",
     "ISOLATED_WORKER_OUT_OF_MEMORY",
+    "PROCESS_OUT_OF_MEMORY",
     "PUBLICATION_FAILED",
     "PUBLICATION_PARTIAL",
     "REASON_CONTEXT_TOO_LARGE",
@@ -129,6 +130,13 @@ ISOLATED_WORKER_OUT_OF_MEMORY = _d(
     "isolated_worker_out_of_memory",
     "The isolated worker ran out of memory.",
     retry=RetryClass.ENVIRONMENT_REPAIR,
+)
+# A bare MemoryError: the exception text can carry sizes and names, so the message is fixed.
+PROCESS_OUT_OF_MEMORY = _d(
+    "process_out_of_memory",
+    "The process ran out of memory.",
+    retry=RetryClass.ENVIRONMENT_REPAIR,
+    since=UNRELEASED,
 )
 ROW_ERRORS_FAILED = _d(
     "row_errors_failed", "Row-level strategy errors failed the run.", retry=RetryClass.NEVER

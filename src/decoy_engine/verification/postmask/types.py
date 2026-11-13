@@ -72,16 +72,12 @@ class ResidualPIIFinding:
 
 @dataclass(frozen=True)
 class FKPreservationFinding:
-    """A foreign key relationship whose post-mask values don't fully resolve.
+    """One declared FK edge, from the facts of its child key. Severity: ``fail`` when the run
+    introduced orphans; ``warning`` when every output orphan was in the source or the key carries
+    only warning codes; ``info`` when there is none; ``error`` when the key has no counts.
 
-    Severity rules:
-      - ``info``: 0 orphans (the check ran cleanly).
-      - ``warning``: orphan rate <= 1% (some FK churn; might be intentional
-        if the relationship was tagged orphan_policy: skip).
-      - ``fail``: orphan rate > 1% (significant FK breakage; downstream
-        joins will lose rows).
-      - ``error``: relationship graph could not be walked (engine error;
-        check the relationships config + the namespace registry).
+    ``parent_column`` and ``child_column`` join the names with ``", "``; the tuples hold them one by
+    one. ``source_orphan_count`` is None when the source side was not counted.
     """
 
     parent_table: str
@@ -94,6 +90,9 @@ class FKPreservationFinding:
     orphan_rate: float
     namespace: str | None = None
     message: str = ""
+    parent_columns: tuple[str, ...] = ()
+    child_columns: tuple[str, ...] = ()
+    source_orphan_count: int | None = None
 
 
 @dataclass(frozen=True)

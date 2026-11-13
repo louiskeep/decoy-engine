@@ -18,14 +18,18 @@ hook catches that + writes a JobPostScanIntegrityReport with
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from decoy_engine.detection.types import DetectorRun
+from decoy_engine.profiling import passes_through
 from decoy_engine.verification.postmask import _model_findings
-from decoy_engine.verification.postmask.fk_preservation import check_fk_preservation
+from decoy_engine.verification.postmask._blocked import severity_counts
+from decoy_engine.verification.postmask._keys import KeyResult
+from decoy_engine.verification.postmask.fk_preservation import fk_findings
 from decoy_engine.verification.postmask.policy_validation import check_policy_validation
 from decoy_engine.verification.postmask.residual_pii import check_residual_pii
 from decoy_engine.verification.postmask.types import (
@@ -46,6 +50,7 @@ def run_post_mask(
     *,
     config: dict[str, Any],
     detectors: DetectorSet | None = None,
+    keys: Sequence[KeyResult] | None = None,
 ) -> dict[str, Any]:
     """Run all three post-mask check categories + assemble the report.
 
@@ -65,6 +70,8 @@ def run_post_mask(
             output table after the regex pass, each in its own
             try/except, and the ``post_scan.detectors`` log lines are
             written.
+        keys: the declared keys' facts (`check_keys`) when the caller has counted them; the
+            FK findings derive from these. None counts them here from the two frame dicts.
 
     Returns:
         A post-scan-integrity/v2 report dict. JSON-serializable (every
@@ -101,9 +108,13 @@ def run_post_mask(
     # report. The typed name (`{type(exc).__name__}`) is sufficient
     # for the operator to find the underlying error in the job log,
     # where the full exception text already lives at the catch site.
+    # A coded engine error (a file-access or lazy-source refusal) is not a check failure: it
+    # propagates unchanged through `passes_through`, the rule pre-scan applies too.
     try:
         residual_pii = check_residual_pii(output_frames, config, source_frames=source_frames)
     except Exception as exc:
+        if passes_through(exc):
+            raise
         residual_pii = [
             ResidualPIIFinding(
                 table="",
@@ -127,8 +138,10 @@ def run_post_mask(
         _model_findings.log_post_scan(output_frames, config, detectors, residual_pii, stale)
 
     try:
-        fk_preservation = check_fk_preservation(output_frames, config)
+        fk_preservation = fk_findings(config, source_frames, output_frames, keys)
     except Exception as exc:
+        if passes_through(exc):
+            raise
         fk_preservation = [
             FKPreservationFinding(
                 parent_table="",
@@ -146,6 +159,8 @@ def run_post_mask(
     try:
         policy_validation = check_policy_validation(source_frames, output_frames, config)
     except Exception as exc:
+        if passes_through(exc):
+            raise
         policy_validation = [
             PolicyValidationFinding(
                 table="",
@@ -157,20 +172,10 @@ def run_post_mask(
         ]
 
     # Tally severity counters for the FE summary line.
-    pass_count = 0
-    warning_count = 0
-    fail_count = 0
-    error_count = 0
-    for finding in (*residual_pii, *fk_preservation, *policy_validation):
-        sev = getattr(finding, "severity", "info")
-        if sev == "info":
-            pass_count += 1
-        elif sev == "warning":
-            warning_count += 1
-        elif sev == "fail":
-            fail_count += 1
-        elif sev == "error":
-            error_count += 1
+    pass_count, warning_count, fail_count, error_count = severity_counts(
+        getattr(finding, "severity", "info")
+        for finding in (*residual_pii, *fk_preservation, *policy_validation)
+    )
 
     # Dennis M23 fix (2026-06-01): stamp generated_at at report
     # construction so the JobPostScanIntegrityReport row column + the engine

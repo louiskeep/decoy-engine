@@ -235,6 +235,9 @@ def run_fk_out_of_core(
         for index, table_name in enumerate(_table_order(plan, relationship_graph, sources)):
             if table_name not in sources:
                 continue
+            _pg = get_active_channel()
+            # Before the load step so a table that fails there reads failed, not not_run.
+            _pg_started = _pg.phase_start("mask", table=table_name)
             # The merge runs before any joiner opens, so it takes the undivided build cap.
             table_incoming_edges = resolve_incoming(
                 incoming[table_name],
@@ -243,8 +246,8 @@ def run_fk_out_of_core(
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
-            _pg = get_active_channel()
-            _pg_started = _pg.phase_start("mask", table=table_name)
+            # Read once, before the driver: a lazy source reopens its file for the count.
+            _pg_rows = sources[table_name].num_rows if _pg.active else None
             # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
             validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
             route = decide_route(
@@ -294,7 +297,8 @@ def run_fk_out_of_core(
             else:
                 _stream_table(**table_kwargs, mask_key=key_box.open()[0])
             _pg.flush(table_name)
-            _pg.phase_finish("mask", _pg_started, table=table_name)
+            # This route drops no row, so the source count is the written count.
+            _pg.phase_finish("mask", _pg_started, table=table_name, rows_out=_pg_rows)
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and

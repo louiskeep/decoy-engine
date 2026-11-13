@@ -16,12 +16,13 @@ from pydantic import ValidationError
 
 import decoy_engine
 from decoy_engine import run_pipeline
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import PandasExecutionAdapter, _transforms
 from decoy_engine.execution._sequential import run_sequential
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
 from tests._declared_schema import declared_schema
-from tests._keyed_secret import THROWAWAY_SECRET
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER, THROWAWAY_SECRET
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
     base_table,
@@ -599,6 +600,9 @@ class _RecordingSink:
         self.events.append("abort")
 
 
+MISSING = "source_file.declared_column_missing"
+
+
 class TestInvalidTransforms:
     """Invalid transforms fail loudly and publish nothing."""
 
@@ -609,7 +613,7 @@ class TestInvalidTransforms:
                 [{"op": "derive", "column": "id", "expression": "id + 1"}],
                 "derive_column_already_exists",
             ),
-            ([{"op": "drop_column", "columns": ["nope"]}], "drop_column_missing"),
+            ([{"op": "drop_column", "columns": ["nope"]}], MISSING),
             ([{"op": "sort", "by": ["nope"]}], "sort_column_missing"),
         ],
     )
@@ -624,10 +628,10 @@ class TestInvalidTransforms:
             "triggers": ["validation_fail"],
         }
         cfg["validators"] = [{"name": "regex_match", "columns": {"t": ["s"]}, "params": {}}]
-        vault = VaultWriter((11).to_bytes(8, "big"))
+        vault = VaultWriter(THROWAWAY_KEY_PROVIDER.mask_key())
         before = sorted(p.name for p in tmp_path.iterdir())
-        with pytest.raises(TransformError) as exc:
-            _run(cfg, {"t": tbl}, vault_writer=vault)
+        with pytest.raises(PipelineValidationError if code == MISSING else TransformError) as exc:
+            _run(cfg, {"t": tbl}, vault_writer=vault, key_provider=THROWAWAY_KEY_PROVIDER)
         assert exc.value.code == code
         assert sorted(p.name for p in tmp_path.iterdir()) == before
         assert not vault._entries
@@ -641,9 +645,9 @@ class TestInvalidTransforms:
             parent_transforms=[{"op": "drop_column", "columns": ["nope"]}],
         )
         sink = _RecordingSink()
-        with pytest.raises(TransformError) as exc:
+        with pytest.raises(PipelineValidationError) as exc:
             _run(cfg, {"parent": parent, "child": child}, execution_mode="sequential", sink=sink)
-        assert exc.value.code == "drop_column_missing"
+        assert exc.value.code == MISSING
         assert "commit" not in sink.events
         # Resident tables are transformed before the route starts, so the sink is never touched.
         assert sink.events == []

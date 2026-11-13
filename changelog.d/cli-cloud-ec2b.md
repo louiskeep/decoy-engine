@@ -1,0 +1,3 @@
+### Added (S3 object store, CLI-CLOUD EC2b, 2026-11-12)
+
+`decoy_engine.connectors` exports `S3ObjectStore`, `ObjectStore`, `PutResult`, `Version` and `GCSObjectStore`. The S3 store creates objects that must not exist (`put_new`), swaps a small pointer object only if its version is unchanged (`put_if`, one request, no SDK retry, result `won`, `rejected`, `conflict` or `unknown`), deletes only the object a run made (`delete_created`), reads a pointer with a hard size limit (`read_small`) and checks the bucket's region against the client's (`check_region`). Errors carry fixed text and a `kind`. `GCSObjectStore` only streams an object; its writes are not built.

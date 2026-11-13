@@ -274,6 +274,42 @@ SOURCES: tuple[Source, ...] = (
             json.loads((BASELINES / "gcs-call-kwargs.json").read_text(encoding="utf-8"))["entries"]
         ),
     ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-blocking",
+        "tests/sentry/baselines/post-scan-blocking.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-blocking.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-pass-through",
+        "tests/sentry/baselines/post-scan-pass-through.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-pass-through.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-key-core",
+        "tests/sentry/baselines/post-scan-key-core.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-key-core.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-reason-identity",
+        "tests/sentry/baselines/post-scan-reason-identity.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-reason-identity.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
 )
 
 # Committed data a sentry reads that is a pinned contract, not an allowlist that could grow.

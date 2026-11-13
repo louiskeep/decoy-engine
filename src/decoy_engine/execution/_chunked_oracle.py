@@ -563,6 +563,8 @@ def _mask_declared(
     base_row_offset: int = 0,
 ) -> Iterator[pa.Table]:
     """The oracle preflight and per-chunk masking, after the entry's checks and gate."""
+    from decoy_engine.execution.chunked import observe_chunked
+
     state = _oracle_preflight(
         config,
         chunks,
@@ -579,16 +581,14 @@ def _mask_declared(
     if state.first is None:
         # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
         state.close_secret()
-        return iter(())
-    return release_when_done(
-        _oracle_masked(
-            state,
-            config=config,
-            table=table,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            base_row_offset=base_row_offset,
-            on_chunk=None,
-        ),
+        return observe_chunked(table, iter(()))
+    stream = _oracle_masked(
         state,
+        config=config,
+        table=table,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        base_row_offset=base_row_offset,
+        on_chunk=None,
     )
+    return observe_chunked(table, release_when_done(stream, state))

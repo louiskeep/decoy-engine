@@ -1,0 +1,12 @@
+{
+ "sentry_id": "post-scan-pass-through",
+ "created_in": "PS-2b",
+ "entries": {
+  "decoy_engine/verification/postmask/policy_validation.py::_check_one_column::unguarded::0": {
+   "reason": "catches a pandas comparison failure on one column; no engine-coded error can arise inside it"
+  },
+  "decoy_engine/verification/postmask/residual_pii.py::_source_identity::unguarded::0": {
+   "reason": "catches a pandas comparison failure and returns None; no engine-coded error can arise inside it"
+  }
+ }
+}

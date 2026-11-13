@@ -64,6 +64,13 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("delivery/_plan.py", "plan_delivery"): (
         "stores the failure ReasonCode the caller passed in `outcomes` on the failed table"
     ),
+    ("run_result/_build.py", "_warnings"): (
+        "copies the warning codes the engine recorded on the run into the result record, "
+        "each through the registered-code rule"
+    ),
+    ("run_result/_build.py", "_route"): (
+        "forwards the route reason code of route_summary, through the registered-code rule"
+    ),
     ("declared_casting/_quarantine_local.py", "_qerror"): _HELPER,
     ("plan/_checks_declared_casting.py", "_fail"): _HELPER,
     ("plan/_serialize_declared.py", "declared_casting_from_dict"): _REWRAP,
@@ -118,6 +125,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("generation/_pinned_compile.py", "_reject_column"): _HELPER,
     ("generation/_window_admission.py", "_refuse"): _HELPER,
     ("plan/_checks_dp.py", "_raise"): _HELPER,
+    ("plan/checks/_lookup_tables.py", "_lookup_refusal"): _HELPER,
     ("profile/_csv_reader.py", "source_refusal"): _HELPER,
     ("plan/_checks_top_code.py", "_reject_unusable_bound"): _HELPER,
     # -- re-wraps of an already-registered exception code ------------------------------------
@@ -151,9 +159,9 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("quality/report.py", "_collect_warnings"): (
         "diagnostic check names are registry symbols in `verification`"
     ),
-    ("phase.py", "_reason_wire"): (
-        "exports the identity of a `ReasonRef` that `require_known` has just resolved against "
-        "the registry (an unknown identity fails closed before this dict is built)"
+    ("verification/postmask/_blocked.py", "PostScanBlockedError.__init__"): (
+        "the code is the identity of a ref the verdict produced, set only when that code is "
+        "registered in `post_scan`; the adapter trusts it only on that registration"
     ),
     ("safe_output/_event.py", "SafeEvent.to_dict"): (
         "exports the identity of a `ReasonRef` that `require_known` resolved against the "

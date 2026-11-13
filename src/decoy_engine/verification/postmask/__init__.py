@@ -17,8 +17,8 @@ Three net-new check categories ship here:
   the source frames, and output==source identity escalates to
   'fail' -- a silently-failed mask cannot hide behind a PII-like-
   producer strategy.
-- ``fk_preservation``: walks the relationships graph against the
-  masked output; counts orphan FKs, classifies severity.
+- ``fk_preservation``: one finding per declared edge, derived from the
+  declared keys' facts (orphans the run introduced fail).
 - ``policy_validation``: reads the compiled plan; verifies every
   configured mask actually changed the output column vs. the source
   column (catches no-op masks).
@@ -40,6 +40,12 @@ shape changes in a non-backward-compatible way.
 
 from __future__ import annotations
 
+from decoy_engine.verification.postmask._blocked import (
+    PostScanBlockedError,
+    PostScanVerdict,
+    post_scan_verdict,
+    severity_counts,
+)
 from decoy_engine.verification.postmask._keys import (
     KeyCounts,
     KeyResult,
@@ -70,6 +76,8 @@ __all__ = [
     "KeyResult",
     "PolicyValidationFinding",
     "PostMaskReport",
+    "PostScanBlockedError",
+    "PostScanVerdict",
     "ResidualPIIFinding",
     "Severity",
     "TableBatches",
@@ -79,5 +87,7 @@ __all__ = [
     "key_batches",
     "keys_report",
     "missing_columns",
+    "post_scan_verdict",
     "run_post_mask",
+    "severity_counts",
 ]

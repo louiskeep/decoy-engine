@@ -21,7 +21,12 @@ hash-scope decision (resolution of B1 in the Dennis review).
 
 from __future__ import annotations
 
-from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
+from decoy_engine.profile._csv_reader import (
+    CsvDialect,
+    read_csv_bytes,
+    read_csv_source,
+    resolve_csv_dialect,
+)
 from decoy_engine.profile._declared_columns import (
     DeclarationFinding,
     DeclarationRequest,
@@ -74,6 +79,7 @@ __all__ = [
     "profile_relationships_from_config",
     "profile_source",
     "profile_to_json",
+    "read_csv_bytes",
     "read_csv_source",
     "resolve_csv_dialect",
     "source_columns",

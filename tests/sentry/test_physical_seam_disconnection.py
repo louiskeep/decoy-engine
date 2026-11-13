@@ -63,6 +63,7 @@ REPO_ROOT = ENGINE_ROOT.parents[1]
 # never got added here.
 GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline.py",
+    "execution/pipeline/_subset_stage.py",
     "execution/_pipeline_routing.py",
     "execution/_pipeline_routing_signals.py",
     "execution/_pipeline_chunk_route.py",
@@ -102,6 +103,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pandas_adapter.py",
     "execution/_sequential.py",
     "execution/_chunked.py",
+    "execution/chunked/_progress.py",
     "execution/_adapter.py",
     "execution/_substrate.py",
     "execution/_runner.py",
@@ -399,6 +401,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # auto-chunk lane calls (new private sub-package). Neither imports `execution.physical`.
             "src/decoy_engine/execution/native/chunked/__init__.py",
             "src/decoy_engine/execution/native/chunked/_core.py",
+            # SUB-RUN E2: the subset stage imports the public `decoy_engine.subset` surface only.
+            "src/decoy_engine/execution/pipeline/_subset_stage.py",
+            # SAMPLE SE2: the sample's exact/approximate column label reads config and the
+            # strategy vocabulary only.
+            "src/decoy_engine/execution/pipeline/_sample.py",
             # RUN-STREAM E3: `route_summary` reads recorded quality_metrics blocks and imports
             # nothing from `execution.physical`.
             "src/decoy_engine/execution/pipeline/_route_summary.py",
@@ -490,6 +497,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # The deleted execution/polars/ tree itself is carved out of the filter below.
             "src/decoy_engine/execution/__init__.py",
             "src/decoy_engine/execution/_chunked.py",
+            # The chunked entries' progress helper (new sub-package); it is in GUARDED_MODULES,
+            # so it imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/chunked/__init__.py",
+            "src/decoy_engine/execution/chunked/_progress.py",
             "src/decoy_engine/execution/_chunked_adapter_gate.py",
             "src/decoy_engine/execution/_planner.py",
             "src/decoy_engine/execution/_strategies/_top_code.py",
@@ -737,6 +748,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_isolated_common.py",
             # The driver removes staging on a self-reported failure and scrubs in-process error text.
             "src/decoy_engine/execution/_isolated_run.py",
+            # SUB-RUN E2: `probe_peak_bytes` refuses a subset config; no `execution.physical` import.
+            "src/decoy_engine/execution/_probe.py",
             # F29: `_governor.py` reroutes on the typed route-ineligibility reason identity carried in
             # `IsolatedRunResult.reason`, never on error text. No `execution.physical` import.
             "src/decoy_engine/execution/_governor.py",

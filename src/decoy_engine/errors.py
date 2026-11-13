@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Final
 
 from decoy_engine import reasons
-from decoy_engine._error_base import DecoyError
+from decoy_engine._error_base import ConnectorErrorKind, DecoyError
 
 if TYPE_CHECKING:
     from decoy_engine.execution._row_error_summary import RowErrorSummary
@@ -116,7 +116,11 @@ class ValidationError(DecoyError):
 
 
 class ConnectorError(DecoyError):
-    """Base class for connector-related errors."""
+    """Base class for connector errors; ``kind`` is the failure class a caller may branch on."""
+
+    def __init__(self, *args: object, kind: ConnectorErrorKind = "unexpected") -> None:
+        super().__init__(*args)
+        self.kind = kind
 
 
 class ConnectorAuthError(ConnectorError):
@@ -521,6 +525,7 @@ CAPACITY_REASON_CODES: frozenset[str] = frozenset(
         reasons.runtime.OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL,
         reasons.runtime.POOL_EXCEEDS_CACHE_BUDGET,
         reasons.decoy.ISOLATED_WORKER_OUT_OF_MEMORY,
+        reasons.decoy.PROCESS_OUT_OF_MEMORY,
     }
 )
 
@@ -556,6 +561,7 @@ CAPACITY_EXCLUSIONS: Final[Mapping[str, str]] = types.MappingProxyType(
         reasons.quality.DP_BUDGET_CATEGORICAL_PAIR_UNSCHEDULED: _NOT_MEMORY,
         reasons.subset.SUBSET_BUDGET_EXCEEDED: _NOT_MEMORY,
         reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED: _DISK,
+        reasons.runtime.OUT_OF_CORE_REORDER_DISK_BUDGET_TOO_SMALL: _DISK,
         reasons.runtime.OUT_OF_CORE_PREDICTED_SPILL_BYTES_INVALID: _SETTING,
         reasons.runtime.HOLD_BACK_SPILL_UNAVAILABLE: _NOT_SET,
         reasons.verification.CANARY_RESOURCE_LIMIT: _NOT_MEMORY,
@@ -571,6 +577,7 @@ __all__ = [
     "ConfigRuleError",
     "ConnectorAuthError",
     "ConnectorError",
+    "ConnectorErrorKind",
     "DecoyError",
     "EmptyParentPoolError",
     "FKPreservationError",
