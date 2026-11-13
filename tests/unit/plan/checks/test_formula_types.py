@@ -117,6 +117,8 @@ def test_alias_to_a_sequence_parent_is_refused() -> None:
         "str(a)[-4:]",
         "len(str(a))",
         "len([a for a in ['x']])",
+        "len([a.upper() for a in ['x']])",
+        "len([a[0] for a in ['x']])",
     ],
 )
 def test_number_safe_spellings_are_accepted(expr: str) -> None:

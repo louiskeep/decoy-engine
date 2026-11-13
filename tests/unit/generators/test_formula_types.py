@@ -187,6 +187,15 @@ def test_null_number_reference_gives_null_and_other_rows_do_not_move() -> None:
             assert f == f"ORD-{a}" == plain.column("f").to_pylist()[i]
 
 
+def test_skipped_null_rows_do_not_move_the_draws_of_other_rows() -> None:
+    expr = "str(a) + '-' + str(randint(0, 10**9))"
+    nullable = values(cfg([seq(null_probability=0.5), fml("f", expr, ["a"])], rows=40), "f")
+    plain = values(cfg([seq(), fml("f", expr, ["a"])], rows=40), "f")
+    assert any(v is None for v in nullable)
+    for n, p in zip(nullable, plain, strict=True):
+        assert n is None or n == p
+
+
 def test_categorical_int_with_nulls_does_not_become_float_text() -> None:
     cols = [
         {"name": "c", "type": "categorical", "categories": [1, 2, 3], "null_probability": 0.5},
