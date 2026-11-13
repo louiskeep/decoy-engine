@@ -9,7 +9,9 @@ timestamp, as the join sees them. Nothing here carries a key value in an error o
 
 A zone-aware timestamp or a duration is kept out of the token path on purpose: the token for
 those is an object repr that does not fold two units of one instant, and the only route that
-accepts those types (the pandas join) matches them by value."""
+accepts those types (the pandas join) matches them by value. They load as the int64 count of
+their finest unit, as does a nanosecond time of day: DuckDB holds an interval, a zoned
+timestamp and a time at microseconds, which would merge keys one nanosecond apart."""
 
 from __future__ import annotations
 
@@ -46,8 +48,7 @@ def _family(t: pa.DataType) -> tuple[str, pa.DataType | None]:
 
 
 def _common(family: str, typed: Sequence[pa.DataType]) -> str | pa.DataType:
-    """The type one family loads as: an integer width, VARCHAR, or the finest unit of the ends
-    (durations stop at microseconds, DuckDB's interval resolution)."""
+    """The type one family loads as: an integer width, VARCHAR, or the finest unit of the ends."""
     first = value_type(typed[0])
     if family == "int":
         return "HUGEINT" if any(value_type(t) == pa.uint64() for t in typed) else "BIGINT"
@@ -57,8 +58,22 @@ def _common(family: str, typed: Sequence[pa.DataType]) -> str | pa.DataType:
     if family == "tz_timestamp":
         return pa.timestamp(unit, tz=first.tz)
     if family == "duration":
-        return pa.duration("us" if unit == "ns" else unit)
+        return pa.duration(unit)
     return first
+
+
+def _as_count(t: pa.DataType) -> bool:
+    """A type DuckDB would store coarser than Arrow, so its table holds the int64 count."""
+    return (
+        pa.types.is_duration(t)
+        or (pa.types.is_timestamp(t) and t.tz is not None)
+        or (pa.types.is_time64(t) and t.unit == "ns")
+    )
+
+
+def table_type(kind: pa.DataType) -> pa.DataType:
+    """The column type a key table is created with for a cast `kind`."""
+    return pa.int64() if _as_count(kind) else kind
 
 
 def duck_types(schemas: Sequence[pa.Schema]) -> list[str | pa.DataType | None]:
@@ -77,7 +92,7 @@ def duck_types(schemas: Sequence[pa.Schema]) -> list[str | pa.DataType | None]:
         elif len({_family(t) for t in typed}) > 1:
             out.append(JOIN_KEY_KIND)
         elif all(t.equals(types[0]) for t in types) and not (
-            pa.types.is_null(types[0]) or pa.types.is_dictionary(types[0])
+            pa.types.is_null(types[0]) or pa.types.is_dictionary(types[0]) or _as_count(types[0])
         ):
             out.append(None)
         else:
@@ -118,6 +133,8 @@ def cast_batch(
                 array = array.cast(kind)
             except pa.ArrowInvalid:
                 return None
+        if isinstance(kind, pa.DataType) and _as_count(kind):
+            array = array.cast(pa.int64())
         if pa.types.is_floating(array.type):
             # The join reads a NaN key as null (`fk_key_value`); DuckDB would count it as a value.
             nan = pc.is_nan(array)  # type: ignore[attr-defined, unused-ignore]

@@ -15,7 +15,7 @@ result.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Final
@@ -95,6 +95,8 @@ class PostScanGate:
         # Footer facts of each lazy input, taken before any route read it: a re-read refuses a
         # file that changed in between.
         self._source_facts = source_facts or {}
+        # Writes that carry row values (the quarantine file), held until the verdict passes.
+        self._held: list[Callable[[], None]] = []
 
     @property
     def memory_limit(self) -> str:
@@ -310,13 +312,26 @@ def note_quarantined(
             gate.note_quarantined(name, tables[name], rows)
 
 
+def publish_after_gate(write: Callable[[], None]) -> None:
+    """Run `write`, a publish that carries row values, once nothing can block the run: now when
+    no gate will judge it, else in `settle` after the verdict passes. A blocked run drops it."""
+    gate = active_gate()
+    if gate is None or not gate.required or gate.ran or gate.deferred:
+        write()
+    else:
+        gate._held.append(write)
+
+
 def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult) -> None:
     """After a route returns: run the gate over the outputs when no route did, refuse a required
-    gate that still has not run, and stamp the report on the result."""
+    gate that still has not run, publish what waited on the verdict, and stamp the report."""
     if not gate.ran:
         gate.run_resident(result.outputs, ctx.caller_sources, ctx.table_kinds)
     if gate.required and not gate.ran:
         gate.before_commit(None)
+    held, gate._held = gate._held, []
+    for write in held:
+        write()
     if gate.report is not None:
         result.quality_metrics["post_scan_integrity"] = gate.report
     if gate.deferred:

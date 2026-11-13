@@ -171,7 +171,7 @@ from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
 )
-from decoy_engine.execution.pipeline._post_scan import note_quarantined
+from decoy_engine.execution.pipeline._post_scan import note_quarantined, publish_after_gate
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
@@ -649,6 +649,7 @@ def run_sequential(
             output_path=q_output_path,
             entries=quarantine_entries,
             counts_by_trigger=counts_by_trigger,
+            publish=publish_after_gate,  # a run the gate blocks publishes no row values
         )
         if quarantine_metrics is not None:
             quality_metrics["quarantine"] = quarantine_metrics

@@ -141,6 +141,14 @@ CASES: dict[str, tuple[pa.Array, pa.Array]] = {
         pa.array([1, 2], pa.duration("us")),
         pa.array([1000, 2000, 3000], pa.duration("ns")),
     ),
+    "duration-ns-keys-one-nanosecond-apart": (
+        pa.array([1, 2], pa.duration("ns")),
+        pa.array([1, 2, 3], pa.duration("ns")),
+    ),
+    "tz-timestamp-ns-keys-one-nanosecond-apart": (
+        pa.array([10**18 + 1, 10**18 + 2], pa.timestamp("ns", tz="UTC")),
+        pa.array([10**18 + 1, 10**18 + 2, 10**18 + 3], pa.timestamp("ns", tz="UTC")),
+    ),
     "int8-parent-uint64-child": (
         pa.array([1, 2], pa.int8()),
         pa.array([1, 2, 3, 2**63 + 1], pa.uint64()),
@@ -199,3 +207,31 @@ def test_a_nan_float_key_counts_as_a_null_key_as_the_join_reads_it(tmp_path: Pat
     (fk,) = (r for r in found if (r.table, r.kind) == ("child", "foreign"))
     assert pk.output.null_key_rows == 1
     assert (fk.output.orphan_rows, fk.output.null_key_rows) == (0, 1)
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        pa.array([1, 2], pa.duration("ns")),
+        pa.array([10**18 + 1, 10**18 + 2], pa.timestamp("ns", tz="UTC")),
+        pa.array([1, 2], pa.time64("ns")),
+    ],
+    ids=["duration", "tz-timestamp", "time-of-day"],
+)
+def test_keys_one_nanosecond_apart_stay_distinct(tmp_path: Path, keys: pa.Array) -> None:
+    """DuckDB keeps these types at microseconds; two keys 1 ns apart must not read as one."""
+    rel = RelationshipConfig.model_validate(
+        {
+            "parent": {"table": "parent", "columns": ["id"]},
+            "children": [{"table": "child", "columns": ["pid"]}],
+            "orphan_policy": "warn",
+        }
+    )
+    data = {
+        "parent": from_table("parent", pa.table({"id": keys})),
+        "child": from_table("child", pa.table({"pid": keys})),
+    }
+    found = check_keys([rel], data, data, scratch=tmp_path / "scratch", memory_limit="64MB")
+    (pk,) = (r for r in found if (r.table, r.kind) == ("parent", "primary"))
+    assert pk.status == "checked"
+    assert pk.output.duplicate_excess == 0

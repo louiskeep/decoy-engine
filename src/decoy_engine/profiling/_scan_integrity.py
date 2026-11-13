@@ -39,7 +39,13 @@ import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import PipelineConfigError, RelationshipConfig, parse_relationship_config
-from decoy_engine.profiling._key_loading import JOIN_KEY_KIND, cast_batch, duck_types, value_type
+from decoy_engine.profiling._key_loading import (
+    JOIN_KEY_KIND,
+    cast_batch,
+    duck_types,
+    table_type,
+    value_type,
+)
 
 # Small enough that the keys of a large table never sit in memory together.
 MEMORY_LIMIT: Final = "512MB"
@@ -347,7 +353,7 @@ def _load(
                 f.name,
                 pa.string()
                 if isinstance(kind, str) and kind == JOIN_KEY_KIND
-                else kind
+                else table_type(kind)
                 if isinstance(kind, pa.DataType)
                 else value_type(f.type),
             )
