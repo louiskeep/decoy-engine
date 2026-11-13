@@ -14,6 +14,7 @@ import pytest
 
 from decoy_engine.config._tables import GenerateColumnConfig
 from decoy_engine.generation.pool import GenerationError
+from decoy_engine.plan import PlanCompileError
 from tests.unit._dps_helpers import compile_and_generate
 
 SENTINEL = "SENTINEL-X1"
@@ -334,6 +335,19 @@ def test_co_reader_demotes_output_but_the_formula_still_sees_a_number() -> None:
     table = run(cfg(cols))
     assert table.column("m").to_pylist() == [2, 4, 6, 8, 10]
     assert table.schema.field("a").type == pa.string()
+
+
+def test_co_reader_text_use_is_still_refused_at_compile() -> None:
+    # The output stays text because of the group_key, but the formula still binds a number, so
+    # the text spelling is refused like it is without the co-reader.
+    cols = [
+        seq(),
+        {"name": "g", "type": "group_key", "group_by": "a"},
+        fml("m", "'ORD-' + a", ["a"]),
+    ]
+    with pytest.raises(PlanCompileError) as info:
+        run(cfg(cols))
+    assert info.value.code == "generate_formula_number_used_as_text"
 
 
 def test_co_reader_float_faker_formula_equals_twice_the_output_text() -> None:
