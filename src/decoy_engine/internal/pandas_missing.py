@@ -28,7 +28,7 @@ def is_null_cell(value: Any) -> bool:
         # pandas `pd.NA`, whose `!=` returns `pd.NA` and whose `bool()` raises:
         # the shipped fpe strategy treats it as missing (`source.isna()`), and on
         # the raw-list path it would otherwise reach the cipher as `str(pd.NA) ==
-        # "<NA>"` and diverge (C6a Step 0, plan §3b). Defer to pandas.isna, which
+        # "<NA>"` and diverge. Defer to pandas.isna, which
         # is the repo's own correct missing-value predicate, imported lazily so
         # the Arrow hot path (None / float NaN, both handled above) never pays it.
         try:

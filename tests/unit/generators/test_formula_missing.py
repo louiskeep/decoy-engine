@@ -11,10 +11,10 @@ import pytest
 from decoy_engine.generators.columns import ColumnGenerator
 
 
-def _fill(cells: list[Any]) -> tuple[list[Any], str]:
+def _fill(cells: list[Any]) -> list[Any]:
     cg = ColumnGenerator(seed=42)
     out = pd.DataFrame({"a": pd.Series(cells, dtype=object)})
-    return cg.fill_referenced_formula_column("f", "f'<{a}>'", ["a"], out, "t").tolist(), ""
+    return cg.fill_referenced_formula_column("f", "f'<{a}>'", ["a"], out, "t").tolist()
 
 
 def _counts(caplog: pytest.LogCaptureFixture) -> str:
@@ -26,7 +26,7 @@ def test_missing_reference_becomes_empty_and_is_counted(
     missing: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.WARNING):
-        values, _ = _fill([missing])
+        values = _fill([missing])
     assert values == ["<>"]
     assert "{'a': 1}" in _counts(caplog)
 
@@ -35,6 +35,6 @@ def test_text_nat_and_empty_string_are_values_not_missing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.WARNING):
-        values, _ = _fill(["NaT", ""])
+        values = _fill(["NaT", ""])
     assert values == ["<NaT>", "<>"]
     assert _counts(caplog) == ""
