@@ -53,6 +53,8 @@ class ColumnFacts:
     # 0). The detector rates are exact either way.
     identity_error: str | None = None
     distinct_error: str | None = None
+    # True when the failed count was the source's, so a zero source_distinct means unknown.
+    source_distinct_failed: bool = False
 
     @property
     def error(self) -> str | None:
@@ -211,11 +213,13 @@ def column_facts(
         t = tallies[c]
         has_source = source is not None and c in source.schema.names
         distinct_failed = None
+        source_failed = False
         distinct = [0, 0]
         for n, (table, present) in enumerate(((source, has_source), (output, True))):
             if present and table is not None:
                 distinct[n], err = _distinct_or_error(table, c, scratch, memory_limit)
                 distinct_failed = distinct_failed or err
+                source_failed = source_failed or (n == 0 and err is not None)
         facts[c] = ColumnFacts(
             table=output.name,
             column=c,
@@ -229,5 +233,6 @@ def column_facts(
             detectors=_fired(t),
             identity_error=t.error,
             distinct_error=distinct_failed,
+            source_distinct_failed=source_failed,
         )
     return facts

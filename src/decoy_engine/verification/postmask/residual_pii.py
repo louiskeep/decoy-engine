@@ -440,10 +440,11 @@ def residual_pii_findings(
                     configured=configured,
                     identity_rate=rate,
                     identical_count=fact.identical_rows,
-                    # An uncounted distinct (failed) is unknown, not constant: keep it above the
-                    # constant-source cutoff so the valid identity rate still decides.
+                    # An uncounted source distinct is unknown, not constant: keep it above the
+                    # constant-source cutoff so the valid identity rate still decides. A failed
+                    # output count says nothing about the source.
                     src_distinct=max(fact.source_distinct, 2)
-                    if fact.distinct_error
+                    if fact.source_distinct_failed
                     else fact.source_distinct,
                     detector_confidence=top.confidence,
                     detector_id=top.detector_id,

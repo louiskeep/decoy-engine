@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +129,10 @@ def _megabytes(limit: str) -> int:
     match = re.fullmatch(r"(\d+)MB", limit)
     if match is None:
         raise ValueError("run_post_mask_tables: memory_limit must look like '512MB'")
-    return int(match.group(1))
+    limit_mb = int(match.group(1))
+    if limit_mb == 0:
+        raise ValueError("run_post_mask_tables: memory_limit must be above zero")
+    return limit_mb
 
 
 def _native(series: pd.Series) -> pa.Array | None:
@@ -141,7 +145,26 @@ def _native(series: pd.Series) -> pa.Array | None:
 
 
 def _text(series: pd.Series) -> pa.Array:
-    return pa.array([None if _null(v) else str(v) for v in series.tolist()], type=pa.string())
+    return pa.array([None if _null(v) else _key(v) for v in series.tolist()], type=pa.string())
+
+
+def _key(value: object) -> str:
+    """Text that is equal for equal numbers whatever their type, as pandas `==` treats them: a
+    float 10001.0 and an int 10001 must not read as two values, or a leaked source value looks
+    changed."""
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return str(int(value))
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else repr(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            return str(value)
+        if value == value.to_integral_value():
+            return str(int(value))
+        return format(value.normalize(), "f")
+    return str(value)
 
 
 def _null(value: object) -> bool:

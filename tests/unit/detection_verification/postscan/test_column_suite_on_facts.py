@@ -422,3 +422,85 @@ def test_a_column_converted_natively_on_one_side_only_still_compares_equal_value
     report = _parity({"t": src}, {"t": out}, _cfg(("zip", "faker")))
     (finding,) = report["residual_pii"]
     assert finding["severity"] == "fail" and finding["source_identity_rate"] > 0.9
+
+
+def test_a_float_source_and_an_int_output_of_the_same_number_count_as_identical():
+    zips = [10000 + i for i in range(60)]
+    # The one str forces the text comparison on this column.
+    src = pd.DataFrame({"zip": pd.Series([*map(float, zips), 99999.0])})
+    out = pd.DataFrame({"zip": pd.Series([*zips, "x"], dtype=object)})
+    report = _parity({"t": src}, {"t": out}, _cfg(("zip", "faker")))
+    (finding,) = report["residual_pii"]
+    assert finding["severity"] == "fail"
+    assert finding["source_identity_rate"] == pytest.approx(60 / 61)
+
+
+def test_a_decimal_and_a_float_of_the_same_number_count_as_identical():
+    cells = [Decimal("1.50") if i % 2 else 2.25 for i in range(40)]
+    src = pd.DataFrame({"email": EMAILS[:40], "amt": cells})
+    out = pd.DataFrame(
+        {"email": FAKE[:40], "amt": [1.5 if i % 2 else Decimal("2.250") for i in range(40)]}
+    )
+    report = _parity({"t": src}, {"t": out}, _cfg(("email", "faker"), ("amt", "hash")))
+    finding = next(f for f in report["policy_validation"] if f["column"] == "amt")
+    assert finding["bytes_identical"] is True and finding["severity"] == "fail"
+
+
+def test_a_source_mostly_leaked_as_ints_from_a_float_column_is_still_a_fail():
+    zips = [10000 + i for i in range(100)]
+    src = pd.DataFrame({"zip": pd.Series([*map(float, zips[:99]), float("nan")])})
+    leaked = [*zips[:60], *[f"Z{i}" for i in range(60, 99)], None]
+    out = pd.DataFrame({"zip": pd.Series(leaked, dtype=object)})
+    report = _parity({"t": src}, {"t": out}, _cfg(("zip", "faker")))
+    (finding,) = report["residual_pii"]
+    assert finding["severity"] == "fail"
+    assert finding["source_identity_rate"] == pytest.approx(60 / 99)
+
+
+def test_one_table_that_cannot_be_converted_does_not_hide_the_other(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    frames, config = _two_tables(pd.DataFrame({"ssn": SSN}))
+    real = runner_module._frame_table
+
+    def table(name: str, frame: Any, other: Any) -> Any:
+        if name == "bad":
+            raise RuntimeError(f"broke on {CANARY}")
+        return real(name, frame, other)
+
+    monkeypatch.setattr(runner_module, "_frame_table", table)
+    report = run_post_mask(frames, frames, config=config)
+    fails = {(f["table"], f["column"]) for f in report["residual_pii"] if f["severity"] == "fail"}
+    assert ("clean", "email") in fails
+    errors = [f for f in report["residual_pii"] if f["severity"] == "error"]
+    assert [f["table"] for f in errors] == ["bad"] and "RuntimeError" in errors[0]["message"]
+    assert CANARY not in repr(report)
+
+
+def test_run_post_mask_tables_refuses_a_zero_memory_limit(tmp_path: Path):
+    t = {"t": from_table("t", pa.table({"c": ["a", "b"]}))}
+    for limit in ("0MB", "00MB"):
+        with pytest.raises(ValueError, match="above zero") as caught:
+            run_post_mask_tables(t, t, config=_cfg(), keys=(), scratch=tmp_path, memory_limit=limit)
+        assert limit not in str(caught.value)
+
+
+def test_a_failed_output_count_does_not_make_a_constant_source_escalate(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    real = column_facts_module.column_distinct
+    calls = {"n": 0}
+
+    def second_fails(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("output count failed")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(column_facts_module, "column_distinct", second_fails)
+    frame = pd.DataFrame({"email": [EMAILS[0]] * 40})
+    report = run_post_mask({"t": frame}, {"t": frame}, config=_cfg(("email", "faker")))
+    (finding,) = report["residual_pii"]
+    assert calls["n"] >= 2
+    assert finding["source_compared"] is True
+    assert finding["severity"] != "fail"
