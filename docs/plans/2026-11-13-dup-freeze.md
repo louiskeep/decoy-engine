@@ -12,12 +12,11 @@ Rules consulted: `/home/cam/dev-rules/README.md`, `00-universal.md`, `risk-and-e
 ("Where Things Go"), CLI `.importlinter`, CLI `docs/ROADMAP.md` (rows 24b, 24p, 24zd, 24ze, 24zf,
 62, 63a, 66, 77, 93).
 
-Revision 3, after Dennis round 2 (BLOCK: 3 HIGH, 6 MEDIUM, 5 LOW). Every finding is resolved in
-the text below or logged in section 13.
+Revision 4, after the Codex confirmation review of revision 3. Every finding is resolved in the
+text below or logged in section 13.
 
-Bases (2026-11-13): engine `origin/main` `8c9c1162`, CLI `origin/main` `5c9dd8e` (pins
-`decoy-engine==0.23.0`). The CLI moved from `88403cc` by CLI #237, which touches only
-`cli/io/_layout*.py`, `cli/io/_placement.py` and their tests; no site cited here moved. Inputs: the
+Bases (2026-11-13): engine `origin/main` `3a30eb89`, CLI `origin/main` `a15afcc` (pins
+`decoy-engine==0.23.0`). Inputs: the
 duplication census `REMEDIATION.md` (CLI `docs/records/2026-11-12-duplication-census/`, merged in
 CLI #211), package C (C1 to C10) and the matching guards of package D; the reachability pass
 `REACHABILITY-A-B.md` (CLI branch `docs/dup-reachability-ab` `9efdc1ab`, not merged); the 24zd
@@ -53,6 +52,11 @@ Owner decisions used:
   `config_value_not_json`; the second seed fingerprint caller and the subset refusal boundary
   are in E1; the exit-map baseline starts with the three real classifiers; the CLI engine-flag
   acceptance path uses the isolated-worker marker.
+- Codex confirmation rulings (tech lead, 2026-11-13): D7 remains the standing registered
+  shrink-only sentry and governs every new or changed human error; reused composite instances
+  rebuild seed-dependent pools when the resolved seed changes; the canonical boundary refuses
+  unpaired surrogates with a coded, value-free error; E1 and CL1 update their CODEMAP placement
+  rows; source citations use engine `3a30eb89` and CLI `a15afcc`.
 
 Risk: R2 overall. The row moves frozen-at-release surfaces: a `--json` error shape, exit codes,
 digest bytes for non-ASCII or non-default-separator content, generated output bytes for
@@ -160,10 +164,12 @@ compatibility note, and one golden-diff budget per slice.
 After this row merges, and before REL-GATE:
 
 1. Every CLI command writes its `--json` error object in one documented shape
-   (`docs/schemas/decoy-error-v1.schema.json` in the CLI repo), and its human error line through
-   one emitter that prints with `markup=False` and prints under `--quiet` too. Sites not yet
-   converted are proven to write the same shape by an AST check over every literal, not by
-   sampling (AT-CL1-6).
+   (`docs/schemas/decoy-error-v1.schema.json` in the CLI repo). Every NEW or CHANGED human error
+   goes through `ui/output.py::emit_error`, which prints with `markup=False` and prints under
+   `--quiet` too. Existing sites not changed by this row remain on the exact D7 shrink-only
+   baseline that the sentry enforces, and section 13 tracks their conversion. Their JSON
+   literals are proven to fit the same shape by an AST check over every literal, not by sampling
+   (AT-CL1-6).
 2. Every CLI command that maps an unexpected exception to an exit code uses one function,
    `exit_code_for(exc)` in `cli/exit_codes.py`; `run` and `demo` exit the same way for the
    same failure.
@@ -171,8 +177,9 @@ After this row merges, and before REL-GATE:
    `decoy_engine._canonical`, in one of two named forms: `canonical_json_bytes` (the records
    rule, `ensure_ascii=False`) for digests, and `seed_fingerprint_bytes` (`ensure_ascii=True`,
    frozen under `SEED_PROTOCOL_VERSION`) for the two seed-feeding fingerprints. Both refuse
-   NaN and Infinity; their direct-call record form converts dates and timezone-aware datetimes,
-   while `_hash_config` refuses every date and datetime before routed config hashing. The only
+   NaN, Infinity and any string or object key containing an unpaired surrogate before UTF-8
+   encoding; their direct-call record form converts dates and timezone-aware datetimes, while
+   `_hash_config` refuses every date and datetime before routed config hashing. The only
    other `sort_keys` dumps left are on an exact allowlist, each with a kind and a reason.
    `generators/derivation.py:92` `column_identity` is a frozen, non-sorted JSON seed input and
    remains outside D3. No generated or masked output byte moves from C3, and no record id or CLI
@@ -180,7 +187,8 @@ After this row merges, and before REL-GATE:
 4. Each `joint_mask` group draws from its own stream derived from the mask key through
    `derive`; no `joint_mask` generator is seeded from raw key bytes; every bytes-to-int seed
    conversion is preceded by its owning length check. An unseeded composite spec resolves one
-   seed once and uses it for every draw of that spec. The existing deterministic composite path
+   seed once and uses it for every draw of that call. A reused composite instance rebuilds each
+   seed-dependent pool when the resolved seed changes. The existing deterministic composite path
    remains the one explicit exception: after `ProviderSpec` and `resolve_seed` accept its
    32-byte mask key, its current full-width `int.from_bytes(seed, "big")` conversion is kept so
    keyed composite output does not move.
@@ -294,8 +302,14 @@ Converted in CL1 (drifted or local emitters outside the hot lanes): `cli/unmask.
 `cli/fit.py:403`, `cli/tokenize.py:180`, `:520`, `cli/scanning/_multi.py:216`,
 `cli/gen/_scaffold.py:164`, `cli/reference.py:272-284`, `:300-313`. Converted in CL4:
 `cli/run/_errors.py`, `cli/run/_evidence.py`, `cli/run/_notify.py`, `cli/scan.py`. Every other
-`err_console.print(error(` site stays on the D7 baseline (CX-1 full conversion is V1+). AT-CL1-6
-proves each of their `"status": "error"` literals already fits the schema.
+`err_console.print(error(` site stays on the D7 baseline (CX-1 full conversion is V1+). The
+baseline records the exact `(path, function, normalized error-expression fingerprint)` for each
+legacy human or JSON error construction. A new expression or a change to an existing expression
+is therefore a gained key and must use `emit_error`; a conversion only removes a key. The
+baseline is registered in `scripts/dev/sentry_registry.toml`, and `scripts/dev/ratchet_check.py`
+compares it with the merge-base copy, so adding a site and adding it to the baseline in the same
+change still fails. AT-CL1-6 proves each retained `"status": "error"` literal fits the schema and
+seeds a new direct site. AT-CL1-8 proves a baseline gain is rejected.
 
 ### 4.2 C2: one exception-to-exit map (CLI)
 
@@ -333,17 +347,24 @@ and the cap's rule is that the next one uses a named sub-package.
 ```python
 def canonical_json_bytes(value: object) -> bytes: ...     # the digest form
 def seed_fingerprint_bytes(value: object) -> bytes: ...   # the seed form, byte-pinned
-class CanonicalJsonError(ValueError): ...  # value-free: names the Python type, never the value
+class CanonicalJsonError(ValueError): ...  # coded and value-free; never names the value
 ```
 
 Shared rules (both forms): `sort_keys=True`, `separators=(",", ":")`, `allow_nan=False`, UTF-8
-output. A closed `default` converts `datetime.datetime` with a UTC offset and `datetime.date`
+output. Before calling the encoder, the boundary walks every string value and object key and
+refuses any code point in the surrogate range. It raises `CanonicalJsonError` with code
+`canonical_json_invalid_string` and the fixed message "Canonical JSON strings must contain only
+Unicode scalar values." The error is raised after the walk returns, outside any handler, with no
+input text, `__cause__` or `__context__`. This check applies to the ASCII seed form too, even
+though that encoder could otherwise escape the surrogate. A closed `default` converts
+`datetime.datetime` with a UTC offset and `datetime.date`
 (that is not a `datetime`) to `isoformat()`. It refuses a naive `datetime` (the records codec
 refuses it on purpose at `records/_codec.py:97-102`: reading it as host time would make the
 bytes depend on the machine), and every other non-JSON type, including `Decimal`, `set`,
-`bytes` and arbitrary objects. Refusals and NaN or Infinity raise `CanonicalJsonError`, raised
-after the encoder returns and outside any handler, so it carries no `__context__` holding the
-value. Because it is a `ValueError`, the records codec's existing `except ValueError` arms
+`bytes` and arbitrary objects. These refusals and NaN or Infinity also raise a value-free
+`CanonicalJsonError`, raised after the encoder returns and outside any handler, so it carries no
+`__context__` holding the value. Because it is a `ValueError`, the records codec's existing
+`except ValueError` arms
 (`records/_codec.py:105-113`, `:150-156`) keep turning every refusal into the coded
 `RecordError(RECORD_INVALID)`.
 
@@ -362,11 +383,14 @@ Pre-compile refusal: `plan/_compile.py` `_hash_config` rejects `datetime.date` a
 `datetime.datetime` before calling `canonical_json_bytes`, then turns that refusal and every
 `CanonicalJsonError` into a `PlanCompileError` with the new config reason code
 `config_value_not_json` ("A config value has a type JSON cannot hold; quote it as a string."),
-naming the type only. `_hash_config` runs at `:432`, before the seed envelope at `:443`, the pool
+naming the type only. It maps `canonical_json_invalid_string` to the same public config code and
+value-free guidance. `_hash_config` runs at `:432`, before the seed envelope at `:442`, the pool
 builder and every other routed site, so a refused value fails `validate`, `run` and `ci check`
 with exit 1 and a code. Pydantic keeps date objects in `provider_config` and extra column fields,
 so AT-E1-3 starts red. Today such a date or datetime raises a bare `TypeError`; `.nan` and `.inf`
-encode as `NaN` or `Infinity`. After, all four are refused with the code (section 5).
+encode as `NaN` or `Infinity`; an unpaired surrogate can reach UTF-8 encoding and raise
+`UnicodeEncodeError`. After, all five classes are refused with a code and value-free text
+(section 5).
 
 The `subset:` block is deliberately excluded from plan compilation at
 `plan/_compile.py:184`, so its `Predicate.value` and `SeedSpec.keys` literals do not pass through
@@ -396,13 +420,13 @@ Exact allowlist (D3), each keyed on `(path, function)` with its kind:
 | `declared_casting/_catalog.py:293` | in-process cache key | an `lru_cache` key that `_resolved_json` parses back; it never leaves the process |
 | `declared_casting/_catalog.py:481-486` | in-process formatter/parser cache key | parsed back inside the same process; not a digest or seed input |
 | `declared_casting/_quarantine_local.py:271-279`, `:327-329` | stored encrypted row and stored trailer | persisted format lines, not digest constructors; the trailer carries an already-computed digest |
-| `plan/_generation.py:411` | executed payload | `config_json` is `json.loads`-ed back (`_pinned_compile.py:284`, `physical/_shadow_generation.py:248`); its exact bytes are hashed only against themselves in the same process (`physical/_compiler.py:382`, `_plan.py:203-206`) |
+| `plan/_generation.py:408` | executed payload | `config_json` is `json.loads`-ed back (`_pinned_compile.py:284`, `physical/_shadow_generation.py:248`); its exact bytes are hashed only against themselves in the same process (`physical/_compiler.py:382`, `_plan.py:203-206`) |
 | `generation/_pinned_compile.py:299`, `:319` | executed payload | `spec_json` and `config_json` are `json.loads`-ed back in `_pinned_execute.py:82-84` |
 | `profile/_serialize.py:33` | stored document | compact profile JSON read by `profile_from_json`; its document bytes are not hashed |
 | `profiling/model_pack/_packio.py:67`, `profiling/model_pack/provenance.py:183`, `profiling/model_pack/trainer.py:592`, `subset/_api.py:217` | indented document for people | no allowlisted indented document is hashed by a reader; the model-pack signature uses the parsed dictionary and the loader hashes model bytes only |
 
 `quarantine.py:320` and `execution/_isolated_worker.py:70` are not `sort_keys` dumps and not
-digests. The `default=str` in `plan/_generation.py:411` and `_catalog.py:293` stays with those
+digests. The `default=str` in `plan/_generation.py:408` and `_catalog.py:293` stays with those
 sites and is logged in section 13.
 
 Digests that move, and only for content that hits a changed rule:
@@ -451,6 +475,11 @@ mismatch code and must be rebuilt; the changelog `Breaking:` line says so.
   `generate_bundle` passes that resolved spec to `build_pool`, `_street_pool` and the sampler.
   The rule is idempotent, so a resolved spec passes through unchanged and the street pool, the
   bundle build, the `BundlePool.seed` metadata and the sample of one call all use the same seed.
+  The smaller cache fix is to keep each existing one-entry cache but key it by the resolved seed:
+  `generation/composite/_address.py`, `_city_state_zip.py`, `_name_email.py`, `_person.py` and
+  `_provider.py` store the seed beside their cached pool data and rebuild when `spec.seed` differs.
+  They do not add an unbounded per-seed cache. This makes a second call on one composite instance
+  equivalent to a fresh instance created for the second resolved seed.
   The 13 all-zero fallbacks go:
   `generation/composite/_address.py:70` (street pool), `:96` (bundle build);
   `_city_state_zip.py:86` (`BundlePool.seed`); `_custom.py:184`, `:206`;
@@ -692,6 +721,7 @@ records the route so REL-GATE's checklist finds it in 24p.
 | config holding a YAML datetime, naive or timezone-aware | bare `TypeError` at compile | refused at compile with `config_value_not_json`, exit 1; quote it as a string |
 | subset predicate holding a naive YAML timestamp (`2024-01-01 10:00:00`) | reaches subset selection and may run | `subset_request_from_config` refuses it with `config_value_not_json` and fixed quote-or-add-offset guidance; `decoy subset --dry-run` and subset-on-run exit 1 without a traceback |
 | config holding `.nan` or `.inf` | `_hash_config` encodes `NaN`; compiles | refused at compile with `config_value_not_json`, exit 1 (the review found no such config in either repo) |
+| config holding a quoted string with an unpaired surrogate | the ASCII config hash escapes it, then a routed non-ASCII canonical digest can raise `UnicodeEncodeError` with codec text | refused before encoding with `canonical_json_invalid_string`; compile maps it to `config_value_not_json`, exit 1, with no input or codec text |
 | config with non-ASCII text | digests escape it as `\uXXXX`, except records | every digest writes UTF-8, as records already does; seed fingerprint and generated output unchanged; record ids and evidence manifest hashes unchanged |
 | unseeded composite spec (library call) | pool from zeros, sample from fresh entropy | one fresh seed per call for pool and sample |
 | `CI=false decoy run` | treated as CI (no update notice) | not CI |
@@ -713,9 +743,9 @@ records the route so REL-GATE's checklist finds it in 24p.
 
 | # | Class | Structure that closes it | Proof | Mutation that turns it red |
 |---|---|---|---|---|
-| 1 | Value-bearing output | `emit_error` takes only a message the caller built; the loader, `CanonicalJsonError`, `EnvFlagError`, `env_int` and `seed_bytes_to_int` errors name a variable, type or field and are raised after the handler, so no `__context__` holds file bytes, a config value, an env value or a key; the signature-flag warning stops logging the raw value | AT-CL1-5, AT-CL3-3, AT-E1-4, AT-E3-3 | put `{exc}` in the decode branch; include the env value in the `EnvFlagError` text |
+| 1 | Value-bearing output | `emit_error` takes only a message the caller built; the loader, `CanonicalJsonError`, `EnvFlagError`, `env_int` and `seed_bytes_to_int` errors name a variable, type or field and are raised after the handler, so no `__context__` holds file bytes, a config value, an env value or a key; the surrogate refusal is fixed text and carries no input text; the signature-flag warning stops logging the raw value | AT-CL1-5, AT-CL3-3, AT-E1-4, AT-E1-9, AT-E3-3 | put `{exc}` in the decode branch; include the env value in the `EnvFlagError` text |
 | 2 | Cleanup missing on an exit path | N/A for new state: no slice adds a file, lock or scratch. The loader refuses before any output is opened, so `run` leaves nothing behind | AT-CL3-8 (no output file) | move the load after the first table write |
-| 3 | State and concurrency | N/A: every helper is a pure function of its arguments or of one env read at call time; no module cache is added (an env flag read once at import would miss a test's monkeypatch); `resolve_seed` draws per call, never per process | AT-E3-2, AT-CL2-2, AT-E2-5 | cache `env_flag` results in a module dict; cache `fresh_seed()` in a module global |
+| 3 | State and concurrency | Every helper is a pure function of its arguments or of one env read at call time; no module cache is added (an env flag read once at import would miss a test's monkeypatch); `resolve_seed` draws per call, never per process; the five existing one-entry composite caches rebuild when their recorded resolved seed differs | AT-E3-2, AT-CL2-2, AT-E2-5 | cache `env_flag` results in a module dict; cache `fresh_seed()` in a module global; leave the first composite pool cached after the seed changes |
 | 4 | Route parity and silent fallback | `joint_mask` runs only on the whole-frame route: it is not chunk admitted (`execution/_chunked_carry.py:225-230`), the out-of-core compat rejects it as a cross-row strategy and falls back (`out_of_core/_compat.py:28-35`, `:310-323`), and it is not native eligible (`native/_capabilities.py:376`). A1 changes the one transform that route calls. The loader is the only config path for every command, the gate included | AT-E2-2, AT-CL3-2 | leave the old seed in the gen-mode branch only; admit `joint_mask` to the chunk set |
 | 5 | Referential integrity | `joint_mask` keyed selection on non-null keys is unchanged, so a key that maps to a reference row still maps to the same row; null-key rows already had no key relationship | AT-E2-3 | route the keyed path through the new source too |
 | 6 | Untrusted producer | a config file and environment variables are user input: every decode, parse, shape and spelling failure maps to one named code or one documented safe side before any field is used | AT-CL3-1 to AT-CL3-4, AT-E3-2, AT-CL2-2 | catch only `YAMLError` again; let `safe_env_flag` raise on an unknown value |
@@ -776,8 +806,9 @@ records the route so REL-GATE's checklist finds it in 24p.
 
 #### Output surfaces
 
-- stderr human error line (every CLI command): one emitter, `markup=False`, printed under
-  `--quiet`.
+- stderr human error line: every new or changed error goes through one emitter with
+  `markup=False`, printed under `--quiet`; unchanged legacy sites remain on D7's registered
+  shrink-only baseline until section 13 converts them.
 - stdout `--json` error object (every CLI command): one shape, validated against the schema.
 - stdout JSON documents (`decoy schema`, `decoy scan --output -`): through
   `emit_json_document`, bytes unchanged.
@@ -808,7 +839,7 @@ row 24ze when this plan passes its gate.
 | one engine flag parser (D6 part) | `internal/env_flags.py` | engine `tests/sentry/defects/test_environment_reads.py` (24ze D6; 24zf adds the flag rule) | `os.environ.get("X") == "1"`, `os.getenv("X", "0") in {...}`, `os.environ["X"].strip().lower() == "true"`, `from os import environ as e; e.get("X") != "0"`, `bool(os.environ.get("X"))` | restore `== "1"` at `loader.py:186` |
 | one generated-at shape | `datetime.now(timezone.utc).isoformat()` | engine `tests/sentry/profiling/test_generated_at_shape.py` | `.isoformat() + "Z"`, `f"{dt.isoformat()}Z"`, `datetime.utcnow()`, `from datetime import datetime as D; D.utcnow()` | restore `utcnow().isoformat() + "Z"` in `profiling/types.py` |
 | one NER mismatch raise | `_ner_config.enforce_ner_model_version` | engine `tests/sentry/defects/test_ner_mismatch_single_site.py` | a raise naming `NER_MODEL_VERSION_MISMATCH` directly, through `reasons.mask.NER_MODEL_VERSION_MISMATCH`, or through a local alias of the code | inline the raise again in `_mask_group_c.py` |
-| one error emitter (D7) | `ui/output.emit_error` | CLI `tests/sentry/cli_text/test_one_error_emitter.py` (24ze D7), exact shrink-only baseline | `err_console.print(error(`, `state.err_console.print(error("error:"), ...)`, a dict literal with `"status": "error"`, `dict(status="error", ...)` | add `state.err_console.print(error("error:"), msg)` in `unmask.py` |
+| one error emitter (D7) | `ui/output.emit_error` | CLI `tests/sentry/cli_text/test_one_error_emitter.py` (24ze D7); exact `(path, function, normalized error-expression fingerprint)` inventory in a registered shrink-only baseline, checked against its merge-base copy | `err_console.print(error(`, `state.err_console.print(error("error:"), ...)`, a dict literal with `"status": "error"`, `dict(status="error", ...)` | add `state.err_console.print(error("error:"), msg)` in `unmask.py`; change one retained expression; add either gained key to the baseline and show the ratchet still rejects it |
 | every error literal fits the schema | `docs/schemas/decoy-error-v1.schema.json` | CLI `tests/sentry/cli_text/test_one_error_emitter.py` (AT-CL1-6 lives here) | a baseline literal with `message`, a literal missing `error`, a `code` literal that fails the pattern, or a non-JSON context value | add `"message": ...` or a `set` context value to one baseline literal |
 | one exit map | `cli/exit_codes.exit_code_for` | CLI `tests/sentry/defects/test_exit_code_owner.py` (CL3 baseline is exactly `{run/_errors.py classifier, demo map, fit DP arms}` and CL4 empties it; distinct from 24ze D10, which watches literal exit codes) | an `isinstance(exc, ...)` chain returning `EXIT_*` names; a dict from exception types to exit codes | restore `demo.py`'s three-type map |
 | one config loader (D8) | `_config_file.py` | CLI `tests/sentry/io_policy/test_config_load_choke_point.py` (24ze D8), kind allowlist of section 4.5 | `yaml.safe_load(path.read_text())`, `import yaml as _yaml; _yaml.safe_load(...)`, `yaml.load(..., Loader=...)`, `yaml.compose(...)`, `YAML().load(...)` | add `yaml.safe_load(p.read_text())` in `tokenize.py` |
@@ -829,19 +860,20 @@ Every AT below is written first and is red on the bases unless marked control.
 
 | Id | Slice | Test |
 |---|---|---|
-| AT-E1-1 | E1 | `canonical_json_bytes({"b": 1, "a": "é"})` equals `'{"a":"é","b":1}'.encode("utf-8")`; `seed_fingerprint_bytes` of the same value equals `b'{"a":"\\u00e9","b":1}'`; NaN and Infinity raise `CanonicalJsonError`; a `set` raises it naming `set` only; `isinstance(CanonicalJsonError(...), ValueError)` |
-| AT-E1-2 | E1 | controls then green: for the golden corpus configs plus one non-ASCII config, `strategy_config_fingerprint` returns the same hex before and after; a non-ASCII `provider_config` gives the same `_config_hash` and `_derive_pool_seed` bytes before and after (no column or pool seed moves) |
-| AT-E1-3 | E1 | starts red because pydantic keeps date objects: configs holding `datetime.date`, a naive `datetime`, or an aware `datetime` are each refused at `_hash_config` with `config_value_not_json`, exit 1, and the quote-it-as-a-string text; direct `canonical_json_bytes` record callers still encode date and aware datetime with `isoformat()` |
-| AT-E1-4 | E1 | `CanonicalJsonError` has `__cause__ is None` and `__context__ is None`, and its text does not contain the offending value's `repr` |
+| AT-E1-1 | E1 | `canonical_json_bytes({"b": 1, "a": "é"})` equals `'{"a":"é","b":1}'.encode("utf-8")`; `seed_fingerprint_bytes` of the same value equals `b'{"a":"\\u00e9","b":1}'`; NaN and Infinity raise `CanonicalJsonError`; a `set` raises it naming `set` only; each form refuses an unpaired surrogate in either a value or an object key with `canonical_json_invalid_string`; `isinstance(CanonicalJsonError(...), ValueError)` |
+| AT-E1-2 | E1 | controls then green: for the golden corpus configs plus one non-ASCII config, `strategy_config_fingerprint` returns the same hex before and after; a non-ASCII `provider_config` gives the same `_config_hash` and `_derive_pool_seed` bytes before and after (no column or pool seed moves); the seed fingerprint boundary refuses an unpaired surrogate instead of escaping it |
+| AT-E1-3 | E1 | starts red because pydantic keeps date objects and current UTF-8 encoding crashes on surrogate text: configs holding `datetime.date`, a naive `datetime`, an aware `datetime`, or a quoted YAML string containing an unpaired surrogate are each refused at `_hash_config` with `config_value_not_json`, exit 1, and fixed guidance; direct `canonical_json_bytes` record callers still encode date and aware datetime with `isoformat()` |
+| AT-E1-4 | E1 | every `CanonicalJsonError`, including the surrogate refusal, has `__cause__ is None` and `__context__ is None`, and its text contains neither the offending value's `repr` nor any input text |
 | AT-E1-5 | E1 | control: `records.canonical_bytes` equals its pre-change bytes for a record with non-ASCII text, and `record_id` and `payload_digest` are unchanged |
-| AT-E1-6 | E1 | `records._codec.encode` and `build` of a payload holding NaN, a `set` or a naive `datetime` each raise `RecordError` with `RECORD_INVALID` (not an uncoded crash) |
+| AT-E1-6 | E1 | `records._codec.encode` and `build` of a payload holding NaN, a `set`, a naive `datetime` or an unpaired surrogate each raise `RecordError` with `RECORD_INVALID` (not an uncoded crash or `UnicodeEncodeError`) |
 | AT-E1-7 | E1 | an object with a custom `__repr__` in a config reaching `physical/_inputs.py` raises `CanonicalJsonError` instead of hashing its repr; a `.nan` config value is refused at compile with `config_value_not_json` |
 | AT-E1-8 | E1 | `decoy subset --dry-run` and `decoy run` with a subset predicate holding a naive YAML timestamp each exit 1 with `config_value_not_json` and the fixed quote-or-add-offset guidance, with no traceback; the same refusal covers a timestamp in subset `keys` |
+| AT-E1-9 | E1 | direct canonical calls with `"before\ud800after"` as a value and as a key fail before UTF-8 encoding with `canonical_json_invalid_string`; compile of the quoted YAML form exits 1 with `config_value_not_json`; neither error message contains `before`, `after`, the escaped input, or codec exception text |
 | AT-E2-1 | E2 | two `joint_mask` groups on one table with all-null keys draw different reference rows for the same seed, and the same rows across two runs |
 | AT-E2-2 | E2 | gen mode: same as AT-E2-1 on the whole-frame route; `joint_mask` is absent from the chunk-admitted set and the out-of-core compat rejects it with `out_of_core_cross_row_strategy_unsupported`; a run requested on the out-of-core route falls back and its output equals the whole-frame output |
 | AT-E2-3 | E2 | control: non-null keyed `joint_mask` output is byte-identical before and after |
 | AT-E2-4 | E2 | `seed_bytes_to_int` refuses lengths 0, 7, 9 and 32 with a value-free `ValueError`; `resolve_seed` rejects a 4-byte seed but accepts 8 and 32 bytes unchanged; the native `CompositeBuildPoolProvider.generator` refuses `None` and `b""` |
-| AT-E2-5 | E2 | with `spec.seed=None`: one `generate_bundle` call uses one seed for the street pool, the bundle build, `BundlePool.seed` and the sample (patch `fresh_seed` to count calls: exactly 1); two calls differ; no path uses an all-zero seed; a seeded spec's output is byte-identical before and after (control) |
+| AT-E2-5 | E2 | with `spec.seed=None`: one `generate_bundle` call uses one seed for the street pool, the bundle build, `BundlePool.seed` and the sample (patch `fresh_seed` to count calls: exactly 1); no path uses an all-zero seed; a seeded spec's output is byte-identical before and after (control). For each of `_address`, `_city_state_zip`, `_name_email`, `_person` and `_provider`, call `generate_bundle` twice with different resolved seeds on ONE instance and assert the second output, pool metadata and seed-dependent pool-builder calls equal a fresh instance called with only the second seed. Mutation: retain the first call's cached pool when the seed changes; the second-call equality must fail |
 | AT-E2-6 | E2 | the 8 bytes at `job_seed[:8]` do not appear as the seed of any generator in `joint_mask` (patch `default_rng` and inspect its argument) |
 | AT-E2-7 | E2 | the draw-site catalogue lists `mask.joint_mask_null_fallback` and `mask.joint_mask_gen_row`; each has exactly one registered provider, scenario and output golden; `_GOLDEN_REGISTRY` and `MASK_STRATEGY_TO_SITE` are re-captured for those reviewed entries; `gen.composite_build_pool` names `resolve_seed` |
 | AT-E2-8 | E2 | control: a deterministic `composite_person` run with a 32-byte mask key completes and its output is byte-identical to main; patching `default_rng` shows the integer argument is exactly `int.from_bytes(the_full_32_byte_key, "big")` |
@@ -849,7 +881,7 @@ Every AT below is written first and is red on the bases unless marked control.
 | AT-E3-2 | E3 | `DECOY_ML_DISABLED=maybe`: `is_ml_disabled` raises `EnvFlagError` with code `env_flag_invalid` and `.variable == "DECOY_ML_DISABLED"`; `classifier_status()` reports down with cause `disabled` and does not raise. `DECOY_PACK_REQUIRE_SIGNATURE=maybe`: `load()` raises `EnvFlagError`, `load_with_fallback()` returns `None`, and `_classifier` reports down with cause `pack` |
 | AT-E3-3 | E3 | the flag error text and the fallback warning never hold the value (`maybe-secret-xyz` is absent from the message and `caplog`) and the error has no exception context |
 | AT-E3-4 | E3 | `DECOY_CUSTOM_PROVIDERS_DIR` is read; `CUSTOM_PROVIDERS_DIR` alone is ignored |
-| AT-E3-5 | E3 | `EnvFlagError` is importable from `decoy_engine.errors` and the reason registry lists `env_flag_invalid` and `config_value_not_json` |
+| AT-E3-5 | E3 | `EnvFlagError` is importable from `decoy_engine.errors` and the reason registry lists `env_flag_invalid`, `config_value_not_json` and `canonical_json_invalid_string` |
 | AT-E4-1 | E4 | a fresh `Profile().generated_at` parses with `datetime.fromisoformat` on Python 3.10 and ends `+00:00`; a stored `Z` profile still loads |
 | AT-E4-2 | E4 | the out-of-core and whole-frame `text_mask` routes raise `NER_MODEL_VERSION_MISMATCH` with identical message text for the same column and versions |
 
@@ -862,8 +894,9 @@ Every AT below is written first and is red on the bases unless marked control.
 | AT-CL1-3 | CL1 | under `--quiet`, `unmask`, `scan` (multi) and `gen` scaffold all print the human error line to stderr and nothing to stdout |
 | AT-CL1-4 | CL1 | an engine message containing `[vault]` reaches stderr verbatim from `fit`, `scan` and `reference` |
 | AT-CL1-5 | CL1 | `emit_error` refuses a `context` key that shadows `command`, `status`, `error`, `code` or `hint`, and a `code` such as `Bad Code` or `ok\n` that fails `re.fullmatch` |
-| AT-CL1-6 | CL1 | AST check over every `"status": "error"` dict literal left on the D7 baseline: `command` and `error` present, `message` absent, any literal `code` matches `^[a-z][a-z0-9_.]*$`, and every member outside the fixed schema is JSON-typed; list and object context used by run is accepted, while a set is refused |
+| AT-CL1-6 | CL1 | AST check over every `"status": "error"` dict literal left on the D7 baseline: `command` and `error` present, `message` absent, any literal `code` matches `^[a-z][a-z0-9_.]*$`, and every member outside the fixed schema is JSON-typed; list and object context used by run is accepted, while a set is refused. A scratch source seeds a new direct human-error call and a new hand-built JSON error object; both are reported as gained D7 sites |
 | AT-CL1-7 | CL1 | every `--quiet` option's help text says errors still reach stderr (scan the Typer app, not the source) |
+| AT-CL1-8 | CL1 | the D7 baseline is registered; `ratchet_check.py` against the merge base rejects a new site, a changed retained error expression, and either gained fingerprint added to the head baseline; deleting a converted entry passes |
 | AT-CL2-1 | CL2 | `CI=false` and `CI=0`: update check runs as non-CI; `CI=true` and `CI=1`: CI |
 | AT-CL2-2 | CL2 | `DECOY_NO_UPDATE_CHECK=maybe`: the command exits 0 and makes no network call (patched fetch never called); `DECOY_NO_UPDATE_CHECK=0` runs the check; `DECOY_DEBUG=maybe` leaves debug off and the command runs |
 | AT-CL2-3 | CL2 | `NO_COLOR=` (empty) keeps colour; `NO_COLOR=1` disables it |
@@ -906,22 +939,27 @@ Every AT below is written first and is red on the bases unless marked control.
 
 ## 8. Placement
 
-Checked against each repo's CODEMAP "Where Things Go" at the bases.
+Checked against each repo's CODEMAP "Where Things Go" at the bases. E1 updates the engine map
+with a row for the `_canonical/` foundation sub-package because the root is at its fan-out cap.
+CL1 updates the CLI map with a row for versioned schema artifacts. Those map edits land in the
+same slices as the paths they place.
 
 | New or moved thing | Path | Repo | CODEMAP row |
 |---|---|---|---|
-| canonical JSON owner | `src/decoy_engine/_canonical/__init__.py`, `_json.py` | engine | "Foundation (errors, reason adapters, private leaves)"; a sub-package because the root is at the fan-out cap |
+| canonical package layout map | `CODEMAP.md` | engine | E1 adds "Canonical serialization foundation": `src/decoy_engine/_canonical/`, private `_*.py` modules, owning unit tests and the canonical choke-point sentry; the sub-package is required because the root is at the fan-out cap |
+| canonical JSON owner | `src/decoy_engine/_canonical/__init__.py`, `_json.py` | engine | new "Canonical serialization foundation" row |
 | tier entry | `.importlinter` tier 6 gains `_canonical`; `tests/sentry/layout/test_import_layers.py` `LAYERS` | engine | "Layer contracts" |
 | seed helpers | `src/decoy_engine/determinism/_seeds.py` | engine | `determinism/` holds `_derive.py`, `_hkdf.py`; tier 4, below its callers |
 | engine flag parser and error | `src/decoy_engine/internal/env_flags.py`; `EnvFlagError` defined in `decoy_engine/errors.py`, with `internal/env_flags.py` importing downward from it | engine | `internal/` is engine-private (`tests/sentry/test_public_import_boundary.py`); public errors are defined in `errors.py`; no `errors -> internal` edge |
-| reason codes | `reasons/config/_part2.py` (92 lines) gains `ENV_FLAG_INVALID`, `CONFIG_VALUE_NOT_JSON` | engine | reason registry |
+| reason codes | `reasons/config/_part2.py` (92 lines) gains `ENV_FLAG_INVALID`, `CONFIG_VALUE_NOT_JSON`, `CANONICAL_JSON_INVALID_STRING` | engine | reason registry; the canonical boundary imports the registered code instead of defining a literal |
 | draw-site entries and providers | `execution/native/_draw_sites_mask.py`, `_draw_sites_gen.py`, `execution/native/protocol/providers_mask.py`; provider goldens and catalogue pins in `tests/native/test_draw_site_providers_golden.py`, `test_draw_sites_catalogue_pinned.py` | engine | existing modules and the existing `native/protocol/` sub-package; nothing new in flat `execution/` |
 | engine sentries | `tests/sentry/defects/test_canonical_json_choke_point.py`, `test_rng_construction.py`, `test_environment_reads.py`, `test_ner_mismatch_single_site.py`; `tests/sentry/profiling/test_generated_at_shape.py` | engine | "Sentry test": recurring-defect class rules in `tests/sentry/defects/`, package rules in their group |
 | engine unit tests | `tests/unit/determinism/`, `tests/unit/transforms/`, `tests/unit/internal/`, `tests/unit/profiling/`, `tests/unit/records/` | engine | "Unit tests": `tests/unit/<package>/` |
 | changelog fragments | `changelog.d/dup-freeze-e1.md` to `-e4.md` | engine | "Changelog fragments" |
 | compat notes | `docs/compatibility-contract.md` 3.3 dated paragraphs | engine | "Feature and contract docs" |
 | error emitter, JSON document writer | `src/decoy/ui/output.py` | CLI | "Terminal output" |
-| error schema | `docs/schemas/decoy-error-v1.schema.json` | CLI | beside `docs/schemas/decoy-ci-v1.schema.json` |
+| schema-artifact layout map | `CODEMAP.md` | CLI | CL1 adds "Versioned schema artifacts": `docs/schemas/`, `<surface>-v<major>.schema.json`, contract or e2e tests, and owning schema consistency sentries |
+| error schema | `docs/schemas/decoy-error-v1.schema.json` | CLI | new "Versioned schema artifacts" row; beside `docs/schemas/decoy-ci-v1.schema.json` |
 | exit map | `src/decoy/cli/exit_codes.py` (existing) | CLI | "Exit codes" |
 | config loader | `src/decoy/_config_file.py` | CLI | "Private shared filesystem or process primitives used by more than one package" |
 | YAML error text (moved) | `src/decoy/cli/_yaml_errors.py` to `src/decoy/_yaml_errors.py` | CLI | same row; `cli/` fan-out pin 30 to 29 (`tests/sentry/layout/test_package_fanout.py`) |
@@ -957,21 +995,21 @@ paragraph, no shim, plus a `Breaking:` fragment where output or a public shape m
 | deterministic composite output (engine) | none: the 32-byte mask-key conversion is unchanged | none; AT-E2-8 checks byte identity to main |
 | unseeded composite specs (engine library) | one fresh seed per call instead of a zero pool seed | engine changelog |
 | seed protocol | `SEED_PROTOCOL_VERSION` unchanged: no `derive` input layout changes, only new sources | none |
-| config value types (engine) | dates, datetimes, NaN and Infinity refused at compile; subset date/time literals refused at request construction | engine changelog |
+| config value types (engine) | dates, datetimes, NaN, Infinity and unpaired surrogates refused at compile; subset date/time literals refused at request construction | engine changelog |
 | env variables | the accepted set in both repos; `DECOY_ML_DISABLED`, `DECOY_DEBUG` accept it; `DECOY_NO_UPDATE_CHECK` unknown means opted out; `CUSTOM_PROVIDERS_DIR` renamed `DECOY_CUSTOM_PROVIDERS_DIR`; `CI=false`; `NO_COLOR=` | both changelogs |
 | `generated_at` shape | `Z` to `+00:00` in profiles | engine changelog |
-| reason codes | engine adds `env_flag_invalid` and `config_value_not_json`; none renamed | engine reason registry, changelog |
+| reason codes | engine adds `env_flag_invalid`, `config_value_not_json` and `canonical_json_invalid_string`; none renamed | engine reason registry, changelog |
 | public API (engine) | `decoy_engine.errors.EnvFlagError` added | engine changelog, public API snapshot gains one name |
 
 ## 10. Slices
 
 | Slice | Content | Repo | Risk | Depends on | Tests at T1 |
 |---|---|---|---|---|---|
-| E1 | C3: `_canonical/` with both forms, the routed sites, records delegation, `_hash_config` refusal and `config_value_not_json`, `.importlinter` tier 6, D3 sentry with the kind allowlist, compat note, fragment | engine | R2 (digest bytes) | none; rebase onto 24zd E3 if it lands first (both edit `.importlinter`, a textual conflict only) | AT-E1-*, golden suites, plan, pinned, subset, records, phase and model pack provenance tests, import contract and layer snapshot |
+| E1 | C3: `CODEMAP.md` placement row, `_canonical/` with both forms, the routed sites, records delegation, `_hash_config` refusal and `config_value_not_json`, `.importlinter` tier 6, D3 sentry with the kind allowlist, compat note, fragment | engine | R2 (digest bytes) | none; rebase onto 24zd E3 if it lands first (both edit `.importlinter`, a textual conflict only) | AT-E1-*, golden suites, plan, pinned, subset, records, phase and model pack provenance tests, import contract and layer snapshot |
 | E2 | C4: A1, A3, A4, `determinism/_seeds.py`, draw-site entries, matching providers, provider scenarios and goldens, catalogue and registry content snapshots, D2 seed rule, compat note, fragment | engine | R2 (output change) | 24zd E1 to E3 merged (keeps golden diffs per row apart) | AT-E2-*, `tests/unit/transforms/`, composite and pool tests, golden suites, `tests/native/test_determinism_protocol.py`, `tests/native/test_draw_site_providers_golden.py`, `tests/native/test_draw_sites_catalogue_pinned.py` |
 | E3 | C7 engine: `internal/env_flags.py`, `EnvFlagError` and `env_flag_invalid`, sites, `_detectors.py` arm, rename, D6 flag rule, fragment | engine | R1 | none | AT-E3-*, model pack, detectors, isolated-run and faker setup tests, reason registry tests, public API test |
 | E4 | C8 and C9: `generated_at`, NER helper calls, two sentries, fragment | engine | R1 | none | AT-E4-*, profiling and text_mask tests, out-of-core group C tests |
-| CL1 | C1 part 1: `emit_error`, schema, the non-hot emitters, `--quiet` help texts, D7 sentry at an exact shrink-only baseline with the AT-CL1-6 shape check | CLI | R2 (public `--json` shape) | none (OQ-1 and OQ-2 closed) | AT-CL1-*, `tests/sentry/cli_text/`, affected command unit and e2e tests |
+| CL1 | C1 part 1: `CODEMAP.md` schema-artifact row, `emit_error`, schema, the non-hot emitters, `--quiet` help texts, D7 sentry at an exact registered shrink-only baseline with AT-CL1-6 shape and new-site checks | CLI | R2 (public `--json` shape) | none (OQ-1 and OQ-2 closed) | AT-CL1-*, `tests/sentry/cli_text/`, ratchet tests, affected command unit and e2e tests |
 | CL2 | C6 and C7 CLI (not `_notify.py`): `emit_json_document`, `_env_flags.py`, stdout and env sentries, layer contract entry for `_env_flags` | CLI | R1 | none | AT-CL2-*, update check, schema, scan and output tests, layer snapshot |
 | CL3 | C5 part 1 and C2 part 1: `_yaml_errors.py` move, `_config_file.py`, `parse_pipeline_yaml` adapter, `_run_config_base` checks deleted, every loader site except `_prepare.py`, `yaml.not_utf8` rule code, `exit_code_for` with run, demo and fit DP parity, `mask_secret_ref_problem`, D8 sentry with the kind allowlist, exit-code owner sentry with its exact three-entry shrink-only baseline, layer contract entries, `test_yaml_error_leak_isolation.py` import text, and regenerated `docs/diagrams/deps.svg` if the repository gate reports it stale | CLI | R2 (exit codes) | CL1 merged (uses `emit_error`) | AT-CL3-*, gate, validate, ci rule code, tokenize, unmask, report, subset, preflight, compile-explain and scaffold tests, `tests/sentry/test_mask_secret_ref_shape.py`, `tests/sentry/test_yaml_error_leak_isolation.py`, layer snapshot, fan-out sentry, dependency-diagram gate |
 | CL4 | Hot lanes: C1 part 2 (`run/_errors.py`, `_evidence.py`, `_notify.py`, `scan.py`), C2 part 2 (`run`, `demo`, `fit` call `exit_code_for`; `_errors.py` classifier deleted; exit-code owner baseline emptied), C5 part 2 (dead `UnicodeDecodeError` arm in `run/_prepare.py`), C7 `_notify.py` SMTP port | CLI | R2 (exit codes, hot lane) | rows 62 (the remaining C slices touching `_errors.py`), 63a (RUN-STREAM C1) and 66 (F29 C1) merged; CL1 and CL3 merged | AT-CL4-*, `tests/unit/test_exit_codes.py`, run error-arm, demo, fit and notify tests, `tests/sentry/cli_text/` |
@@ -1035,15 +1073,15 @@ tech-lead call recorded here, per the round 1 review and the orchestrator's ruli
 | # | Catalog class | Result |
 |---|---|---|
 | 1 | Anchored validation | The schema's `code` pattern is `^[a-z][a-z0-9_.]*$` (ECMA-262 has no `\Z`), and `emit_error` checks the same rule with `re.fullmatch`. The flag parsers compare whole stripped strings against a set, no regex. No other regex is added. |
-| 2 | Strict wire and stored types | The error schema types every fixed member and accepts recursive JSON context; `_hash_config` refuses dates, datetimes and all non-JSON values before routing; subset construction has the same coded boundary for its free-form literals; `CanonicalJsonError` is a `ValueError` so the records codec keeps its coded refusal; `seed_bytes_to_int` refuses any length but 8 and `resolve_seed` accepts exactly 8 or 32 bytes. |
-| 3 | No exception context | Loader, `CanonicalJsonError`, `EnvFlagError` and seed errors are raised after the handler closes; AT-E1-4, AT-E3-3 and AT-CL3-3 assert `__cause__ is None and __context__ is None`. |
+| 2 | Strict wire and stored types | The error schema types every fixed member and accepts recursive JSON context; `_hash_config` refuses dates, datetimes, unpaired surrogates and all non-JSON values before routing; subset construction has the same coded boundary for its free-form literals; `CanonicalJsonError` is a `ValueError` so the records codec keeps its coded refusal; `seed_bytes_to_int` refuses any length but 8 and `resolve_seed` accepts exactly 8 or 32 bytes. |
+| 3 | No exception context | Loader, `CanonicalJsonError`, `EnvFlagError` and seed errors are raised after the handler closes; AT-E1-4, AT-E1-9, AT-E3-3 and AT-CL3-3 assert `__cause__ is None and __context__ is None`. |
 | 4 | Versioned read models | The error schema is versioned (`decoy-error-v1`); stored profiles with `Z` still load; the seed form is frozen under `SEED_PROTOCOL_VERSION`; pinned plans and resume state fail closed on digest mismatch rather than reading as current. |
 | 5 | Normalized guard scanners | Section 6.3 gives each guard its seeded spellings, alias resolution through the existing helpers, and the mutation that turns it red. Deliberate evasion (`getattr`, `exec`) is V2-LOG. |
 | 6 | No reaching into private modules | CLI calls only `decoy_engine.secret_providers.parse_ref` and `decoy_engine.errors.EnvFlagError` (public). Engine callers import `_canonical` through its package `__init__`; `internal/env_flags.py` is engine-only and the public import boundary sentry already covers `internal/`. |
 | 7 | No hidden CI failures | No CI command or failure policy changes; E1 and CL3 edit layer contracts, so their full-suite baseline comparison is mandatory and named in section 10. |
 | 8 | One input, one trust class per entry point | The loader takes user config paths and text only; the policy file, layout file, CI manifest, CLI-written text and user-editable project marker keep their own named reader kinds on the D8 allowlist. `env_flag` reads user-set variables; the engine-set isolated-worker marker uses the same parser and reads `"1"` as today. |
 | 9 | Mutations on the final head | Each mutation in sections 6.1 and 6.3 reruns on the final head of its slice. |
-| 10 | Allowlisted helpers are still checked | Every allowlist (D3 kinds, D8 kinds, D7 baseline, exit-code owner baseline) keys on exact `(path, function name)` and a test fails when an entry no longer matches a real site. |
+| 10 | Allowlisted helpers are still checked | Every allowlist (D3 kinds, D8 kinds, D7 baseline, exit-code owner baseline) keys on exact site identity and a test fails when an entry no longer matches a real site. D7 additionally fingerprints the normalized construction or emission expression, so changing a legacy error makes a gained site rather than silently reusing its `(path, function)` entry. |
 | 11 | No raised caps | No ceiling or baseline grows. D7 starts at today's count minus the converted sites and only shrinks; the exit-code owner baseline starts at the three verified classifiers and only shrinks to zero in CL4; the CLI `cli/` fan-out pin falls from 30 to 29. The engine root fan-out stays at 25 (a sub-package is added, not a module). The draw-site catalogue, provider registry, provider output and strategy-map digests are content snapshots re-captured for reviewed entries, not caps. Line-count pins moved by added lines, if any, are listed in each build report. |
 
 ## 13. V2-LOG
@@ -1122,9 +1160,10 @@ tech-lead call recorded here, per the round 1 review and the orchestrator's ruli
 
 ## 16. Verification status
 
-Sites, line numbers, import tiers, fan-out counts and module sizes were read on engine
-`8c9c1162` and CLI `88403cc`, and the round 1 and round 2 findings were re-checked on engine
-`8c9c1162` and CLI `5c9dd8e`: the streamed scan path and `emit_json`, `parse_pipeline_yaml` and
+Sites, line numbers, import tiers, fan-out counts and module sizes were re-read on engine
+`origin/main` `3a30eb89` and CLI `origin/main` `a15afcc`. The engine change since the prior base
+moved the cited `plan/_generation.py` dump from line 411 to 408; the CLI `_prepare.py` change was
+below every cited line. The streamed scan path and `emit_json`, `parse_pipeline_yaml` and
 `_run_config_base`, the public `yaml.*` codes, the CLI `.importlinter` tiers and snapshot, the
 `_yaml_errors.py` imports, the records codec error arms, the 13 all-zero seed sites and the
 native mirror, the draw-site catalogue and provider registries, the full-width 32-byte
