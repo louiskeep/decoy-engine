@@ -735,9 +735,14 @@ class TestMissingCellRule:
 
         with pytest.raises(ValueError) as info:
             self._apply("a / 0", {"a": pd.NaT}, "default")
-        from decoy_engine.transforms.derived import _FAILURE_REASONS, evaluation_failure_text
+        from decoy_engine.transforms.derived import _FAILURE_REASONS, failure_text
 
-        expected = evaluation_failure_text("c", 0, _FAILURE_REASONS[ZeroDivisionError])
+        expected = failure_text(
+            "derived expression",
+            column="c",
+            row_index=0,
+            reason=_FAILURE_REASONS[ZeroDivisionError],
+        )
         assert str(info.value) == expected
 
     @pytest.mark.parametrize("text", ["NaT", ""])

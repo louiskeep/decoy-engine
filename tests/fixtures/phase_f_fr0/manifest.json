@@ -34,11 +34,11 @@
       }
     },
     "formula": {
-      "envelope_digest": "32c2dab9c092732d2917a9e962e1ba21417a4eb4cd5ce964bcd0b54c28727e70",
+      "envelope_digest": "83e060a2ab9d0a93e2f6605a95fa5b48a06415141ff67db7203776aaa656785a",
       "excluded_columns": [],
-      "status": "unchanged",
+      "status": "refrozen",
       "tables": {
-        "formula": "1e934ccf90c1bc2211fdfe9f6171fdde380146d65a8f0d10aefe274e312dfdcb"
+        "formula": "fa26d49b6d942d8bbc85f94536335b2cb044a5e0cc07b3a065463907603d18e5"
       }
     },
     "grouped_windowed": {
@@ -132,8 +132,14 @@
       }
     }
   },
-  "re_frozen_on": "2026-11-08",
+  "re_frozen_on": "2026-11-13",
   "refrozen": {
+    "formula": {
+      "previous_tables": {
+        "formula": "1e934ccf90c1bc2211fdfe9f6171fdde380146d65a8f0d10aefe274e312dfdcb"
+      },
+      "reason": "2026-11-13: the `bad` column (`undefined_name + 1`, refused at compile) was removed from the fixture because an unevaluable formula now fails the run instead of writing nulls; every other column digest is unchanged"
+    },
     "live_faker": {
       "previous_tables": {
         "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"

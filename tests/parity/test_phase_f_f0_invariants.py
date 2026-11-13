@@ -409,8 +409,9 @@ def test_reversed_postpass_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
         seed: int,
         derive_key: Any = None,
         table_name: str = "",
+        **kwargs: Any,
     ) -> None:
-        real(list(reversed(gcols)), data, seed, derive_key, table_name=table_name)
+        real(list(reversed(gcols)), data, seed, derive_key, table_name=table_name, **kwargs)
 
     monkeypatch.setattr(_referenced_formula, "fill_referenced_formula_columns", reversed_order)
     _trips(

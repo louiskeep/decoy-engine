@@ -16,7 +16,10 @@ any reference-bearing formula column never pay the pandas import.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
+
+import pyarrow as pa
 
 
 def fill_referenced_formula_columns(
@@ -25,6 +28,8 @@ def fill_referenced_formula_columns(
     seed: int,
     derive_key: Any = None,
     table_name: str = "",
+    *,
+    types: Mapping[tuple[str, str], pa.DataType] | None = None,
 ) -> None:
     """Fill ``formula`` columns carrying ``references`` from finalized siblings.
 
@@ -38,6 +43,11 @@ def fill_referenced_formula_columns(
 
     Referenced-formula columns had no prior valid output (they were nulls), so
     there is nothing to preserve byte-for-byte.
+
+    ``types`` is ``reader_types`` for the config. A referenced column it types as int or float
+    is bound as that number, whatever another reader made of the output column, and a missing
+    cell of it makes the formula result null. The frame holds Python objects so an int column
+    with a null keeps its ints instead of widening to float.
     """
     targets = [
         col
@@ -51,18 +61,33 @@ def fill_referenced_formula_columns(
 
     import pandas as pd
 
+    from decoy_engine.generation._numeric_typing import restore_declared
     from decoy_engine.generation.synthesize import _apply_null_probability
     from decoy_engine.generators.columns import ColumnGenerator
     from decoy_engine.generators.derivation import with_table
 
-    df = pd.DataFrame(data)
+    kinds = {c["name"]: c for c in gcols}
+    number_refs: set[str] = set()
+    frame: dict[str, Any] = {}
+    for key, values in data.items():
+        dtype = (types or {}).get((table_name, key))
+        if dtype is not None and (pa.types.is_integer(dtype) or pa.types.is_floating(dtype)):
+            number_refs.add(key)
+            values = restore_declared(kinds.get(key, {}), values, dtype)
+        frame[key] = pd.Series(values, dtype=object)
+    df = pd.DataFrame(frame)
     cg = ColumnGenerator(seed=seed, derive_key=derive_key)
     for col in targets:
         name = col["name"]
         formula = col.get("formula") or ""
         references = col.get("references") or []
         series = cg.fill_referenced_formula_column(
-            name, formula, references, df, table_name=table_name
+            name,
+            formula,
+            references,
+            df,
+            table_name=table_name,
+            number_refs=frozenset(number_refs),
         )
         # Apply null_probability the same way every other generated column
         # does (the placeholder pass already ran it over all-None values; we
@@ -72,4 +97,4 @@ def fill_referenced_formula_columns(
             series.tolist(), with_table(col, table_name), seed, derive_key
         )
         data[name] = values
-        df[name] = values
+        df[name] = pd.Series(values, dtype=object)

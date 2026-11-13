@@ -27,10 +27,18 @@ from tests.parity import _f0_fixtures as fx
 from tests.parity import _fr0_semantic_gate as gate
 from tests.parity._f0_canonical import table_fingerprint
 
-RE_FROZEN_ON = "2026-11-08"
+RE_FROZEN_ON = "2026-11-13"
 # Fixtures whose checked-in digest moved in the latest re-freeze, and why. `nulls` moved twice;
 # its previous digests are those of the 2026-10-18 re-freeze.
 REFROZEN: dict[str, dict[str, Any]] = {
+    "formula": {
+        "reason": (
+            "2026-11-13: the `bad` column (`undefined_name + 1`, refused at compile) was removed from the fixture because an unevaluable formula now fails the run instead of writing nulls; every other column digest is unchanged"
+        ),
+        "previous_tables": {
+            "formula": "1e934ccf90c1bc2211fdfe9f6171fdde380146d65a8f0d10aefe274e312dfdcb"
+        },
+    },
     "sequence": {
         "reason": (
             "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"

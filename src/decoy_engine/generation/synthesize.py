@@ -37,7 +37,7 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
+from decoy_engine.generation._numeric_typing import numeric_plan, reader_types, restore_declared
 from decoy_engine.generation._statistical_column import (
     arrow_table,
     statistical_generate,
@@ -138,6 +138,7 @@ def _generate_tables_from_config(
     # Parents-before-children, ties by declaration and first-reference order (never a `set`).
     ordered = [name for name, _parents in generation_order(config)]
     numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
+    types = reader_types(config, provider_snapshot=provider_snapshot)
     pools: dict[str, pa.Table] = {}
     out: dict[str, pa.Table] = {}
     for name in ordered:
@@ -205,7 +206,7 @@ def _generate_tables_from_config(
                 fill_referenced_formula_columns,
             )
 
-            fill_referenced_formula_columns(gcols, data, seed, derive_key, table_name=name)
+            fill_referenced_formula_columns(gcols, data, seed, derive_key, name, types=types)
         tbl = arrow_table(data, table_name=name, statistical_specs=statistical_specs, columns=gcols)
         # Generation-time fidelity warn-gate (deferred follow-up 5,
         # 2026-06-12): score statistical columns against their source

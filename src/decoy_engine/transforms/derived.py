@@ -297,9 +297,11 @@ def apply_derived(
             return None
         result = evaluate(config.compiled, ctx)
     except Exception as exc:
-        reason = _FAILURE_REASONS.get(type(exc), _DEFAULT_FAILURE_REASON)
+        reason = failure_reason(exc)
     if reason is not None:
-        raise ValueError(evaluation_failure_text(column, row_index, reason))
+        raise ValueError(
+            failure_text("derived expression", column=column, row_index=row_index, reason=reason)
+        )
     return _apply_bounds(result, config.bounds)
 
 
@@ -316,12 +318,26 @@ _FAILURE_REASONS: dict[type[BaseException], str] = {
 }
 
 
-def evaluation_failure_text(column: str | None, row_index: int | None, reason: str) -> str:
-    """The one per-row failure text: output column, row index and a fixed reason word."""
+def failure_reason(exc: BaseException) -> str:
+    """The fixed reason word for an evaluation error, chosen by exact type only."""
+    return _FAILURE_REASONS.get(type(exc), _DEFAULT_FAILURE_REASON)
+
+
+def failure_text(
+    subject: str,
+    *,
+    column: str | None,
+    row_index: int | None,
+    reason: str,
+    table: str | None = None,
+) -> str:
+    """The one per-row failure text: subject, then table, output column, row index and a reason."""
     parts: list[str] = []
+    if table is not None:
+        parts.append(f"table {table!r}")
     if column is not None:
         parts.append(f"column {column!r}")
     if row_index is not None:
         parts.append(f"row {row_index}")
     where = ", ".join(parts) if parts else "unknown column"
-    return f"derived expression evaluation failed at {where}: {reason}"
+    return f"{subject} evaluation failed at {where}: {reason}"

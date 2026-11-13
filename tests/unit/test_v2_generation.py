@@ -732,11 +732,11 @@ class TestFormulaParityV1:
         assert _v2_run(col, 5) == _v1_run(col, 5)
 
     def test_inline_with_random(self):
-        # Inline path: random.randint(1, 100) is row-seeded via local_seed.
+        # Inline path: randint(1, 100) is row-seeded via local_seed.
         col = {
             "name": "rand",
             "type": "formula",
-            "formula": "random.randint(1, 100)",
+            "formula": "randint(1, 100)",
         }
         assert _v2_run(col, 10) == _v1_run(col, 10)
 

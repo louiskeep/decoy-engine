@@ -121,7 +121,7 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     },
     "formula": {
         "formula": {
-            "schema": "427da4841cb278415e1bc4e010bc1773e64568481996a167d357d94bab58628d",
+            "schema": "1cec7e708bfc56d468059910dbd20c8a59dc92de68f676b5f88450a3c6348ba0",
             "rows": 25,
             "columns": [
                 ("rnd", "ea057c28fbc73800ef7f8171667cf5f5b768bfdb182fd5770fcea8935ba66e6c"),
@@ -131,9 +131,8 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
                 ("hsh", "2a6e80c753bfedbd93ba3620a27a7ef115a54cf91691c53155d994709258fb66"),
                 ("fixed_date", "adeb952fc6c10a08cca27885fdde742836bb291b49c18ad3bfae9e4aecb40477"),
                 ("empty", "1a7ced7720a8194fe783853ecc62232e944ec5e3efdf03282c78364f241005a3"),
-                ("bad", "1a7ced7720a8194fe783853ecc62232e944ec5e3efdf03282c78364f241005a3"),
             ],
-            "table": "1e934ccf90c1bc2211fdfe9f6171fdde380146d65a8f0d10aefe274e312dfdcb",
+            "table": "fa26d49b6d942d8bbc85f94536335b2cb044a5e0cc07b3a065463907603d18e5",
         }
     },
     "referenced_formula": {
