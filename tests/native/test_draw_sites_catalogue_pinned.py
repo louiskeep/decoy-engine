@@ -54,7 +54,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
 # Re-pinned for GEN-TYPES E1: gen.distribution appended at the end of the catalogue.
 # Re-pinned for GEN-TYPES E3: gen.lookup appended after gen.distribution.
-_CATALOGUE_DIGEST = "972cd0b53c89c2267493cd5263575b90360bb927a562f8c286d90a1c77907210"
+# Re-pinned for GEN-REL E1: gen.reference names the relational repair and its randrange fill.
+_CATALOGUE_DIGEST = "3e12aa89395118cf055899a310423f5d45a66f34eb0b8d552e4be38f42b7c71f"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -120,7 +121,8 @@ _ENTRY_DIGESTS = [
     "3f6ffacf2df718610ae2090ecb26bf1d130dcb6efbccaa875de6b7ecd1afb8ae",
     # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
     # gen.reference re-pinned for FK-FANOUT E2b: call site moved, fitted seeds from the pinned snapshot digest.
-    "7d9bce3693d567778b4149b7bc631a4aef99431cd732f5ecf190fb5c47fee918",
+    # gen.reference re-pinned for GEN-REL E1: the repair mirror moved to generation/relational.
+    "a53519d78f34d90aa675fdd8e3c8fe74b2deffc4b78474a9c9a2080dc4007e03",
     "e4b331d3617ea390a2a489148f3524dcb9438ecb6516fe6bd1b53131d90dbd04",
     # gen.statistical_per_row re-pinned for GEN-NUM-SHAPE: the call shape names the grid and exact draws.
     "fa0bc05758594e2412aad9fb148660c9fd4a7c596911516db1b9537e5302866f",
