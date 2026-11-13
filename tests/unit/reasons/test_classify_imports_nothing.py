@@ -20,8 +20,10 @@ _CHILD = textwrap.dedent(
     import sys
     from decoy_engine.reason_adapter import reason_from_exception
     from decoy_engine.reasons import Phase
+    from decoy_engine._progress_events import safe_error_class
     before = set(sys.modules)
     record = reason_from_exception(MemoryError(), phase=Phase.RUN)
+    assert safe_error_class("DpError") == "DpError"
     roots = ("decoy_engine", "sklearn", "scipy", "opendp")
     added = sorted(m for m in set(sys.modules) - before if m.split(".")[0] in roots)
     print(record.namespace, record.code, added)
@@ -29,7 +31,7 @@ _CHILD = textwrap.dedent(
 )
 
 
-def test_classifying_a_memory_error_imports_no_family_module() -> None:
+def test_classifying_and_naming_a_memory_error_imports_no_family_module() -> None:
     proc = subprocess.run(  # noqa: S603
         [sys.executable, "-c", _CHILD],
         capture_output=True,

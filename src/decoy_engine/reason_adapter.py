@@ -155,6 +155,21 @@ def _loaded_families() -> tuple[dict[type, str], dict[type, ReasonCode]]:
     return coded, fixed
 
 
+def registered_family_names() -> frozenset[str]:
+    """The class name of every trusted family, read from the tables without importing any module."""
+    return frozenset(name for _module, name, _ in (*_CODED, *_FIXED))
+
+
+def loaded_families() -> frozenset[type]:
+    """The trusted families whose module this process has already imported.
+
+    Enough for `isinstance` on a live exception, whose class is always in an imported module,
+    and safe on a failure path because it imports nothing.
+    """
+    coded, fixed = _loaded_families()
+    return frozenset(coded) | frozenset(fixed)
+
+
 def registered_families() -> frozenset[type]:
     """Every exception class the adapter trusts (coded or fixed), for completeness tests."""
     coded, fixed = _families()
