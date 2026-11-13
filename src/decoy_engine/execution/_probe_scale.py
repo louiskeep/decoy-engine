@@ -68,7 +68,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.config import generate_columns_of, is_self_reference
+from decoy_engine.config import generate_columns_of, is_exact_sequence_key, is_self_reference
 
 __all__ = [
     "DEFAULT_PROBE_FLOOR_ROWS",
@@ -186,9 +186,8 @@ def _loosen_per_parent_bounds(scaled: dict[str, Any]) -> None:
                 ),
                 {},
             )
-            exact = key.get("type") == "sequence" and not (key.get("null_probability") or 0) > 0
             col["min_per_parent"], col["max_per_parent"] = _loosened_bounds(
-                lo, hi, rows, parent_rows, exact
+                lo, hi, rows, parent_rows, is_exact_sequence_key(key)
             )
 
 

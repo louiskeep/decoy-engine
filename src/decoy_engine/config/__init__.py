@@ -44,6 +44,7 @@ from decoy_engine.config._generate_option_catalog import (
 )
 from decoy_engine.config._generate_options import refuse_unlisted_generate_families
 from decoy_engine.config._generate_relational import (
+    is_exact_sequence_key,
     is_self_reference,
     per_parent_problems,
     self_reference_problems,
@@ -161,6 +162,7 @@ __all__ = [
     "distinct_categories",
     "generate_columns_of",
     "generate_option_catalog",
+    "is_exact_sequence_key",
     "is_self_reference",
     "override_sources",
     "parse_delivery_config",

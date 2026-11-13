@@ -20,6 +20,7 @@ from functools import lru_cache, partial
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.config import is_exact_sequence_key
 from decoy_engine.errors import ValidationError
 from decoy_engine.expressions import formula_is_evaluable
 from decoy_engine.plan._checks import check_derived_column_refs
@@ -478,8 +479,7 @@ def _check_reference_weights(
     for candidate in parent.get("generate_columns") or []:
         if not isinstance(candidate, dict) or candidate.get("name") != col.get("reference_column"):
             continue
-        keeps_all_keys = not (candidate.get("null_probability") or 0) > 0
-        if candidate.get("type") == "sequence" and keeps_all_keys and len(weights) != rows:
+        if is_exact_sequence_key(candidate) and len(weights) != rows:
             raise _refusal(
                 reasons.plan.REFERENCE_WEIGHTS_LENGTH_MISMATCH, table, col["name"], "weights"
             )

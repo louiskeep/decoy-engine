@@ -26,18 +26,30 @@ The draw is uniform over earlier rows with an optional `max_per_parent`; any oth
 a minimum, nulls or uniqueness would be dropped without a word, so each is refused. `root_count`
 must lie between 1 and the table's `row_count`, and is ignored for a table with no rows.
 
+`is_exact_sequence_key` is the one test for a key column whose every row is a distinct value:
+a `sequence` with no positive `null_probability`. The self-reference key check, the capacity
+probe's bounds and the plan's weights-length check all read it. It fails closed: a rate that is
+not absent, None or a real number (bool excluded) reads as "may have nulls", the safe answer for
+every caller. A NaN rate is not above 0, so it counts as no nulls, as the earlier copies read it.
+
 A problem carries its reason code only: a bound, weight or key never reaches a message.
 """
 
 from __future__ import annotations
 
+import numbers
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from decoy_engine import _capacity, reasons
 from decoy_engine.config._tables import generate_columns_of
 
-__all__ = ["is_self_reference", "per_parent_problems", "self_reference_problems"]
+__all__ = [
+    "is_exact_sequence_key",
+    "is_self_reference",
+    "per_parent_problems",
+    "self_reference_problems",
+]
 
 Problem = tuple[tuple[str | int, ...], str]
 
@@ -118,15 +130,28 @@ def is_self_reference(table_name: Any, col: Mapping[str, Any]) -> bool:
     )
 
 
+def is_exact_sequence_key(column: Mapping[str, Any]) -> bool:
+    """Whether `column` is a `sequence` that injects no nulls, so every row is a distinct key."""
+    if column.get("type") != "sequence":
+        return False
+    rate = column.get("null_probability")
+    if rate is None:
+        return True
+    if not isinstance(rate, numbers.Real) or isinstance(rate, bool):
+        return False
+    return _not_above_zero(rate)
+
+
+def _not_above_zero(rate: Any) -> bool:
+    # Typed `Any`: `numbers.Real` declares no ordering against an int literal.
+    return not rate > 0
+
+
 def _key_is_valid(columns: Sequence[Any], c_idx: int, key_name: Any) -> bool:
     """Whether `key_name` is an uncast `sequence` column declared before `c_idx` with no nulls."""
     for earlier in columns[:c_idx]:
         if isinstance(earlier, Mapping) and earlier.get("name") == key_name:
-            return (
-                earlier.get("type") == "sequence"
-                and not _nulls_on(earlier.get("null_probability"))
-                and "output_type" not in earlier
-            )
+            return is_exact_sequence_key(earlier) and "output_type" not in earlier
     return False
 
 

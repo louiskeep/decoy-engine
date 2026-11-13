@@ -27,6 +27,7 @@ category trees can be generated.
   instead of `pinned_plan_malformed`. Decoding a serialized plan with such a field still
   refuses with `pinned_plan_malformed`.
 - A capacity probe holds an explicit `root_count` to its scaled row count.
-- `decoy_engine.config` exports `is_self_reference` and `self_reference_problems`.
+- `decoy_engine.config` exports `is_self_reference`, `self_reference_problems` and
+  `is_exact_sequence_key`, the one test for a key column whose every row is a distinct value.
 
 Every config without a self-reference keeps its bytes.

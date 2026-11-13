@@ -966,8 +966,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # bounds to the scaled row counts, so a scaled config stays feasible, and reads a
             # table's generate columns through `config.generate_columns_of`. GEN-REL E2: it
             # also holds a self-reference's explicit `root_count` to the scaled row count,
-            # using `config.is_self_reference`. It still imports nothing from
-            # `execution.physical`.
+            # using `config.is_self_reference`, and reads whether a parent key is exact through
+            # `config.is_exact_sequence_key`, the one copy of that rule. It still imports
+            # nothing from `execution.physical`.
             "src/decoy_engine/execution/_probe_scale.py",
         }
     )
