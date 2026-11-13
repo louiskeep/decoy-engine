@@ -31,7 +31,8 @@ with no fitted snapshot.
   seed hashes `condition_on` and `by`. Its type is that of every category it can draw. The
   parent column is read as text by numeric typing, so a `sequence` parent stays text, as under a
   fitted `condition_on`. A pinned `windowed_date` anchored on a conditional column checks the
-  entry categories too.
+  entry categories too. The streaming width bound and the memory estimate price the column by
+  the widest category it can draw, entry categories included.
 - `decoy_engine.config` exports `categorical_categories`.
 
 Every `categorical` column without `condition_on` keeps its bytes and its type.

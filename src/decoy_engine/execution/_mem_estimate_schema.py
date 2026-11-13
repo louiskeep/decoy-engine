@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import categorical_categories
 from decoy_engine.execution._mem_estimate import (
     ColumnSizeSpec,
     TableSizeSpec,
@@ -213,9 +214,10 @@ def generate_column_width_bytes(gen_col: GenerateColumnConfig) -> float | None:
     (UNPRICEABLE) when no declared/typical width is known.
 
     Covers `faker` (via `_GENERATE_FAKER_TYPE_WIDTH_BYTES`, keyed on
-    `faker_type`) and `categorical` (the widest declared category, an exact
-    upper bound rather than a typical-case estimate, since the category set
-    is fully known at config time). Every other generate type --
+    `faker_type`) and `categorical` (the widest category it can draw, `by`
+    entries included: an exact upper bound rather than a typical-case
+    estimate, since the category set is fully known at config time). Every
+    other generate type --
     `formula`/`derived`/`derived_aggregate`/`statistical`/`windowed_date`/
     `grouped_series`/`reference`/`group_key` -- is UNPRICEABLE here: each
     depends on a snapshot file, an expression, or a parent column not
@@ -225,7 +227,8 @@ def generate_column_width_bytes(gen_col: GenerateColumnConfig) -> float | None:
     """
     extras = gen_col.model_extra or {}
     if gen_col.type == "categorical":
-        categories = extras.get("categories") or []
+        # Every category the column can draw, `by` entries included; none prices as unpriceable.
+        categories = categorical_categories({"categories": [], **extras}) or []
         str_categories = [c for c in categories if isinstance(c, str)]
         if not str_categories:
             return None
