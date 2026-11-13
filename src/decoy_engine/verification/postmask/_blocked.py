@@ -26,6 +26,7 @@ __all__ = [
     "PostScanBlockedError",
     "PostScanVerdict",
     "block_location",
+    "blocked_error",
     "post_scan_verdict",
     "severity_counts",
 ]
@@ -283,3 +284,11 @@ class PostScanBlockedError(DecoyError):
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (type(self), (self.report, self.verdict))
+
+
+def blocked_error(
+    report: Mapping[str, Any], verdict: PostScanVerdict
+) -> PostScanBlockedError | None:
+    """The error that withholds the outputs when `verdict` blocks, else None. Callers outside this
+    module raise through here, so the error is always built with the verdict that decided it."""
+    return PostScanBlockedError(report, verdict) if verdict.blocking else None
