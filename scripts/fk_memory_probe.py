@@ -599,10 +599,8 @@ def _run_out_of_core(
         tracemalloc.start()
         mask_t0 = time.perf_counter()
         try:
-            # source_dir schema is not guaranteed to carry payload_NN columns
-            # (a real/shared corpus), so the strategy knob applies only to the
-            # in-probe-generated chain -- matches `_run_full`/`_run_sequential`
-            # and is enforced up front in `main()`.
+            # A real source_dir need not carry payload_NN columns, so the strategy knob
+            # applies only to the generated chain, as in `main()` and the other modes.
             plan = (
                 make_plan(width=width, strategy=strategy)
                 if (source_dir is None and strategy is not None)
