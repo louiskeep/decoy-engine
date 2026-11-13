@@ -1,3 +1,0 @@
-### Fixed (multi-parent out-of-core join keeps a shared parent relation, OOC-REL-UNLINK, 2026-11-12)
-
-On the out-of-core route, a parent whose key feeds both a multi-parent child and another child (a later table, another column of the same child, or a second multi-parent group) no longer fails with `FileNotFoundError`. Edges from the same parent columns share one relation file, and the multi-parent merge deleted it while those edges still needed it. The merge now deletes a member file only when no remaining edge uses it; the runner's teardown removes the rest at the end of the run, on success and on failure.

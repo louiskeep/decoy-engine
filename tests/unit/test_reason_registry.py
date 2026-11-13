@@ -536,14 +536,12 @@ def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> No
 
 
 def test_scanml_m5_route_refusal_is_registered_as_pending() -> None:
-    """SCAN-ML M5: one route refusal owned by PostScanRouteError, pending its release stamp."""
-    from decoy_engine.reasons._types import UNRELEASED
-
+    """SCAN-ML M5: one route refusal owned by PostScanRouteError, stamped at 1.25.0."""
     spec = reasons.find("route", "post_scan_models_unsupported")
     assert spec is not None
     assert (spec.owner, spec.since, spec.kind.value) == (
         "PostScanRouteError",
-        UNRELEASED,
+        "1.25.0",
         "failure",
     )
     assert not re.search(r"[{}%]", spec.summary)
@@ -613,7 +611,7 @@ def test_a_post_scan_blocked_error_whose_only_code_is_unregistered_is_unregister
 
 
 def test_gen_types_e3_codes_are_registered() -> None:
-    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all pending."""
+    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all stamped at 1.25.0."""
     expected = [
         ("plan", "lookup_column_missing", "PlanCompileError"),
         ("plan", "lookup_file_empty", "PlanCompileError"),
@@ -629,7 +627,7 @@ def test_gen_types_e3_codes_are_registered() -> None:
     for ns, code, owner in expected:
         spec = reasons.find(ns, code)
         assert spec is not None
-        assert (spec.owner, spec.since) == (owner, "unreleased")
+        assert (spec.owner, spec.since) == (owner, "1.25.0")
         assert not re.search(r"[{}%]", spec.summary)
         assert getattr(getattr(reasons, ns), code.upper()) == code
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
