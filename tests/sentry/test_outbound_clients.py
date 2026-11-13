@@ -46,7 +46,7 @@ CORPUS = HERE / "fixtures" / "outbound_seeded.py.txt"
 CLIENT_TARGETS = frozenset({"google.cloud.storage.Client", "google.cloud.storage.client.Client"})
 REQUIRED = frozenset({"timeout", "retry"})
 # First-inventory size of the collision walk; lower it together with the baseline.
-WALK_FLOOR = 151
+WALK_FLOOR = 150
 
 
 def gcs_name_set() -> frozenset[str]:

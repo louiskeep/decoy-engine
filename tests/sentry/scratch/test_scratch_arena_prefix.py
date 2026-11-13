@@ -4,7 +4,8 @@ The arena prefix, its pending prefix and its marker name are spelled only in
 `fileaccess/_scratch.py`, and `open` names a root the sweep's exact pattern matches.
 `[create_choke_point]`, on `tests.sentry.fa.scan` and its resolver (aliases, `getattr`,
 re-exports): the arena modules create nothing themselves, `_output.py` creates only inside its
-named raw functions, and its two private entry points each pass their one fixed restorer.
+named raw functions, each named raw function still creates, and its two private entry points
+each pass their one fixed restorer.
 """
 
 from __future__ import annotations
@@ -35,11 +36,9 @@ CREATE_FLAGS = frozenset({"os.O_CREAT", "decoy_engine.fileaccess._output._FILE_C
 # Plan 4.2: every raw creation in `_output.py` sits in one of these, plus the one flag definition.
 OUTPUT_RAW = frozenset(
     {
-        "make_stage_dir_at",
+        "_make_dir_core",
         "_create_private_core",
         "create_output_file_at",
-        "RootedOutputDir._open_parent",
-        "RootedOutputDir.ensure_dir",
     }
 )
 PRIVATE_ENTRIES = {
@@ -104,12 +103,15 @@ def prefix_findings(src: Path) -> list[str]:
 
 def choke_point_findings(src: Path) -> list[str]:
     """Creations outside the two choke points, and a private entry point's restorer changed."""
+    sinks = scan_tree(src)[0]
     out = [
         f"{s.module}:{s.line} {s.function}: {s.sink}"
-        for s in scan_tree(src)[0]
+        for s in sinks
         if (s.module in ARENA_MODULES and s.sink in ARENA_BANNED)
         or (s.module == OUTPUT and s.sink == "os.mkdir" and s.function not in OUTPUT_RAW)
     ]
+    # A name stays in `OUTPUT_RAW` only while its own body holds a raw creation.
+    holders = {s.function for s in sinks if s.module == OUTPUT and s.sink in ARENA_BANNED}
     index = ProjectIndex("decoy_engine")
     modules = list(_modules(src))
     for _rel, name, tree, pkg in modules:
@@ -120,6 +122,8 @@ def choke_point_findings(src: Path) -> list[str]:
         for qual, node, scope in _walk(tree, name, pkg):
             where = f"{rel}:{getattr(node, 'lineno', 0)} {qual}"
             if _is_create_flag(rel, node, scope, index) and id(node) not in definition:
+                if rel == OUTPUT:
+                    holders.add(qual)
                 if rel in ARENA_MODULES or (rel == OUTPUT and qual not in OUTPUT_RAW):
                     out.append(f"{where}: a creation flag outside the named creators")
             if isinstance(node, ast.Call) and _names_core(node.func):
@@ -130,6 +134,7 @@ def choke_point_findings(src: Path) -> list[str]:
     expected = {f"{OUTPUT}::{entry}": restorers for entry, restorers in PRIVATE_ENTRIES.items()}
     if core_calls != expected:
         out.append(f"_create_private_core callers {core_calls}, expected {expected}")
+    out.extend(f"{OUTPUT} {name}: listed raw but creates nothing" for name in OUTPUT_RAW - holders)
     return out
 
 
@@ -197,6 +202,10 @@ def _restore_missing_owner_bits(fd):
     pass
 
 
+def _make_dir_core(parent_fd, name, mode):
+    os.mkdir(name, mode, dir_fd=parent_fd)
+
+
 def _create_private_core(dir_fd, name, restore):
     return os.open(name, _FILE_CREATE, 0o600, dir_fd=dir_fd)
 
@@ -209,11 +218,20 @@ def create_private_child_at(dir_fd, name):
     return _create_private_core(dir_fd, name, {child})
 
 
+def create_output_file_at(dir_fd, name, mode):
+    {output_file}
+
+
 class RootedOutputDir:
     def begin(self, fd):
         {begin}
 """
-_CLEAN = {"always": "_restore_always", "child": "_restore_missing_owner_bits", "begin": "pass"}
+_CLEAN = {
+    "always": "_restore_always",
+    "child": "_restore_missing_owner_bits",
+    "begin": "pass",
+    "output_file": "return os.open(name, _FILE_CREATE, mode, dir_fd=dir_fd)",
+}
 _SEEDS = {
     "arena_mkdir": "import os\n\n\ndef create_dir(fd, n):\n    os.mkdir(n, 0o700, dir_fd=fd)\n",
     "arena_mkdtemp_alias": "from tempfile import mkdtemp as fresh\n\n\ndef root():\n    fresh()\n",
@@ -232,6 +250,7 @@ _OUTPUT_SEEDS = {
         "child": "_restore_always",
     },
     "output_core_as_value": {"begin": "return _create_private_core"},
+    "output_stale_raw_name": {"output_file": "return _make_dir_core(dir_fd, name, mode)"},
 }
 
 

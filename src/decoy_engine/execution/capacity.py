@@ -280,9 +280,10 @@ def estimate_job_capacity(
     swallowing it into a verdict (R3): an unexpected failure here is a real
     problem the caller needs to see, not a silent "capacity unknown".
     """
+    from decoy_engine.execution._guards import prepare_declared_execution_sources
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._seed import _normalize_job_seed_int
-    from decoy_engine.profile import profile_source
+    from decoy_engine.profile import DeclarationRequest, profile_source
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import (
         build_namespace_registry,
@@ -293,6 +294,10 @@ def estimate_job_capacity(
 
     base_dir_path = Path(base_dir)
     config = _resolved_config_copy(config_dump, base_dir_path)
+    if config.get("subset") is not None:
+        return _not_applicable(
+            "subset", "this job has a subset: block; the capacity check does not price it."
+        )
 
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
@@ -310,7 +315,10 @@ def estimate_job_capacity(
     # row counts this function prices are the identical numbers the real run
     # would compute for the same config.
     try:
-        profile = profile_source(config, seed=job_seed)
+        # The capability the run builds, so a config the run admits is not refused here; inside
+        # the try because it reads each file's header or footer, as the profile read did.
+        declared = prepare_declared_execution_sources(DeclarationRequest.for_descriptors(config))
+        profile = profile_source(config, seed=job_seed, declared=declared)
     except (pa.lib.ArrowException, OSError, ValueError) as exc:
         if fileaccess.keeps_class(exc):
             raise

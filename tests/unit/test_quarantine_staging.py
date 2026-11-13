@@ -25,6 +25,7 @@ swallowed so it can never mask the original exception.
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -135,7 +136,14 @@ class TestFdopenFailureDoesNotLeakRawFd:
         original_close = os.close
 
         def _tracking_close(fd: int) -> None:
-            closed_fds.append(fd)
+            # Directory descriptors the output policy opens to make the parent are not the
+            # staged file; every other close (an invalid fd included) is counted.
+            try:
+                is_dir = stat.S_ISDIR(os.fstat(fd).st_mode)
+            except OSError:
+                is_dir = False
+            if not is_dir:
+                closed_fds.append(fd)
             original_close(fd)
 
         def _boom_fdopen(fd: int, *args: object, **kwargs: object) -> None:

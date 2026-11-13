@@ -57,6 +57,19 @@ def test_real_tree_has_no_findings() -> None:
 # --- AT-1: a marker without a lane ---------------------------------------------------------
 
 
+def test_load_reads_both_workflow_suffixes(tmp_path: Path) -> None:
+    copied = ("pyproject.toml", "scripts/dev/gates.sh", "ci/unlaned.toml", "ci/required-jobs.toml")
+    for rel in copied:
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((lanes.ROOT / rel).read_bytes())
+    folder = tmp_path / ".github/workflows"
+    folder.mkdir(parents=True)
+    (folder / "a.yml").write_text("on: push\njobs: {}\n")
+    (folder / "b.yaml").write_text("on: push\njobs: {}\n")
+    assert sorted(lanes.load(tmp_path).workflows) == ["a.yml", "b.yaml"]
+
+
 def test_new_marker_without_lane_is_a_finding_until_registered_unlaned() -> None:
     t = seeded()
     ini = t.pyproject["tool"]["pytest"]["ini_options"]
@@ -307,6 +320,26 @@ def test_required_list_rules() -> None:
         t.workflows["codspeed.yml"], {"pull_request_target": None}
     )
     assert has(_r(t), "R3 codspeed.yml:benchmarks")
+
+
+def test_push_only_job_cannot_reuse_a_required_check_name() -> None:
+    t = seeded()
+    t.workflows["gate-selfhosted.yml"]["jobs"]["extra"] = {
+        "name": "docs-build",
+        "runs-on": "ubuntu-latest",
+        "timeout-minutes": 1,
+    }
+    found = _r(t)
+    assert has(found, "R2 check name 'docs-build' is reported by")
+    assert has(found, "docs.yml:build") and has(found, "gate-selfhosted.yml:extra")
+
+
+def test_merge_job_with_an_unsupported_matrix_is_a_finding() -> None:
+    t = seeded()
+    job(t, "native-companion.yml", "companion-wheel-macos")["strategy"]["matrix"]["exclude"] = [
+        {"python-version": "3.10"}
+    ]
+    assert has(_r(t), "R2 native-companion.yml:companion-wheel-macos: matrix exclude")
 
 
 def test_job_in_a_schedule_only_workflow_needs_no_listing() -> None:
