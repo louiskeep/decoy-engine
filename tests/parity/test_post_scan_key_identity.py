@@ -158,6 +158,10 @@ CASES: dict[str, tuple[pa.Array, pa.Array]] = {
         pa.array(["a", "z", "b"], pa.large_string()),
     ),
     "nulls-in-the-child": (pa.array(["1", "2"]), pa.array([1, None, 3])),
+    "float-parent-float-child-with-nan": (
+        pa.array([1.0, 2.0]),
+        pa.array([1.0, float("nan"), 3.0]),
+    ),
 }
 
 
@@ -176,3 +180,22 @@ def test_the_battery_is_not_vacuous(tmp_path: Path) -> None:
     assert _gate_orphans(tmp_path, parent, child) == 3
     parent, child = CASES["date-parent-timestamp-child"]
     assert _gate_orphans(tmp_path, parent, child) == 3
+
+
+def test_a_nan_float_key_counts_as_a_null_key_as_the_join_reads_it(tmp_path: Path) -> None:
+    rel = RelationshipConfig.model_validate(
+        {
+            "parent": {"table": "parent", "columns": ["id"]},
+            "children": [{"table": "child", "columns": ["pid"]}],
+            "orphan_policy": "warn",
+        }
+    )
+    data = {
+        "parent": from_table("parent", pa.table({"id": pa.array([1.0, float("nan")])})),
+        "child": from_table("child", pa.table({"pid": pa.array([1.0, float("nan")])})),
+    }
+    found = check_keys([rel], data, data, scratch=tmp_path / "scratch", memory_limit="64MB")
+    (pk,) = (r for r in found if (r.table, r.kind) == ("parent", "primary"))
+    (fk,) = (r for r in found if (r.table, r.kind) == ("child", "foreign"))
+    assert pk.output.null_key_rows == 1
+    assert (fk.output.orphan_rows, fk.output.null_key_rows) == (0, 1)

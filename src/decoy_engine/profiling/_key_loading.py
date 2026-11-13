@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from typing import Final
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine._arrow_types import is_text
 from decoy_engine.internal.fk_tokens import NULL_FK_KEY, fk_join_key, fk_key_value
@@ -117,5 +118,9 @@ def cast_batch(
                 array = array.cast(kind)
             except pa.ArrowInvalid:
                 return None
+        if pa.types.is_floating(array.type):
+            # The join reads a NaN key as null (`fk_key_value`); DuckDB would count it as a value.
+            nan = pc.is_nan(array)  # type: ignore[attr-defined, unused-ignore]
+            array = pc.if_else(nan, pa.scalar(None, array.type), array)  # type: ignore[attr-defined, unused-ignore]
         arrays.append(array)
     return pa.RecordBatch.from_arrays(arrays, names=batch.schema.names)
