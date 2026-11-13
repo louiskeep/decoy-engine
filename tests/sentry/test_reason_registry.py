@@ -126,6 +126,10 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("generation/_window_admission.py", "_refuse"): _HELPER,
     ("plan/_checks_dp.py", "_raise"): _HELPER,
     ("plan/checks/_lookup_tables.py", "_lookup_refusal"): _HELPER,
+    ("plan/checks/_required_settings.py", "check_required_strategy_settings"): (
+        "forwards the registered plan symbol a frozen requirement descriptor holds; the descriptor "
+        "table is the only place those symbols are written"
+    ),
     ("profile/_csv_reader.py", "source_refusal"): _HELPER,
     ("plan/_checks_top_code.py", "_reject_unusable_bound"): _HELPER,
     # -- re-wraps of an already-registered exception code ------------------------------------

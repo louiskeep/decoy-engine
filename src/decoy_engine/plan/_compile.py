@@ -99,7 +99,11 @@ from decoy_engine.plan._types import (
     Plan,
     PlanCompileResult,
 )
-from decoy_engine.plan.checks import DEFERRED, check_generate_columns
+from decoy_engine.plan.checks import (
+    DEFERRED,
+    check_generate_columns,
+    check_required_strategy_settings,
+)
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
@@ -237,20 +241,13 @@ def compile_plan(
     # run_config_only_checks.
     check_top_code_config(config)
     check_bucket_perturb_config(config)
-    # Row 24 (Sprint 13 / coercion-13 S3, GATE-1 Q4, 2026-07-03): reject
-    # categorical (mask) columns whose categories is not a proper non-empty
-    # list (sibling silent-corruption leak). Config-only; both branches +
+    # Rows 24-26: categorical categories, fpe charset and faker provider (silent-passthrough
+    # leaks), then the required strategy settings. Config-only; both branches and
     # run_config_only_checks.
     check_categorical_categories(config)
-    # Row 25 (Sprint 2 honesty pack, S6, GATE-1 Q4, 2026-07-04): reject fpe
-    # columns whose resolved charset has fewer than 2 distinct characters
-    # (whole-column silent passthrough, discovery 0.1). Config-only; both
-    # branches + run_config_only_checks.
     check_fpe_charset_config(config)
-    # Row 26 (DE-03 sibling, 2026-07-13): reject `strategy: faker` columns with
-    # no provider (the seed-envelope builder drops them, leaking the raw value).
-    # Config-only; both branches + run_config_only_checks.
     check_faker_requires_provider(config)
+    check_required_strategy_settings(config)
     refuse_unlisted_generate_families(config)
     refuse_fixed_width_output_types(config)
     # Row 29 (HC-7, 2026-07-17): clinical free-text advisory. WARN-ONLY --
@@ -500,8 +497,9 @@ def run_config_only_checks(
     run accepts).
 
     Profile-dependent checks (basic_uniqueness / pool_capacity /
-    null_bearing_int / namespace + FK graph / composite wiring) stay
-    compile-time-only.
+    null_bearing_int / FK graph / composite wiring) stay compile-time-only.
+    The namespace check that reads the config alone runs here: a `coherent_with` group with two
+    different explicit namespaces raises `namespace_ambiguity`, as `compile_plan` does.
 
     Raises:
         PlanCompileError: on the first failing check.
@@ -549,13 +547,12 @@ def run_config_only_checks(
     # bound (silent-passthrough leak). Config-only.
     check_top_code_config(config)
     check_bucket_perturb_config(config)
-    # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical (mask) categories shape.
+    # Rows 24-26 (categorical shape, fpe charset, faker provider) and the required strategy
+    # settings: config-only, so safe for decoy validate.
     check_categorical_categories(config)
-    # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe degenerate-charset
-    # whole-column passthrough. Config-only: safe for decoy validate.
     check_fpe_charset_config(config)
-    # Row 26 (DE-03 sibling): faker-without-provider rejection. Config-only.
     check_faker_requires_provider(config)
+    check_required_strategy_settings(config)
     refuse_unlisted_generate_families(config)
     refuse_fixed_width_output_types(config)
     # F06: declared parsing/casting contracts. Reported only when a config declares any, so a
