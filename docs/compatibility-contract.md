@@ -842,6 +842,14 @@ undeclared source column, then missing declared column. Before this, `run` faile
 choke point, which knows the columns the config creates: `profile_source`, `prepare_declared_sources`
 and `check_columns_declared` called without a created-column policy apply the forward rule only.
 
+**Required strategy settings (CONFIG-EXPLICIT E2b-s).** `compile_plan` and `run_config_only_checks` refuse a column
+that omits a setting its strategy needs, with the code the executor guard raises (registered again under the `plan`
+namespace, registry unreleased): a `namespace` for `hash`, `fpe`, `date_shift`, `bucket_perturb`, `categorical`,
+`tokenize`, `shuffle` with `deterministic: true` and `code_set` with `provider_config.mode: gen`, and
+`provider_config.strategy` and `target` for `nested`. Missing means absent, `None`, an empty string or an empty
+collection. The requirements are `StrategyRequirement` descriptors in `decoy_engine.plan.checks`, and
+`StrategyInfo.requirements` carries the same rows. Specific earlier checks keep precedence.
+
 ### 3.5 Disguises
 
 Disguises are dated/versioned specs (`disguises/`, `disguises/loader.py`,
