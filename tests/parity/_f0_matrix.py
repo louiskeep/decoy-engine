@@ -98,8 +98,8 @@ MATRIX: tuple[MatrixRow, ...] = (
         SUPPORTED,
         ("formula",),
         ("formula",),
-        "Inline path: per-row py/faker seeds from the GLOBAL i; a failed row is a silent None "
-        "(pinned: `empty` and `bad` columns come out as Arrow null).",
+        "Inline path: per-row py/faker seeds from the GLOBAL i; a failed row fails the run "
+        "(pinned: the `empty` column comes out as Arrow null).",
     ),
     MatrixRow(
         "formula wall-clock helpers (today, days_from_now, ...)",

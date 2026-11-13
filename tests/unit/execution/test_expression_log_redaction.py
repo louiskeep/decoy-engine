@@ -71,7 +71,7 @@ def test_date_shift_unparseable_values_are_counted_not_logged(caplog) -> None:
     assert "2 value(s) in column 'dob' could not be parsed" in caplog.text
 
 
-def test_formula_errors_are_one_line_per_column_without_cell_values(caplog) -> None:
+def test_formula_errors_fail_the_run_without_cell_values(caplog) -> None:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
@@ -93,15 +93,18 @@ def test_formula_errors_are_one_line_per_column_without_cell_values(caplog) -> N
             }
         ],
     }
-    with caplog.at_level(logging.DEBUG):
-        out = compile_and_generate(cfg)["t"]
-    names = out.column("first_name").to_pylist()
-    assert out.column("bad").to_pylist() == [None] * 5
-    failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
-    assert len(failures) == 1
-    assert "ValueError" in failures[0].getMessage()
-    for name in names:
-        assert repr(name) not in caplog.text
+    from decoy_engine.generation.pool import GenerationError
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(GenerationError) as info:
+        compile_and_generate(cfg)
+    assert info.value.code == "generate_formula_evaluation_failed"
+    assert info.value.__cause__ is None and info.value.__context__ is None
+    # Fixed text only: a faker name in the message would break this equality.
+    assert info.value.message == (
+        "formula column evaluation failed at table 't', column 'bad', row 0: "
+        "an operand value is invalid"
+    )
+    assert "failed to evaluate" not in caplog.text
 
 
 def _formula_cfg(formula: str) -> dict:
@@ -120,21 +123,15 @@ def _formula_cfg(formula: str) -> dict:
 
 
 @pytest.mark.usefixtures("lenient_generate_checks")
-def test_formula_undefined_name_is_reported_once(caplog) -> None:
-    with caplog.at_level(logging.WARNING):
-        compile_and_generate(_formula_cfg("nope + 1"))
-    failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
-    assert len(failures) == 1
-    assert "undefined name(s) ['nope']" in failures[0].getMessage()
+@pytest.mark.parametrize("formula", ["nope + 1", "nofn(1)"])
+def test_formula_undefined_name_fails_the_run_with_the_default_reason(formula, caplog) -> None:
+    from decoy_engine.generation.pool import GenerationError
 
-
-@pytest.mark.usefixtures("lenient_generate_checks")
-def test_formula_undefined_function_is_reported(caplog) -> None:
-    with caplog.at_level(logging.WARNING):
-        compile_and_generate(_formula_cfg("nofn(1)"))
-    failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
-    assert len(failures) == 1
-    assert "undefined name(s) ['nofn']" in failures[0].getMessage()
+    with caplog.at_level(logging.WARNING), pytest.raises(GenerationError) as info:
+        compile_and_generate(_formula_cfg(formula))
+    assert info.value.code == "generate_formula_evaluation_failed"
+    assert info.value.message.endswith("row 0: the expression could not be evaluated")
+    assert not [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
 
 
 def test_run_with_when_gate_passes_the_target_column(monkeypatch) -> None:
@@ -157,7 +154,9 @@ def test_run_with_when_gate_passes_the_target_column(monkeypatch) -> None:
 
 
 @pytest.mark.usefixtures("lenient_generate_checks")
-def test_referenced_formula_undefined_name_is_reported(caplog) -> None:
+def test_referenced_formula_undefined_name_fails_the_run(caplog) -> None:
+    from decoy_engine.generation.pool import GenerationError
+
     cfg = _formula_cfg("first_name + nope")
     cfg["tables"][0]["generate_columns"] = [
         {"name": "first_name", "type": "faker", "faker_type": "first_name"},
@@ -168,11 +167,10 @@ def test_referenced_formula_undefined_name_is_reported(caplog) -> None:
             "formula": "first_name + nope",
         },
     ]
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING), pytest.raises(GenerationError) as info:
         compile_and_generate(cfg)
-    failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
-    assert len(failures) == 1
-    assert "undefined name(s) ['nope']" in failures[0].getMessage()
+    assert info.value.code == "generate_formula_evaluation_failed"
+    assert not [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
 
 
 def test_disguise_loader_logs_locations_not_input_values(tmp_path, caplog) -> None:

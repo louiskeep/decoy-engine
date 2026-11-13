@@ -38,13 +38,13 @@ SEQ = {"name": "id", "type": "sequence", "start": 1, "step": 1}
 @pytest.mark.parametrize(
     ("formula", "want"),
     [
-        ("'ORD-' + id", [f"ORD-{i}" for i in range(1, 7)]),
-        ("id.zfill(5)", [f"{i:05d}" for i in range(1, 7)]),
         ("'ORD-' + str(id)", [f"ORD-{i}" for i in range(1, 7)]),
+        ("f'ORD-{id}'", [f"ORD-{i}" for i in range(1, 7)]),
+        ("id * 2", [i * 2 for i in range(1, 7)]),
     ],
 )
-def test_referenced_formula_reads_the_text_the_sequence_always_gave(
-    formula: str, want: list[str], tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+def test_referenced_formula_reads_the_number_the_sequence_gives(
+    formula: str, want: list[Any], tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cols = [SEQ, {"name": "f", "type": "formula", "formula": formula, "references": ["id"]}]
     for t in _outputs(_cfg(cols), tmp_path, monkeypatch):
@@ -64,6 +64,8 @@ def test_referenced_formula_over_a_nullable_sequence_has_no_float_text(
             assert f is None or ".0" not in f
             if idv is not None:
                 assert f == f"ORD-{i + 1}"
+            else:
+                assert f is None
 
 
 def _two_tables(
@@ -159,7 +161,7 @@ def test_one_generated_child_and_one_masked_child_keep_the_parent_text() -> None
     ("reader", "numeric"),
     [
         ({"type": "statistical", "condition_on": "id"}, False),
-        ({"type": "formula", "formula": "id", "references": ["id"]}, False),
+        ({"type": "formula", "formula": "id", "references": ["id"]}, True),
         ({"type": "derived_aggregate", "op": "sum", "column": "id"}, False),
         ({"type": "grouped_series", "group_by": "id", "order_by": "other"}, False),
         ({"type": "group_key", "group_by": "id"}, False),
@@ -235,7 +237,7 @@ def test_removal_propagates_along_a_chain_of_relationships() -> None:
                 4,
                 [
                     {"name": "c", **seq},
-                    {"name": "f", "type": "formula", "formula": "c", "references": ["c"]},
+                    {"name": "f", "type": "group_key", "group_by": "c"},
                 ],
             ),
         ]

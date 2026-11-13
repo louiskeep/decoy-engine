@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from decoy_engine.generation._numeric_typing import generated_table_to_pandas
+from decoy_engine.generation._numeric_typing import generated_table_to_pandas, reader_types
 
 if TYPE_CHECKING:
     from decoy_engine.generation._bounds import FloorShortfall
@@ -18,6 +18,7 @@ __all__ = [
     "detected_memory_bytes",
     "generated_table_to_pandas",
     "generation_order",
+    "reader_types",
     "resident_floor_shortfall",
 ]
 

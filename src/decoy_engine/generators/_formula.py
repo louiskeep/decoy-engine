@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import random
 from collections import Counter
-from typing import Any
+from typing import Any, NoReturn
 
 import pandas as pd
-from simpleeval import FunctionNotDefined, NameNotDefined
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.generation._dob_anchor import anchored_date_of_birth
@@ -49,17 +48,21 @@ def _formula_hash_keyed(value: str, local_seed: int) -> str:
     return hmac_hex(seed_bytes * 4, value)[:8]
 
 
-def _undefined_name(exc: Exception) -> str | None:
-    """The undefined name a formula referenced, if that is why it failed. A name is
-    config, not data, and is what the formula's author needs to fix. `safe_eval` runs
-    on simpleeval, which raises its own exceptions rather than `NameError`."""
-    if isinstance(exc, NameNotDefined):
-        return str(exc.name)
-    if isinstance(exc, FunctionNotDefined):
-        return str(exc.func_name)
-    if isinstance(exc, NameError) and exc.name:
-        return exc.name
-    return None
+def _failure_reason(exc: BaseException) -> str:
+    # transforms.derived pulls in the plan package, which imports this module back at load.
+    from decoy_engine.transforms.derived import failure_reason
+
+    return failure_reason(exc)
+
+
+def _raise_evaluation_failed(table: str | None, column: str, row: int, reason: str) -> NoReturn:
+    """Raise the coded, value-free failure. Called outside any ``except`` so nothing is chained."""
+    from decoy_engine import reasons
+    from decoy_engine.generation.pool import GenerationError
+    from decoy_engine.transforms.derived import failure_text
+
+    text = failure_text("formula column", column=column, row_index=row, reason=reason, table=table)
+    raise GenerationError(code=reasons.runtime.GENERATE_FORMULA_EVALUATION_FAILED, message=text)
 
 
 # Names `_formula_scope` binds; the plan check reads them as defined. A test pins this to the scope.
@@ -161,6 +164,7 @@ class _FormulaMixin:
         references: list[str],
         out: pd.DataFrame,
         table_name: str = "",
+        number_refs: frozenset[str] = frozenset(),
     ) -> pd.Series:
         """Evaluate a formula column whose expression reads sibling columns.
 
@@ -170,6 +174,11 @@ class _FormulaMixin:
         contains finalized values for each referenced column. Uses the same
         per-row deterministic seeding and safe_eval scope as
         ``_eval_formula_inline``, operating on the in-memory DataFrame.
+
+        Row rule: a missing cell of a column in ``number_refs`` makes the result null and the
+        formula does not run (null in, null out). A missing cell of any other column binds ``""``,
+        and a raise on such a row is a null, since the config asked for nulls there. Any other
+        raise stops evaluation and fails the run with a value-free coded error.
         """
         missing = [r for r in references if r not in out.columns]
         if missing:
@@ -193,7 +202,8 @@ class _FormulaMixin:
         row_rng = random.Random()
         # Exception text can echo cell values, so only type names and counts are logged.
         error_types: Counter[str] = Counter()
-        missing_names: set[str] = set()
+        number_nulls = 0
+        failed: tuple[int, str] | None = None
         for i in range(len(out)):
             local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
@@ -202,28 +212,45 @@ class _FormulaMixin:
             scope = self._formula_scope(local_seed, rng=row_rng)
             scope["i"] = i
             scope["index"] = i
+            number_missing = text_missing = False
             for ref in references:
                 val = out.at[i, ref]
                 if is_null_cell(val):
-                    null_subs[ref] = null_subs.get(ref, 0) + 1
-                    val = ""
+                    if ref in number_refs:
+                        number_missing = True
+                        number_nulls += 1
+                    else:
+                        text_missing = True
+                        null_subs[ref] = null_subs.get(ref, 0) + 1
+                        val = ""
                 scope[ref] = val
+            if number_missing:
+                values.append(None)
+                continue
 
             try:
                 result = safe_eval(formula, BASE_GLOBALS, scope)
                 values.append(result)
             except Exception as exc:
-                error_types[type(exc).__name__] += 1
-                name = _undefined_name(exc)
-                if name is not None:
-                    missing_names.add(name)
-                values.append(None)
+                if not text_missing:
+                    failed = (i, _failure_reason(exc))
+                else:
+                    error_types[type(exc).__name__] += 1
+                    values.append(None)
+            if failed is not None:
+                break
+        if failed is not None:
+            _raise_evaluation_failed(table_name, col_name, *failed)
 
         if error_types:
             self.logger.warning(
                 f"Formula column {col_name!r}: {sum(error_types.values())} row(s) failed to "
                 f"evaluate and were set to None ({dict(error_types)!r})"
-                + (f"; undefined name(s) {sorted(missing_names)!r}" if missing_names else "")
+            )
+        if number_nulls:
+            self.logger.debug(
+                f"Formula column {col_name!r}: {number_nulls} row(s) read a missing number "
+                "and were set to None."
             )
         if null_subs:
             self.logger.warning(
@@ -261,8 +288,8 @@ class _FormulaMixin:
         # RNG + keyed hash, faker for Faker) replace column_seed + i. See
         # fill_referenced_formula_column for the rationale.
         row_rng = random.Random()
-        error_types: Counter[str] = Counter()
-        missing_names: set[str] = set()
+        table = (column_config or {}).get(TABLE_KEY)
+        failed: tuple[int, str] | None = None
         for i in range(num_rows):
             local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
@@ -273,21 +300,13 @@ class _FormulaMixin:
             scope["index"] = i
 
             try:
-                result = safe_eval(formula, BASE_GLOBALS, scope)
-                values.append(result)
-            except Exception as e:
-                error_types[type(e).__name__] += 1
-                name = _undefined_name(e)
-                if name is not None:
-                    missing_names.add(name)
-                values.append(None)
-
-        if error_types:
-            self.logger.warning(
-                f"Formula column {column_name!r}: {sum(error_types.values())} row(s) failed to "
-                f"evaluate and were set to None ({dict(error_types)!r})"
-                + (f"; undefined name(s) {sorted(missing_names)!r}" if missing_names else "")
-            )
+                values.append(safe_eval(formula, BASE_GLOBALS, scope))
+            except Exception as exc:
+                failed = (i, _failure_reason(exc))
+            if failed is not None:
+                break
+        if failed is not None:
+            _raise_evaluation_failed(table, column_name, *failed)
         return pd.Series(values)
 
     def _formula_scope(self, local_seed: int, rng: random.Random | None = None) -> dict[str, Any]:

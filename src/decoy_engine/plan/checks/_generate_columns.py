@@ -28,6 +28,7 @@ from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan.checks._formula_types import check_formula_text_use
 from decoy_engine.plan.checks._relationship_keys import check_generated_parent_keys
 
 __all__ = ["DEFERRED", "check_faker_default_locale", "check_generate_columns"]
@@ -60,15 +61,33 @@ def _code(symbol: Any) -> str:
     return str(symbol)
 
 
-def _located(code: str, path: str, where: str) -> PlanCompileError:
+# The only hint texts a refusal can carry; a caller names one by key and never supplies text.
+_HINTS = {
+    "compare": "compare with a number",
+    "other": "wrap the reference in str()",
+}
+
+
+def _located(code: str, path: str, where: str, detail: str | None = None) -> PlanCompileError:
     summary = reasons.lookup(code)[0].summary
-    return PlanCompileError(code=code, path=path, message=f"{summary} At {where}.")
+    hint = f" Hint: {_HINTS[detail]}." if detail else ""
+    return PlanCompileError(code=code, path=path, message=f"{summary} At {where}.{hint}")
 
 
-def _refusal(code: Any, table: str, column: str, key: str | None = None) -> PlanCompileError:
+def _refusal(
+    code: Any,
+    table: str,
+    column: str,
+    key: str | None = None,
+    *,
+    ref: str | None = None,
+    detail: str | None = None,
+) -> PlanCompileError:
     path = f"tables.{table}.generate_columns.{column}" + (f".{key}" if key else "")
     where = f"table {table!r}, column {column!r}" + (f", option {key!r}" if key else "")
-    return _located(_code(code), path, where)
+    if ref is not None:
+        where += f", reference {ref!r}"
+    return _located(_code(code), path, where, detail)
 
 
 def _run_ref_checks(config: dict[str, Any]) -> None:
@@ -110,13 +129,18 @@ def check_generate_columns(
         t["name"]: t for t in tables if isinstance(t, dict) and isinstance(t.get("name"), str)
     }
     fakers = _FakerView(provider_snapshot)
+    types: Mapping[tuple[str, str], Any] | None = None
     for table_name, table in by_name.items():
         columns = table.get("generate_columns")
         if not isinstance(columns, list):
             continue
         cols = [c for c in columns if isinstance(c, dict) and isinstance(c.get("name"), str)]
+        if types is None and any(_has_references(c) for c in cols):
+            from decoy_engine.generation import reader_types
+
+            types = reader_types(config, provider_snapshot=provider_snapshot)
         for index in range(len(cols)):
-            _check_column(table_name, cols, index, by_name, fakers, default_locale)
+            _check_column(table_name, cols, index, by_name, fakers, default_locale, types or {})
     check_generated_parent_keys(config)
 
 
@@ -127,6 +151,7 @@ def _check_column(
     tables: Mapping[str, dict[str, Any]],
     fakers: _FakerView,
     default_locale: str | None | _Deferred,
+    types: Mapping[tuple[str, str], Any],
 ) -> None:
     col = cols[index]
     kind = col.get("type")
@@ -139,7 +164,7 @@ def _check_column(
     _check_parse_rules(table, col)
     _check_forward_references(table, cols, index)
     if kind == "formula":
-        _check_formula(table, cols, index)
+        _check_formula(table, cols, index, types)
 
 
 # ---- faker ----------------------------------------------------------------------------------
@@ -414,7 +439,9 @@ def _has_references(col: dict[str, Any]) -> bool:
     return col.get("type") == "formula" and bool(col.get("formula")) and bool(col.get("references"))
 
 
-def _check_formula(table: str, cols: list[dict[str, Any]], index: int) -> None:
+def _check_formula(
+    table: str, cols: list[dict[str, Any]], index: int, types: Mapping[tuple[str, str], Any]
+) -> None:
     from decoy_engine.generators._formula import FORMULA_SCOPE_NAMES
 
     col = cols[index]
@@ -458,6 +485,7 @@ def _check_formula(table: str, cols: list[dict[str, Any]], index: int) -> None:
         if target == index or (target > index and _has_references(cols[target])):
             code = reasons.plan.GENERATE_COLUMN_FORWARD_REFERENCE
             raise _refusal(code, table, name, f"references.{position}")
+    check_formula_text_use(table, name, tree, declared, types)
 
 
 # ---- reference weights ------------------------------------------------------------------------
