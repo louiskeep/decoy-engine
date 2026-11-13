@@ -1,0 +1,3 @@
+### Changed (out-of-core key stager on the scratch arena, F25 S2a-1b-ii, 2026-11-12)
+
+The out-of-core masked-key stager now writes its narrow copy through the scratch arena (created 0600 by the arena, read back by component through the arena's reader, no path released), and the internal helper `scratch_access_for` is removed. Callers that still name the staged file by path have its directory adopted by the arena without being owned by it, so the run's own cleanup still removes it. A non-resource Parquet failure while staging now raises the value-free `FileAccessReadError("engine.scratch")`, as other scratch writes do. Output bytes are unchanged.

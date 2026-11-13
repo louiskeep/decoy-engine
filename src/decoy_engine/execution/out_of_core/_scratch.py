@@ -1,5 +1,6 @@
 """Private scratch helpers the out-of-core runner uses beneath its scratch arena, and the subset
-stage's per-run root (`engine_scratch_root`) until that stage moves onto the arena."""
+stage's per-run root and reader (`engine_scratch_root`, `scratch_access_for`) until that stage
+moves onto the arena."""
 
 from __future__ import annotations
 
@@ -66,7 +67,8 @@ def private_dir(path: Path) -> Path:
 def scratch_access_for(directory: Path) -> ScratchAccess:
     """The reader for files the engine wrote under `directory`, a directory it created.
 
-    Transitional, for the key stager until it takes an arena (S2a-1b-ii deletes it); the reader
-    itself is issued only by `ScratchArena.reader`."""
+    Transitional, for the Path arm of `stage_typed_sources` (the subset stage under
+    `engine_scratch_root`), which goes when that stage moves onto the arena; the reader itself is
+    issued only by `ScratchArena.reader`."""
     with ScratchArena._adopt(directory) as adopted:  # non-owning: exit closes only its descriptor
         return adopted.reader()
