@@ -20,9 +20,13 @@ before the column is written.
 
 The inputs are the resolved edges of `config.iter_generate_input_refs`: the child table and
 column of `column`, and the child's foreign key of `via`. The parent key that foreign key
-reaches comes from `config.aggregate_via_target`, the lookup validation judges. The filled
-column is typed by the one whole-table builder (`arrow_table`), so a declared `output_type`
-applies as it does to any other column.
+reaches comes from `config.aggregate_via_target`, the lookup validation judges. A declared
+`output_type` applies through the one whole-table builder (`arrow_table`), as for any other
+column. Without one the type comes from the op and the child column, never from the values, so
+a parent table whose rows are all childless has the same schema as any other: `count` is
+`int64`, `mean` `float64`, and `sum`, `min` and `max` take the type the child column is emitted
+as (numeric typing's rule for a column an aggregate reads: its declared `output_type`, else
+`config.generated_arrow_type`, after `config.reference_root`).
 """
 
 from __future__ import annotations
@@ -37,10 +41,13 @@ import pyarrow as pa
 from decoy_engine.config import (
     aggregate_via_target,
     generate_columns_of,
+    generated_arrow_type,
     is_per_parent_aggregate,
     iter_generate_input_refs,
+    reference_root,
 )
 from decoy_engine.generation._statistical_column import arrow_table
+from decoy_engine.generation.kinds import output_arrow_type
 from decoy_engine.transforms.derived_aggregate import (
     DerivedAggregateConfig,
     apply_derived_aggregate,
@@ -50,6 +57,8 @@ __all__ = ["aggregate_values", "with_aggregates"]
 
 # The ops whose empty group is 0 rather than null: SQL COALESCE on the additive ops only.
 _ADDITIVE = frozenset({"sum", "count"})
+# The ops whose result type does not follow the input column's.
+_OP_TYPES = {"count": pa.int64(), "mean": pa.float64()}
 
 
 def aggregate_values(
@@ -89,7 +98,7 @@ def with_aggregates(config: Mapping[str, Any], tables: dict[str, pa.Table]) -> d
     for table, col in pending:
         name = str(table.get("name"))
         values = _per_parent_values(table, col, out, by_name)
-        out[name] = _with_column(out[name], name, col, values)
+        out[name] = _with_column(out[name], name, col, values, _result_type(col, by_name))
     return out
 
 
@@ -153,9 +162,47 @@ def _cell(value: Any) -> Any:
     return value
 
 
-def _with_column(table: pa.Table, name: str, col: Mapping[str, Any], values: list[Any]) -> pa.Table:
-    """`table` with the column `col` rebuilt from `values`, typed as the whole-table build types it."""
+def _result_type(
+    col: Mapping[str, Any], by_name: Mapping[Any, Mapping[str, Any]]
+) -> pa.DataType | None:
+    """The Arrow type of `col`'s values from its op and the child column it reads.
+
+    None when the child column is not found or its type is not fixed by the config; validation
+    refuses both, so only a caller that skipped it falls back to Arrow's inference.
+    """
+    if col.get("op") in _OP_TYPES:
+        return _OP_TYPES[str(col.get("op"))]
+    root = reference_root(by_name, (str(col.get("from_table")), str(col.get("column"))))
+    source = next(
+        (
+            c
+            for c in generate_columns_of(by_name.get(root[0]) or {})
+            if isinstance(c, Mapping) and c.get("name") == root[1]
+        ),
+        None,
+    )
+    if source is None:
+        return None
+    return output_arrow_type(source) or generated_arrow_type(source)
+
+
+def _with_column(
+    table: pa.Table,
+    name: str,
+    col: Mapping[str, Any],
+    values: list[Any],
+    dtype: pa.DataType | None,
+) -> pa.Table:
+    """`table` with the column `col` rebuilt from `values`.
+
+    A declared `output_type` is applied by the whole-table builder; otherwise `dtype` types it.
+    """
     column = str(col.get("name"))
+    if output_arrow_type(col) is None and dtype is not None:
+        field = pa.field(column, dtype)
+        return table.set_column(
+            table.schema.get_field_index(column), field, pa.array(values, dtype)
+        )
     typed = arrow_table(
         {column: values}, table_name=name, statistical_specs={}, columns=[dict(col)]
     )
