@@ -63,6 +63,8 @@ An older consumer that reads a record whose identity it does not know (same regi
 
 `scripts/dev/registry_renumber.py --check --main origin/main` holds the merge gate: a branch keeps main's registry version and adds no minor fixture and no numeric identity. A branch that still claims a numeric minor from the old per-PR process merges main and runs `--to-unreleased`, which rewrites its new identities and their carriers to the pending form, resets the version anchors and deletes its fixture; a branch that edits an existing identity is reapplied by hand from current main (see `CONTRIBUTING.md`). `tests/sentry/test_reason_minor_fixtures.py` requires one fixture per minor above 1.5 and a fragment naming every pending identity, and `scripts/release/reason_manifest_policy.py` is the one place these rules live.
 
+The thirteen `decoy/resume_*` reasons (`reasons/decoy/_resume.py`, family `DecoyResume`) describe `decoy run --resume`: ten usage refusals (`resume_run_dir_invalid`, `resume_layout_unsupported`, `resume_route_unsupported`, `resume_vault_unsupported`, `resume_platform_unsupported`, `resume_no_checkpoint`, `resume_store_invalid`, `resume_superseded`, `resume_fingerprint_changed`, `resume_source_changed`), `resume_in_progress` (a failure whose retry class is `retry_operation`), `resume_checkpoint_invalid` (a decision: a finished table failed verification and runs again) and `resume_store_not_removed` (a warning). A refusal names a field, never a value.
+
 ## Retry classes
 
 Advice about the required action. It never authorizes a replay and never starts a retry loop.
