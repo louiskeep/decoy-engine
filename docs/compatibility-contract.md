@@ -413,6 +413,16 @@ a codepoint newer than the running Python's Unicode version can land on a differ
 day on the companion and Python paths. The companion result is canonical; ASCII
 formats are identical (documented in `docs/strategies.md`, bucket_perturb).
 
+`derived` and `formula` share one missing-cell rule with the masking kernels from 2026-11-13
+(slice DUP-DEFECTS E2): `None`, any float NaN, `Decimal('NaN')`, `pd.NaT`,
+`numpy.datetime64('NaT')` and `pd.NA` are missing; the strings `"NaT"` and `""` are values.
+Before, `derived` and `formula` counted only `None` and float NaN. This is a one-time pre-GA
+output break, with no shim and no flag, for rows where a referenced cell is `Decimal('NaN')`, a
+numpy NaN scalar, `NaT` or `pd.NA`: `explicit_null` now writes a null where the expression ran,
+`sentinel` and `default` now substitute for those cells (an expression that then fails the row
+reports today's value-free text), and `formula` substitutes `""` and counts it. Rows without such
+a reference are unchanged. No `SEED_PROTOCOL_VERSION` change.
+
 ### 3.4 The public API + CLI contract
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and
