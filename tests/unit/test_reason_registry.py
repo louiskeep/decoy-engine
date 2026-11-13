@@ -548,6 +548,21 @@ def test_scanml_m5_route_refusal_is_registered_as_pending() -> None:
     assert reasons.route.POST_SCAN_MODELS_UNSUPPORTED == "post_scan_models_unsupported"
 
 
+def test_scanml_m4_post_scan_block_is_registered_as_pending() -> None:
+    """SCAN-ML M4: one post-scan block owned by PostScanBlockedError, pending its release stamp."""
+    from decoy_engine.reasons._types import UNRELEASED
+
+    spec = reasons.find("post_scan", "ner_blocked")
+    assert spec is not None
+    assert (spec.owner, spec.since, spec.kind.value) == (
+        "PostScanBlockedError",
+        UNRELEASED,
+        "failure",
+    )
+    assert not re.search(r"[{}%]", spec.summary)
+    assert reasons.post_scan.NER_BLOCKED == "ner_blocked"
+
+
 def _blocked_report(**parts: object) -> dict[str, object]:
     return {
         "schema_version": "post-scan-integrity/v2",
@@ -599,12 +614,30 @@ def test_a_post_scan_blocked_error_is_classified_by_its_first_blocking_code(
         assert f"{record.namespace}.{record.code}" == expected
 
 
-def test_a_post_scan_blocked_error_whose_only_code_is_unregistered_is_unregistered() -> None:
+def test_a_post_scan_blocked_error_blocked_only_by_an_ner_row_is_ner_blocked() -> None:
+    import inspect
+
     from decoy_engine.reason_adapter import reason_from_exception
     from decoy_engine.verification.postmask import PostScanBlockedError, post_scan_verdict
 
-    report = _blocked_report()
-    error = PostScanBlockedError(report, post_scan_verdict(report, ner_blocked=True))
+    assert "ner_findings" in inspect.signature(post_scan_verdict).parameters
+    row = {"table": "t", "column": "c", "detector_id": "person_name", "severity": "fail"}
+    report = _blocked_report(residual_pii=[{**row, "source": "ner"}])
+    error = PostScanBlockedError(report, post_scan_verdict(report, ner_findings="fail"))
+    assert error.code == "ner_blocked"
+    assert str(error) == reasons.get("post_scan", "ner_blocked").summary
+    record = reason_from_exception(error)
+    assert (record.namespace, record.code) == ("post_scan", "ner_blocked")
+
+
+def test_a_post_scan_blocked_error_whose_only_code_is_not_in_the_registry_is_unregistered() -> None:
+    from decoy_engine.reason_adapter import reason_from_exception
+    from decoy_engine.reasons import ReasonRef
+    from decoy_engine.verification.postmask import PostScanBlockedError, PostScanVerdict
+
+    unknown = ReasonRef("post_scan", "not_a_registered_code")
+    assert reasons.find("post_scan", unknown.code) is None
+    error = PostScanBlockedError(_blocked_report(), PostScanVerdict(True, (unknown,), ()))
     assert error.code is None
     record = reason_from_exception(error)
     assert (record.namespace, record.code) == ("decoy", "unregistered_reason")

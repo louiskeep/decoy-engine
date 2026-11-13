@@ -189,7 +189,15 @@ def classify_fields(
     return classify_frame(pack, df)
 
 
-def classify_frame(pack: dict[str, Any], frame: pandas.DataFrame) -> dict[str, dict[str, Any]]:
+# The pack was trained on 40-row and 60-row columns and its features include absolute counts, so
+# a pipeline's run path classifies a seeded subsample of this many non-null values per column.
+_CLASSIFIER_ROWS = 60
+_CLASSIFIER_SEED = 0
+
+
+def classify_frame(
+    pack: dict[str, Any], frame: pandas.DataFrame, *, subsample: bool = False
+) -> dict[str, dict[str, Any]]:
     """Classify each column of *frame* with an already loaded *pack*.
 
     Inference only: the pack comes from the caller (`ModelPackLoader.load()`, the strict load),
@@ -197,6 +205,10 @@ def classify_frame(pack: dict[str, Any], frame: pandas.DataFrame) -> dict[str, d
     hashed and unpickled once per process rather than once per call. The result has the shape
     of one `classify_fields` entry per column and the same privacy rule (metadata and
     statistics only, never a cell value).
+
+    `subsample=True` classifies each column's non-null values, cut to a deterministic
+    `_CLASSIFIER_ROWS` subsample (seeded, input order kept) when there are more, never a whole
+    output. `classify_fields` keeps the default, so its platform caller is unchanged.
     """
     import numpy as np
 
@@ -214,6 +226,12 @@ def classify_frame(pack: dict[str, Any], frame: pandas.DataFrame) -> dict[str, d
 
     for col_name in frame.columns:
         series = frame[col_name]
+        if subsample:
+            series = series.dropna().reset_index(drop=True)
+            if len(series) > _CLASSIFIER_ROWS:
+                rng = np.random.default_rng(_CLASSIFIER_SEED)
+                picks = np.sort(rng.choice(len(series), size=_CLASSIFIER_ROWS, replace=False))
+                series = series.iloc[picks].reset_index(drop=True)
         feats = build_column_features(series, str(col_name))
         flat = flatten_features(feats.to_dict())
 

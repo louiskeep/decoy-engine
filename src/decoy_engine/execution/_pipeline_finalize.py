@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile import Profile
+    from decoy_engine.profiling.model_pack import DetectorSet
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
@@ -472,20 +473,27 @@ def compute_post_scan_integrity(
     *,
     config: Mapping[str, Any],
     sources: Mapping[str, pa.Table],
+    detectors: DetectorSet | None = None,
 ) -> None:
     """`post_scan_integrity: true` (E3b): run the Post-scan integrity integrity checks over every
     mask table and stamp the report under `quality_metrics["post_scan_integrity"]`.
 
     The config key was accepted by the schema for a long time but nothing in the
     spine honoured it, so a user who asked for the in-run check silently got
-    none. Report-only: findings never fail the run (the CLI's `--post-validate-
-    enforce` and `report integrity` are the enforcing surfaces). Runs only on the
-    full-frame finalize branch, which routing guarantees for an opted-in job
-    (see `_sequential_eligible`), so the whole output is resident here.
+    none. Report-only, with one opt-in exception: under `post_scan.ner_findings: fail`
+    an NER finding at `fail` or `error` raises `PostScanBlockedError` (carrying the
+    stamped report) before the run returns, so no caller receives the outputs. Other
+    findings alone never fail the run (the CLI's `--post-validate-enforce` and `report
+    integrity` are the enforcing surfaces); beside an NER block their code leads. `detectors` is the set `run_pipeline`
+    loaded strictly at run start. Runs only on the full-frame finalize branch, which
+    routing guarantees for an opted-in job (see `_sequential_eligible`), so the whole
+    output is resident here.
     """
     if not post_scan_integrity_requested(config):
         return
     from decoy_engine.verification import run_post_mask
+    from decoy_engine.verification.postmask._blocked import raise_if_ner_blocked
+    from decoy_engine.verification.postmask._model_findings import ner_findings_mode
 
     table_kinds = execution_result.table_kinds or {}
     mask_tables = [
@@ -499,5 +507,7 @@ def compute_post_scan_integrity(
         source_frames={name: sources[name].to_pandas() for name in mask_tables},
         output_frames={name: execution_result.outputs[name].to_pandas() for name in mask_tables},
         config=dict(config),
+        detectors=detectors,
     )
     execution_result.quality_metrics["post_scan_integrity"] = report
+    raise_if_ner_blocked(report, ner_findings=ner_findings_mode(config))

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from decoy_engine.detection.types import DetectorRun, DetectorSource, ModelRef
+
 # Bump when the report dict shape changes in a non-backward-compatible
 # way. The platform persists this on the JobPostScanIntegrityReport row so reads of
 # old rows can render correctly. Mirrors the Quality report's versioning.
@@ -47,7 +49,7 @@ class ResidualPIIFinding:
     table: str
     column: str
     detector_id: str
-    match_rate: float
+    match_rate: float | None  # None only for a classifier finding, which has a band instead
     severity: Severity
     configured_strategy: str | None = None  # what the plan said to do (None = no policy)
     sample_match_count: int = 0  # how many rows still match
@@ -58,6 +60,14 @@ class ResidualPIIFinding:
     # the source was unavailable or the column was not comparable.
     source_identity_rate: float | None = None
     source_compared: bool = False  # True when the source comparison ran
+    # Model detectors (additive): which detector source found it, the model that ran, the
+    # classifier band, whether a `post_scan.dismissed` entry lowered it, and whether
+    # `ner_findings: fail` raised it from `warning`.
+    source: DetectorSource = "regex"
+    model: ModelRef | None = None
+    band: str | None = None
+    dismissed: bool = False
+    promoted: bool = False
 
 
 @dataclass(frozen=True)
@@ -145,3 +155,9 @@ class PostMaskReport:
     # at the moment it tallies counters; ISO-8601 string. Keep
     # optional so legacy payloads deserialize cleanly.
     generated_at: str | None = None
+    # The detector sources that ran, and every output table the residual-PII check read (clean
+    # tables included, so a reader never infers coverage from finding rows). `config_sha256` is
+    # the hash of the pipeline file's bytes, set by a caller that read one.
+    detectors: tuple[DetectorRun, ...] = ()
+    tables_checked: tuple[str, ...] = ()
+    config_sha256: str | None = None

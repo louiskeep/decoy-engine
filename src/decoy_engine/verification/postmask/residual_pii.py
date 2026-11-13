@@ -152,19 +152,7 @@ def check_residual_pii(
         source comparison when evidence of a leak exists.
     """
     findings: list[ResidualPIIFinding] = []
-
-    # Build a lookup of configured masking strategy per (table, column).
-    # Per-table strategy = column-level "strategy" key in tables[].columns[].
-    strategy_by_col: dict[tuple[str, str], str] = {}
-    for table_cfg in config.get("tables") or []:
-        table_name = table_cfg.get("name")
-        if not isinstance(table_name, str):
-            continue
-        for col_cfg in table_cfg.get("columns") or []:
-            col_name = col_cfg.get("name")
-            strategy = col_cfg.get("strategy")
-            if isinstance(col_name, str) and isinstance(strategy, str):
-                strategy_by_col[(table_name, col_name)] = strategy
+    strategy_by_col = {key: entry["strategy"] for key, entry in configured_columns(config).items()}
 
     for table_name, df in output_frames.items():
         for col_name in df.columns:
@@ -212,6 +200,29 @@ def check_residual_pii(
             )
 
     return findings
+
+
+def configured_columns(config: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    """The column entry per (table, column) that names a strategy; the model passes read it too.
+
+    Per-table strategy = column-level "strategy" key in tables[].columns[].
+    """
+    entries: dict[tuple[str, str], dict[str, Any]] = {}
+    for table_cfg in config.get("tables") or []:
+        table_name = table_cfg.get("name")
+        if not isinstance(table_name, str):
+            continue
+        for col_cfg in table_cfg.get("columns") or []:
+            col_name = col_cfg.get("name")
+            if isinstance(col_name, str) and isinstance(col_cfg.get("strategy"), str):
+                entries[(table_name, col_name)] = col_cfg
+    return entries
+
+
+def is_source_identity_finding(finding: ResidualPIIFinding) -> bool:
+    """A regex finding raised from positional output==source evidence; a dismissal never lowers it."""
+    rate = finding.source_identity_rate
+    return finding.source == "regex" and rate is not None and rate >= _LEAK_WARN_RATE
 
 
 def _source_identity(

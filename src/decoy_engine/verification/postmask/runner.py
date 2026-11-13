@@ -20,11 +20,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from decoy_engine.detection.types import DetectorRun
 from decoy_engine.profiling import passes_through
+from decoy_engine.verification.postmask import _model_findings
 from decoy_engine.verification.postmask._blocked import severity_counts
 from decoy_engine.verification.postmask._keys import KeyResult
 from decoy_engine.verification.postmask.fk_preservation import fk_findings
@@ -38,12 +40,16 @@ from decoy_engine.verification.postmask.types import (
     ResidualPIIFinding,
 )
 
+if TYPE_CHECKING:
+    from decoy_engine.profiling.model_pack import DetectorSet
+
 
 def run_post_mask(
     source_frames: dict[str, pd.DataFrame],
     output_frames: dict[str, pd.DataFrame],
     *,
     config: dict[str, Any],
+    detectors: DetectorSet | None = None,
     keys: Sequence[KeyResult] | None = None,
 ) -> dict[str, Any]:
     """Run all three post-mask check categories + assemble the report.
@@ -56,7 +62,14 @@ def run_post_mask(
             for all three checks.
         config: the validated pipeline config dict (from
             ``PipelineConfig.model_validate(yaml).model_dump()``).
-            Used to look up configured masks + relationships.
+            Used to look up configured masks + relationships, and the
+            ``post_scan`` dismissals and ``ner_findings`` mode.
+        detectors: the strictly loaded detector set (``load_detectors``).
+            ``None`` (the platform hook) runs the regex detectors only,
+            as before. With a set, each model it holds runs over every
+            output table after the regex pass, each in its own
+            try/except, and the ``post_scan.detectors`` log lines are
+            written.
         keys: the declared keys' facts (`check_keys`) when the caller has counted them; the
             FK findings derive from these. None counts them here from the two frame dicts.
 
@@ -112,6 +125,17 @@ def run_post_mask(
                 message=f"residual_pii check raised {type(exc).__name__} (see job log for details)",
             )
         ]
+
+    # Model passes sit outside the wrapper above: it would replace every regex finding with one
+    # error row, and hide that the error came from a model.
+    if detectors is not None:
+        residual_pii = [
+            *residual_pii,
+            *_model_findings.model_findings(output_frames, config, detectors),
+        ]
+    residual_pii, stale = _model_findings.review(residual_pii, config)
+    if detectors is not None:
+        _model_findings.log_post_scan(output_frames, config, detectors, residual_pii, stale)
 
     try:
         fk_preservation = fk_findings(config, source_frames, output_frames, keys)
@@ -170,6 +194,8 @@ def run_post_mask(
         error_count=error_count,
         pass_failed_with=pass_failed_with,
         generated_at=datetime.now(timezone.utc).isoformat(),
+        detectors=detectors.runs() if detectors is not None else (DetectorRun("regex", None),),
+        tables_checked=tuple(str(name) for name in output_frames),
     )
     return _report_to_dict(report)
 
@@ -192,4 +218,7 @@ def _report_to_dict(report: PostMaskReport) -> dict[str, Any]:
         "fail_count": report.fail_count,
         "error_count": report.error_count,
         "pass_failed_with": report.pass_failed_with,
+        "detectors": [asdict(run) for run in report.detectors],
+        "tables_checked": list(report.tables_checked),
+        "config_sha256": report.config_sha256,
     }
