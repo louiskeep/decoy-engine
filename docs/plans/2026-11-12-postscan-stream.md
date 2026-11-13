@@ -817,6 +817,10 @@ New files (CODEMAP "Where things go"):
 | `_post_scan.py` | `src/decoy_engine/execution/pipeline/` | "Pipeline spine and routes" (`CODEMAP.md:238`) | `_stream.py`, `_route_summary.py` |
 | `_relationship_keys.py` | `src/decoy_engine/plan/checks/` | "Plan compile and checks" (`CODEMAP.md:237`) | `_generate_columns.py` |
 | `_part2.py` | `src/decoy_engine/reasons/post_scan/` | "Reason codes" (`CODEMAP.md:250`) | `_part1.py` |
+| `fk_tokens.py` (PS-8 K1 amendment) | `src/decoy_engine/internal/` | Directory Map `internal/` row | `memory_limit.py`; `execution/_fk_keys.py` re-exports it, so the join and the gate share one token identity |
+| `_key_loading.py` (PS-8 K1 amendment) | `src/decoy_engine/profiling/` | Directory Map `profiling/` row | `_scan_integrity.py`, which loads keys through it |
+| `test_post_scan_key_identity.py` (PS-8) | `tests/parity/` | "Parity tests" | other join-versus-gate parity batteries |
+| `_key_refusal.py` (PS-8 test helper) | `tests/unit/` | "Unit tests" | `_declared_schema.py` |
 | tests for `verification/postmask/` | `tests/unit/detection_verification/postscan/` (parent holds 26 entries) | "Unit tests" (`CODEMAP.md:263`) | `tests/unit/detection_verification/test_bf4_fk_preservation.py` |
 | tests for `execution/pipeline/_post_scan.py` | `tests/unit/execution/post_scan/` (parent holds 233 entries) | "Unit tests" (`CODEMAP.md:263`) | `tests/unit/execution/derived_visibility/` |
 | `test_key_type_families.py` (PS-2b0) | `tests/unit/profiling/` | "Unit tests" (`CODEMAP.md:263`), mirroring `profiling/` | `test_scan_integrity.py` |
@@ -837,6 +841,7 @@ Changed modules (layer, size now, after; no ceiling or pin rises; only the DS-9 
 | `reasons/_identity.py`, `reasons/__init__.py`; `phase.py` | reasons; top level | 58, existing; 578 | about 68 (`reason_ref_payload`), one export; about 576 (`_reason_wire` calls the helper). Both stay under the 600 goal, so neither needs a census entry |
 | `verification/postmask/__init__.py`, `residual_pii.py`, `policy_validation.py`, `fk_preservation.py`, `runner.py`, `types.py` | verification | existing, 398, 221, 337, 190, 148 | export swap, about 360, 200, 90, 210, 160 |
 | `config/_post_scan.py`, `config/__init__.py`; `plan/checks/_generate_columns.py` | config; plan | 135, existing; 515 | about 175, export swap; 517 |
+| `quarantine.py`, `execution/_sequential.py` (PS-8 Codex r1) | top level; execution | 638, 677 | about 650, 678: the quarantine write goes through `publish_after_gate`, held until the verdict passes; both stay under their census ceilings (658, 680) |
 | `execution/_pipeline_full_frame.py`, `_pipeline_finalize.py`, `_pipeline_route_dispatch.py`, `_publication_observer.py`, `_transactional_sink.py` | execution | 317, 503, 151, 158, 438 | about 330, 470, 170, 165, 460 |
 | `execution/_chunked_output_sink.py` | execution | 598 | at most 600 (call swap only) |
 | `execution/_sequential.py` | execution | 660 | at most 660 (ceiling 680; the tee lives in `_post_scan.py`) |
