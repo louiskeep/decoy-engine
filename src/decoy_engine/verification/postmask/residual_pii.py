@@ -433,18 +433,18 @@ def residual_pii_findings(
             configured = strategy_by_col.get((table_name, col_name))
             severity, message = _classify(top.detector_id, configured)
             # Identity needs comparable rows; none means no source column or a row-count mismatch.
-            compared = (
-                fact.error is None
-                and fact.comparable_rows > 0
-                and configured not in _NO_OP_BY_DESIGN
-            )
+            compared = fact.comparable_rows > 0 and configured not in _NO_OP_BY_DESIGN
             rate = fact.identical_rows / fact.comparable_rows if compared else None
             if rate is not None:
                 override = _escalate(
                     configured=configured,
                     identity_rate=rate,
                     identical_count=fact.identical_rows,
-                    src_distinct=fact.source_distinct,
+                    # An uncounted distinct (failed) is unknown, not constant: keep it above the
+                    # constant-source cutoff so the valid identity rate still decides.
+                    src_distinct=max(fact.source_distinct, 2)
+                    if fact.distinct_error
+                    else fact.source_distinct,
                     detector_confidence=top.confidence,
                     detector_id=top.detector_id,
                 )
@@ -452,6 +452,14 @@ def residual_pii_findings(
                     _SEVERITY_ORDER[override[0]] > _SEVERITY_ORDER[severity]
                 ):
                     severity, message = override
+            elif fact.identity_error and configured not in _NO_OP_BY_DESIGN:
+                # The source comparison could not run, so the escalation this column may need is
+                # unknown. Say so at error severity rather than report a clean "not compared".
+                severity = "error"
+                message = (
+                    f"column matched {top.detector_id!r} but the source comparison raised "
+                    f"{fact.identity_error} (see job log); a leak cannot be ruled out."
+                )
             findings.append(
                 ResidualPIIFinding(
                     table=table_name,

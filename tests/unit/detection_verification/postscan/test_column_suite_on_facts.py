@@ -387,3 +387,38 @@ def test_run_post_mask_tables_refuses_a_memory_limit_above_the_cap(tmp_path: Pat
         with pytest.raises(ValueError):
             run_post_mask_tables(t, t, config=_cfg(), keys=(), scratch=tmp_path, memory_limit=limit)
     run_post_mask_tables(t, t, config=_cfg(), keys=(), scratch=tmp_path, memory_limit="512MB")
+
+
+def test_a_failed_source_comparison_is_an_error_finding_not_a_quiet_downgrade(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError(f"compare failed on {CANARY}")
+
+    monkeypatch.setattr(column_facts_module, "_add_identity", boom)
+    frame = pd.DataFrame({"email": EMAILS})
+    report = run_post_mask({"t": frame}, {"t": frame}, config=_cfg(("email", "faker")))
+    (finding,) = report["residual_pii"]
+    assert finding["severity"] == "error" and finding["source_compared"] is False
+    assert "RuntimeError" in finding["message"] and CANARY not in repr(report)
+
+
+def test_a_failed_distinct_count_keeps_the_valid_identity_rate(monkeypatch: pytest.MonkeyPatch):
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("distinct failed")
+
+    monkeypatch.setattr(column_facts_module, "column_distinct", boom)
+    frame = pd.DataFrame({"email": EMAILS})
+    report = run_post_mask({"t": frame}, {"t": frame}, config=_cfg(("email", "faker")))
+    (finding,) = report["residual_pii"]
+    assert finding["severity"] == "fail" and finding["source_compared"] is True
+    assert finding["source_identity_rate"] == 1.0
+
+
+def test_a_column_converted_natively_on_one_side_only_still_compares_equal_values():
+    zips = [10000 + i for i in range(60)]
+    src = pd.DataFrame({"zip": zips})
+    out = pd.DataFrame({"zip": pd.Series([*zips[:-1], "x"], dtype=object)})
+    report = _parity({"t": src}, {"t": out}, _cfg(("zip", "faker")))
+    (finding,) = report["residual_pii"]
+    assert finding["severity"] == "fail" and finding["source_identity_rate"] > 0.9

@@ -48,9 +48,15 @@ class ColumnFacts:
     source_distinct: int
     output_distinct: int
     detectors: tuple[DetectorRate, ...]
-    # Class name of an uncoded failure comparing or counting this one column. The identity and
-    # distinct counts are then unavailable (zeros); the detector rates are still exact.
-    error: str | None = None
+    # Class names of uncoded failures on this one column: comparing source with output (identity
+    # and bytes_identical are then unavailable), and counting distinct values (that count is then
+    # 0). The detector rates are exact either way.
+    identity_error: str | None = None
+    distinct_error: str | None = None
+
+    @property
+    def error(self) -> str | None:
+        return self.identity_error or self.distinct_error
 
     @property
     def source_constant(self) -> bool:
@@ -204,12 +210,12 @@ def column_facts(
     for c in wanted:
         t = tallies[c]
         has_source = source is not None and c in source.schema.names
-        failed = t.error
+        distinct_failed = None
         distinct = [0, 0]
         for n, (table, present) in enumerate(((source, has_source), (output, True))):
             if present and table is not None:
                 distinct[n], err = _distinct_or_error(table, c, scratch, memory_limit)
-                failed = failed or err
+                distinct_failed = distinct_failed or err
         facts[c] = ColumnFacts(
             table=output.name,
             column=c,
@@ -221,6 +227,7 @@ def column_facts(
             source_distinct=distinct[0],
             output_distinct=distinct[1],
             detectors=_fired(t),
-            error=failed,
+            identity_error=t.error,
+            distinct_error=distinct_failed,
         )
     return facts

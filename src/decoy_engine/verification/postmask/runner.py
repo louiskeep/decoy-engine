@@ -131,23 +131,38 @@ def _megabytes(limit: str) -> int:
     return int(match.group(1))
 
 
-def _arrow_column(series: pd.Series) -> pa.Array:
-    """One column as Arrow. A column Arrow will not take (mixed int and str, Decimal with float, a
-    set) is carried as the text of each value, which is all the detectors read and which keeps
-    equal values equal. Only that column changes; its table and the others convert as before."""
+def _native(series: pd.Series) -> pa.Array | None:
     try:
         return pa.array(series, from_pandas=True)
     except Exception:
-        return pa.array([None if _null(v) else str(v) for v in series.tolist()], type=pa.string())
+        return None
+
+
+def _text(series: pd.Series) -> pa.Array:
+    return pa.array([None if _null(v) else str(v) for v in series.tolist()], type=pa.string())
 
 
 def _null(value: object) -> bool:
     return value is None or (isinstance(value, float) and value != value)
 
 
-def _frame_table(name: str, frame: pd.DataFrame) -> TableBatches:
-    columns = [(str(c), _arrow_column(frame.iloc[:, n])) for n, c in enumerate(frame.columns)]
-    return from_table(name, pa.Table.from_arrays([a for _, a in columns], [c for c, _ in columns]))
+def _frame_table(name: str, frame: pd.DataFrame, other: pd.DataFrame | None) -> TableBatches:
+    """`frame` as Arrow, column by column. A column Arrow will not take (mixed int and str,
+    Decimal with float, a set) is carried as the text of each value, which is all the detectors
+    read. The choice is made for the column on both sides at once: if either side needs the text,
+    both get it, so a source int and an output "1" still compare equal as they do in pandas."""
+    names = [str(c) for c in frame.columns]
+    other_at = (
+        {} if other is None else {str(c): n for n, c in reversed(list(enumerate(other.columns)))}
+    )
+    arrays = []
+    for n, series in enumerate(frame.iloc[:, i] for i in range(len(names))):
+        paired = names[n] in other_at and other is not None
+        native = _native(series)
+        if paired and other is not None:
+            native = native if _native(other.iloc[:, other_at[names[n]]]) is not None else None
+        arrays.append(native if native is not None else _text(series))
+    return from_table(name, pa.Table.from_arrays(arrays, names))
 
 
 def _frame_tables(
@@ -160,9 +175,10 @@ def _frame_tables(
     failed: dict[str, str] = {}
     for name, out_frame in output_frames.items():
         try:
-            out_table = _frame_table(name, out_frame)
-            if name in source_frames:
-                src[name] = _frame_table(name, source_frames[name])
+            src_frame = source_frames.get(name)
+            out_table = _frame_table(name, out_frame, src_frame)
+            if src_frame is not None:
+                src[name] = _frame_table(name, src_frame, out_frame)
             out[name] = out_table
         except Exception as exc:
             if passes_through(exc):
