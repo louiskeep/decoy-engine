@@ -200,6 +200,10 @@ class _Run:
             if inherited == "key_type_mismatch":
                 # A generated parent has no input side to compare, so this blocks like no_source.
                 return "inherited_type_mismatch", KeyCounts(), None
+            if inherited is not None and out_status == "key_type_mismatch":
+                # The inputs compare but the run changed a key's type: nothing to measure, as on
+                # an ordinary edge, and the output mismatch blocks.
+                return "not_run", None, None
             if inherited is not None:
                 return "measured", inherited, None
             return "no_source", KeyCounts(), None

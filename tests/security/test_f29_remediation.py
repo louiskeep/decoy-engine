@@ -246,11 +246,14 @@ def _decide(**overrides: Any) -> tuple[str, str]:
     ("flag", "expected"),
     [
         ({"post_validation": True}, "post_validation_requested"),
-        ({"post_scan_integrity": True}, "post_scan_integrity_requested"),
+        (
+            {"post_scan_resident": reasons.route.POST_SCAN_INTEGRITY_REQUESTED},
+            "post_scan_integrity_requested",
+        ),
     ],
 )
 def test_requested_scan_routes_resolve_in_the_route_namespace(
-    flag: dict[str, bool], expected: str
+    flag: dict[str, Any], expected: str
 ) -> None:
     route, reason = _decide(**flag)
     assert route == "full_frame"

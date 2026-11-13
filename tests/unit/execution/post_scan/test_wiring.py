@@ -230,6 +230,7 @@ def test_at20_lazy_inputs_with_no_sink_run_the_blocking_gate(tmp_path: Path) -> 
     assert result.quality_metrics["post_scan_integrity"]["verdict"]["blocking"] is False
 
 
+@pytest.mark.serial
 def test_at20_a_gate_re_reads_lazy_inputs_in_batches_and_reports(tmp_path: Path) -> None:
     cfg, data, lazy = subset_sup.job(tmp_path)
     kinds = {name: "mask" for name in lazy}

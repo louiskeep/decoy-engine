@@ -213,6 +213,17 @@ def test_an_inherited_type_mismatch_still_blocks_and_is_labelled_as_one() -> Non
     assert child["baseline"] == "inherited_type_mismatch"
 
 
+def test_a_run_that_changes_a_key_type_beside_a_generated_parent_is_a_type_mismatch() -> None:
+    gate = _gate([GENERATED])
+    outputs = {
+        "people": pa.table({"id": [1.0, 2.0]}),
+        "accounts": pa.table({"person_id": pa.array([1, 2], pa.int64())}),
+    }
+    sources = {"accounts": pa.table({"person_id": [1.0, 2.0]})}
+    exc = _blocked(lambda: gate.run_resident(outputs, sources, GEN_KINDS))
+    assert exc.reason == "post_scan.key_type_mismatch"  # not check_error
+
+
 # ----- M1: integrity: true withholds a run on a failing column finding --------------------------
 
 
