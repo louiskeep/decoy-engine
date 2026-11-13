@@ -45,7 +45,7 @@ from pydantic_core import PydanticCustomError, ValidationError
 from decoy_engine import reasons
 from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._generate_options import problem_details
-from decoy_engine.config._generate_relational import per_parent_problems
+from decoy_engine.config._generate_relational import per_parent_bounds, per_parent_problems
 from decoy_engine.config._generate_unique import cross_table_unique_problems
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
@@ -340,8 +340,7 @@ class PipelineConfig(BaseModel):
         parent's declared `row_count`; the run re-checks both bounds on the real key count.
         """
         if not any(
-            (c.model_extra or {}).get("min_per_parent")
-            or (c.model_extra or {}).get("max_per_parent")
+            any(per_parent_bounds(c.model_extra or {}))
             for t in self.tables
             for c in t.generate_columns
         ):
