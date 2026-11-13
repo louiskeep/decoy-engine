@@ -11,6 +11,7 @@ route and is checked row for row against the full-frame oracle. All values are m
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,6 +24,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import _runner
+from decoy_engine.fileaccess import ScratchArena
 
 P_KEYS = [f"p{i}" for i in range(1, 7)]
 Q_KEYS = [f"q{i}" for i in range(1, 4)]
@@ -160,10 +162,19 @@ def test_every_edge_of_a_shared_parent_relation_joins_after_a_multi_parent_merge
 def test_no_relation_file_outlives_the_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fail: bool
 ) -> None:
-    # A caller-named root survives the run, so what the runner leaves inside it is visible.
-    work = tmp_path / "work"
-    real_root = _runner.scratch_root
-    monkeypatch.setattr(_runner, "scratch_root", lambda _temp_dir, stack: real_root(work, stack))
+    # The run's arena is held past the run (the test reclaims it; collection does if an assert
+    # fails first), so what the runner leaves inside its root is visible.
+    kept: list[ScratchArena] = []
+
+    class _KeptArena(ScratchArena):
+        @classmethod
+        def open(cls, *, under: str | os.PathLike[str] | None = None) -> ScratchArena:
+            arena = ScratchArena.open(under=under)
+            monkeypatch.setattr(arena, "reclaim", lambda: None)
+            kept.append(arena)
+            return arena
+
+    monkeypatch.setattr(_runner, "ScratchArena", _KeptArena)
     if fail:
         real_decide = _runner.decide_route
 
@@ -178,6 +189,9 @@ def test_no_relation_file_outlives_the_run(
             _run(tmp_path, "sibling_after", "out_of_core")
     else:
         _run(tmp_path, "sibling_after", "out_of_core")
+    assert len(kept) == 1
+    work = Path(kept[0].local_path())
     assert work.is_dir()
     assert sorted(p.relative_to(work).as_posix() for p in work.rglob("*.parquet")) == []
     assert not (work / "relations").exists()
+    ScratchArena.reclaim(kept[0])
