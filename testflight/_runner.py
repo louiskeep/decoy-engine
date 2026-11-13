@@ -154,6 +154,11 @@ def build_key_resolver(manifest: FlightManifest) -> Any:
     return make_key_resolver(_MASTER_KEY, manifest.master_key_label)
 
 
+# Fixed non-secret scope: tokens depend on key, namespace, plaintext and scope, so a constant
+# keeps the two determinism runs and the golden fingerprint stable. Must be 16-64 bytes.
+_VAULT_DERIVATION_SCOPE = b"testflight-vault"
+
+
 class InMemoryTokenVault:
     """In-memory TokenVaultWriter for jobs that use the tokenize strategy.
 
@@ -164,6 +169,7 @@ class InMemoryTokenVault:
 
     def __init__(self) -> None:
         self._m: dict[tuple[str, str], str] = {}
+        self.derivation_scope: bytes = _VAULT_DERIVATION_SCOPE
 
     def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
         return self._m.get((namespace, plaintext))

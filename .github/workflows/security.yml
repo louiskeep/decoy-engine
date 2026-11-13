@@ -1,4 +1,4 @@
-# Security audit. Exports uv.lock (every extra) with `uv export` and runs `pip-audit` against it
+# Security audit. Exports uv.lock (every extra but docs) with `uv export` and runs `pip-audit` against it
 # once per supported Python. Catches CVEs in any pinned dep (direct or transitive).
 #
 # Mirrors decoy-platform's security.yml so the engine gates supply-chain CVEs
@@ -36,8 +36,10 @@ jobs:
 
       - uses: ./.github/actions/setup-uv
 
-      - name: Export the locked dependency set (every extra, hashed pins)
-        run: uv export --frozen --all-extras --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/engine-lock.txt"
+      - name: Export the locked dependency set (every extra but docs, hashed pins)
+        # The docs extra is Sphinx tooling for building the site; it is not in the wheel, so a
+        # CVE there is not something the engine ships. Every shipped extra stays in the export.
+        run: uv export --frozen --all-extras --no-extra docs --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/engine-lock.txt"
 
       - name: Audit the lock
         # Audits what the engine ships, not this job's tool environment: pip-audit runs in its
