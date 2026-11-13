@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-_PATTERN = re.compile(r"(\d+)MB")
+_PATTERN = re.compile(r"\A(\d+)MB\Z")
 
 
 def parse_megabytes(limit: str | None) -> int | None:
