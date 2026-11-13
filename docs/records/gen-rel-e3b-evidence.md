@@ -1,8 +1,8 @@
 # GEN-REL E3b build evidence
 
-Status: built on `feat/gen-rel-e3b`. One owner question is open (see "Plan notes and
-deviations", item 1: per-parent aggregation of a text-typed numeric child column). It follows
-from the plan's frozen numeric-reader policy and is not resolved here. No census number,
+Status: built on `feat/gen-rel-e3b`. The owner question of "Plan notes and deviations", item 1
+(per-parent aggregation of a text-typed numeric child column), is closed by the owner ruling of
+2026-11-13 (option (c)); see "Owner ruling (2026-11-13)" at the end. No census number,
 threshold, pin, baseline or allowlist rose.
 
 Spec: `docs/plans/gen-rel.md` on `origin/plan/gen-rel` (`26a83542`), slice row 4 (per-parent
@@ -233,7 +233,8 @@ generator called by `synthesize`'s own name because the Phase F parity witnesses
 
 ## Plan notes and deviations
 
-1. **Owner question: aggregating a text-typed numeric child column.** The plan keeps numeric
+1. **Closed (owner ruling 2026-11-13, option (c); see the section at the end).** **Owner
+   question: aggregating a text-typed numeric child column.** The plan keeps numeric
    typing's one reader policy, where `derived_aggregate.column` is numeric-unsafe ("aggregate
    input coercion is not verified for typed input"). A `sequence` or bounded `faker` int
    column read by an aggregate therefore stays text, exactly as for the scalar form. On this
@@ -497,7 +498,7 @@ commit changes no Python file.
 
 ## V2-LOG
 
-- The owner question in "Plan notes and deviations", item 1, if it is answered with (d).
+- (Closed: the owner answered "Plan notes and deviations", item 1, with (c) on 2026-11-13.)
 - A raw config compiled with `compile_plan` does not pass through the `PipelineConfig`
   validators, as for slices 1 to 3. For such a config a `via` that does not reference the
   parent, a non-unique parent key, `null_probability` on the aggregate or a reader of the
@@ -516,3 +517,166 @@ commit changes no Python file.
   `tests/parity/test_phase_f_f0_invariants.py` through `synthesize`, and the scalar aggregate
   and `_reference` are wrapped by the Phase F witnesses through `synthesize`, so those names
   must stay importable from it).
+
+## Owner ruling (2026-11-13)
+
+**Ruling.** A per-parent aggregate (`derived_aggregate` with `from_table` and `via`) whose child
+column is not numeric under numeric typing is refused at config check time, before any data is
+read, with one new code, `config.generate_aggregate_input_not_numeric` (`since=UNRELEASED`,
+named in the slice's one fragment `changelog.d/gen-rel-e3b.md` in slash form). `sequence` and
+`faker` integer columns are included, since numeric typing reads them as text when an
+aggregate reads them. Numeric typing and its reader policy are unchanged, and the single-table
+aggregate is untouched.
+
+**Commits.** `b583bf4e` red cells (source as at `ffecd335`), `cde526ab` the change (final
+source head), then this docs-only record.
+
+**What the numeric decision reuses.** Config may not import generation (`.importlinter`: config
+is tier 4, generation tier 3), so numeric typing's decision was moved down one layer, not
+copied. Its non-candidate type rule (the body of `generated()` inside `numeric_plan`: text for
+`sequence` and `faker`, the categories' type, the constant's type, float for `distribution`,
+None otherwise) is now `config.generated_arrow_type` in `config/_generate_type_checks.py`,
+with the three helpers it used moved verbatim beside it (`categorical_arrow_type`, formerly
+`generation/_admission._categorical_type`; `constant_arrow_type` and `parametric_arrow_type`,
+formerly in `generation/kinds/_constant.py` and `_parametric.py`, which now re-export them).
+Numeric typing's `_reference_root` is now `config.reference_root` in
+`config/_generate_relational.py`. `generation/_numeric_typing.py` calls both
+(`generated()` returns `generated_arrow_type(col)` for a non-candidate; `planned()` and the
+member map use `reference_root`), and admission calls `categorical_arrow_type`: one rule, two
+readers, no behavior change (every digest, golden and snapshot in the T1 set is unchanged).
+
+The validator check (`_input_numeric` in `config/_generate_relational.py`, called from
+`_aggregate_problem`, so from `aggregate_problems` in the `PipelineConfig` validator
+`_parent_lookups_valid`) follows `reference_root` from the child column and asks
+`numeric_as_text_read(column)` (`config/_generate_type_checks.py`): the declared `output_type`
+when it parses (a number kind is `int` or `decimal(n)`, the existing `_NUMBER` group the
+`output_type` registry already uses for `sequence` and `distribution`), else whether
+`generated_arrow_type` is an integer or floating type. This is exactly numeric typing's
+`planned()` for a column that is not a candidate (`output_arrow_type(root) or generated(root)`),
+and an aggregate input is never a candidate: `READERS["derived_aggregate.column"]` is
+numeric-unsafe, so `numeric_plan` drops every reference group an aggregate reads. The witness
+`test_the_verdict_matches_the_type_numeric_typing_gives_an_aggregate_input` runs a same-table
+aggregate over each cell's column and checks that validation accepts exactly the columns the
+run emits as numbers. Two consequences of "not numeric under numeric typing", both needed for
+"a validated config never reaches the text join":
+
+- A column type numeric typing does not type (`derived`, `formula`, `lookup`, `statistical`,
+  `windowed_date`, `grouped_series`, `group_key`, a scalar `derived_aggregate`, or a reference
+  to a column that is not generated) is refused unless it declares an `int` or `decimal(n)`
+  `output_type`. Before the ruling a `derived` child such as `lid * 2` aggregated correctly
+  (Arrow inference typed it int64); it now needs `output_type`. `statistical` and
+  `windowed_date` cannot declare a number `output_type`, so they cannot be a per-parent input.
+- A `date` or `bool` `output_type`, and a `bool` categorical or constant, are not numeric.
+- An input that is itself a per-parent aggregate is left to `generate_aggregate_read_before_fill`.
+
+**The code.** Identity `config.generate_aggregate_input_not_numeric`, registered in
+`reasons/config/_part2.py` (config catalog, `PipelineValidationError`), `since=UNRELEASED`.
+It is a pydantic line error at `tables.<i>.generate_columns.<j>.column` with `input` None,
+raised from the validator outside any `except` (`__cause__` and `__context__` None). Message:
+the registered summary ("Generate per-parent aggregate reads a child column that is not
+numeric; give it a numeric output_type or aggregate a numeric column.") followed by
+`Table '<from_table>', column '<column>', aggregate '<aggregate column>'.`. No value and no type
+name is quoted. `problem_details` (`config/_generate_options.py`) takes an optional third,
+value-free item for these names; every other problem keeps the summary alone.
+
+**Red first (`b583bf4e` on `ffecd335`'s source).** `.venv` Python 3.11.18:
+`pytest tests/unit/generation/relational/test_aggregate_input.py`: 12 failed, 12 passed.
+Red, each "DID NOT RAISE ValidationError" (validation accepted the config) or, for the verdict
+cells, `assert True is False`: `test_a_child_column_that_is_not_numeric_is_refused_at_validate`
+[sequence], [faker-int], [categorical-text]; `test_the_refusal_holds_for_every_op` [sum],
+[mean]; `test_the_refusal_names_the_table_column_and_aggregate_and_no_value`;
+`test_a_column_numeric_typing_does_not_type_needs_a_numeric_output_type`;
+`test_a_date_output_type_is_not_numeric`;
+`test_a_reference_child_column_is_judged_by_the_column_it_copies`;
+`test_the_verdict_matches_the_type_numeric_typing_gives_an_aggregate_input` [sequence],
+[faker-int], [categorical-text]. Green on the base by design (the accepted cells): 
+`test_a_numeric_child_column_is_accepted_and_aggregated`,
+`test_a_childless_parent_sums_to_zero_over_an_accepted_column` and the verdict cell, each for
+[distribution], [categorical-number], [constant-number], [output_type]; all twelve are red
+under X2 (every per-parent input refused), the `output_type` ones also under X3.
+
+**Test changes after the red commit (none weakened).** `test_aggregate.py`'s
+`_grandparent_reader` (`customers.spend` over an `orders` column) aggregated `orders.amount`, a
+plain `sequence`; the ruling refuses that input, so the fixture's `orders.amount` now declares
+`output_type: int` (the assertions are unchanged; without it
+`test_at12_the_same_reader_of_an_ordinary_column_validates[derived_aggregate.column
+(per-parent)]` is refused by the new code). `tests/unit/plan/checks/test_generate_columns.py`
+imports `categorical_arrow_type` from `decoy_engine.config` instead of the removed
+`_admission._categorical_type`.
+
+**Mutations (final source head `cde526ab`, detached worktree `/home/user/wt-e3b-r`, 51 of 51
+red).** The 42 recorded mutations (V1, V3 and V5 re-anchored with one more indent level, now
+inside `if via is not None:`; same edits) plus nine new, each applied once in a detached
+worktree of `cde526ab` that imports its own `src` (`decoy_engine.__file__` printed as
+`/home/user/wt-e3b-r/src/decoy_engine/__init__.py`), its named tests run (Python 3.11.18, the
+`.venv`), and restored; every anchor matched once; the worktree was clean at the end and is
+removed. Statuses are read from the harness's results JSON: 51 entries, 51 `RED`. No witness
+starts a child process, so no mutation was applied in the checkout.
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| X1 | the non-numeric input refusal is dropped | `config/_generate_relational.py` | 11: `test_a_child_column_that_is_not_numeric_is_refused_at_validate[sequence]`, `[faker-int]`, `[categorical-text]` ... |
+| X2 | every per-parent input is refused | `config/_generate_relational.py` | 13: `test_a_numeric_child_column_is_accepted_and_aggregated[distribution]`, `[categorical-number]`, `[constant-number]` ... |
+| X3 | a declared output_type is ignored | `config/_generate_type_checks.py` | 2: `test_a_numeric_child_column_is_accepted_and_aggregated[output_type]`, `test_a_childless_parent_sums_to_zero_over_an_accepted_column[output_type]` |
+| X4 | sequence and faker child columns count as numbers | `config/_generate_relational.py` | 4: `test_a_child_column_that_is_not_numeric_is_refused_at_validate[sequence]`, `[faker-int]`, `test_the_verdict_matches_the_type_numeric_typing_gives_an_aggregate_input[sequence]` ... |
+| X5 | a reference child column is judged as itself, not by the column it copies | `config/_generate_relational.py` | 1: `test_a_reference_child_column_is_judged_by_the_column_it_copies` |
+| X6 | a column numeric typing does not type is accepted | `config/_generate_type_checks.py` | 1: `test_a_column_numeric_typing_does_not_type_needs_a_numeric_output_type` |
+| X7 | the refusal message drops the table, column and aggregate names | `config/_generate_relational.py` | 1: `test_the_refusal_names_the_table_column_and_aggregate_and_no_value` |
+| X8 | a decimal output_type is not a number kind | `config/_generate_type_checks.py` | 1: `test_a_column_numeric_typing_does_not_type_needs_a_numeric_output_type` |
+| X9 | an input that is itself a per-parent aggregate is refused as non-numeric | `config/_generate_relational.py` | 1: `test_at12_each_reader_of_a_per_parent_aggregate_is_refused_before_fill[derived_aggregate.column (per-parent)]` |
+
+X1 is the ruling's mutation (drop the refusal): the `sequence` cell goes red.
+
+**Gates (head `cde526ab`, the final source head).** `GATES_WORKERS=4 scripts/dev/gates.sh
+--keep-going --baseline --steps ruff,format,mypy,sentry,layers,licenses,tests <the 80 T1 paths
+above>`, Python 3.10.20 (temporary venv `/home/user/venv-e3b-r-310`, synced with
+`uv sync --frozen --python 3.10 --extra dev --extra lint --extra vault --extra cloud`, removed
+after), `origin/main` fetched at `efedebc0`. The new test file is inside `tests/unit/generation`.
+
+| Step | Branch (`cde526ab`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5332 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 10434 passed, 0 failed, 113 skipped (parallel and serial passes) |
+
+Failure sets: branch 0, main 0, branch-only 0; every branch step passed, so the script did not
+rerun `origin/main`. There is no branch failure.
+
+**Script checks (on `cde526ab`, same venv), by exit code.**
+`registry_renumber.py --check --main c0961a17`: 0 (`registry consistent`).
+`registry_renumber.py --check --main origin/main`: 2 (`main-not-merged`; `origin/main` is now
+`efedebc0`). `ratchet_check.py --base c0961a17`: 0. `ratchet_check.py --base origin/main`: 1,
+the same two findings as before (`f29-producer-inventory` `_reorder_budget.py` key and
+`secret-material-census` `vault.py` key, removed by main from its own baselines); the pattern is
+unchanged. `check_fragment.py --base origin/main`: 0. `reason_release_pin.py --check`: 0
+(`reason release pin current`).
+
+**No digest, golden or snapshot moved,** and no expected output value was edited. Numeric
+typing's decisions are byte-identical (the moved functions are verbatim); the near-neighbor
+digests, determinism and draw-site goldens, Phase F oracle and witnesses and the numeric-typing
+parity files in the T1 set pass unchanged.
+
+**Line counts (touched source files).** `config/_generate_options.py` 571 (561),
+`config/_generate_relational.py` 475 (413), `generation/_numeric_typing.py` 326 (352),
+`generation/_admission.py` 292 (316), `config/_generate_type_checks.py` 291 (203),
+`config/__init__.py` 198 (188), `reasons/config/_part2.py` 156 (149),
+`generation/kinds/_parametric.py` 77, `generation/kinds/_constant.py` 40. At or above 550:
+`config/_generate_options.py` 571 only. `generation/synthesize.py` is untouched (600). No
+config module was added.
+
+**Not run.** The full suite; the gate steps under Python 3.11 (red-first, sweep and mutations
+used 3.11); a rerun of `origin/main`; gates against a branch holding `origin/main` `efedebc0`.
+On the docs-only record commit only `ruff`, `format` and `sentry` were rerun.
+
+**V2-LOG.**
+
+- A raw config that bypasses `PipelineConfig` (for example `compile_plan` on a dict) still
+  reaches the text join: on `cde526ab` a per-parent `sum` over a child `sequence` raises
+  `ArrowTypeError` and `mean` `TypeError`, as for the other validate-only rules of slices 1
+  to 3. No second guard was built (the plan does not require one).
+- A `derived` child column with a numeric expression now needs a numeric `output_type` to be
+  aggregated per parent; `statistical` and `windowed_date` cannot be per-parent inputs.
