@@ -23,7 +23,7 @@ import pytest
 
 from decoy_engine import fileaccess
 from decoy_engine.execution.out_of_core import _runner, run_fk_out_of_core
-from decoy_engine.fileaccess import ScratchArena
+from decoy_engine.fileaccess import ProtectedDirUnsafe, ScratchArena
 from decoy_engine.fileaccess._scratch import ARENA_PREFIX
 from decoy_engine.plan._types import TableSeed
 from decoy_engine.providers_v2 import get_default_registry
