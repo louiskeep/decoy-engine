@@ -132,19 +132,8 @@ def _check_one_column(
             len(src_col) == len(out_col) and src_col.astype(object).equals(out_col.astype(object))
         )
     except Exception as exc:
-        return PolicyValidationFinding(
-            table=table,
-            column=column,
-            strategy=strategy,
-            severity="error",
-            source_distinct=src_distinct,
-            output_distinct=out_distinct,
-            bytes_identical=False,
-            message=(
-                f"could not compare source vs output for column "
-                f"{column!r}: {type(exc).__name__} (see job log). "
-                "Policy validation did not conclude for this column."
-            ),
+        return _compare_failed(
+            table, column, strategy, type(exc).__name__, src_distinct, out_distinct
         )
 
     return _decide(table, column, strategy, src_distinct, out_distinct, bytes_identical)
@@ -161,6 +150,25 @@ def _missing_column(
         message=(
             f"column {column!r} not present in source ({in_source}) "
             f"or output ({in_output}); cannot validate."
+        ),
+    )
+
+
+def _compare_failed(
+    table: str, column: str, strategy: str, error: str, src_distinct: int, out_distinct: int
+) -> PolicyValidationFinding:
+    return PolicyValidationFinding(
+        table=table,
+        column=column,
+        strategy=strategy,
+        severity="error",
+        source_distinct=src_distinct,
+        output_distinct=out_distinct,
+        bytes_identical=False,
+        message=(
+            f"could not compare source vs output for column "
+            f"{column!r}: {error} (see job log). "
+            "Policy validation did not conclude for this column."
         ),
     )
 
@@ -263,13 +271,23 @@ def policy_findings(
     source_tables: Mapping[str, TableBatches],
     output_tables: Mapping[str, TableBatches],
     facts: Mapping[str, Mapping[str, ColumnFacts]],
+    failed_tables: Mapping[str, str] | None = None,
 ) -> list[PolicyValidationFinding]:
     """`check_policy_validation` from column facts: one finding per configured column of a
     table that both sides hold. `facts` is `{table: {column: ColumnFacts}}` over the output."""
     findings: list[PolicyValidationFinding] = []
     for table_cfg in config.get("tables") or []:
         table = table_cfg.get("name")
-        if not isinstance(table, str) or table not in source_tables or table not in output_tables:
+        if not isinstance(table, str):
+            continue
+        if table in (failed_tables or {}):
+            findings.extend(
+                _compare_failed(table, c["name"], c["strategy"], (failed_tables or {})[table], 0, 0)
+                for c in table_cfg.get("columns") or []
+                if isinstance(c.get("name"), str) and isinstance(c.get("strategy"), str)
+            )
+            continue
+        if table not in source_tables or table not in output_tables:
             continue
         src, out = source_tables[table], output_tables[table]
         for col_cfg in table_cfg.get("columns") or []:
@@ -289,6 +307,18 @@ def policy_findings(
                         strategy,
                         fact.source_rows,
                         fact.output_rows,
+                        fact.source_distinct,
+                        fact.output_distinct,
+                    )
+                )
+                continue
+            if fact.error is not None:
+                findings.append(
+                    _compare_failed(
+                        table,
+                        column,
+                        strategy,
+                        fact.error,
                         fact.source_distinct,
                         fact.output_distinct,
                     )

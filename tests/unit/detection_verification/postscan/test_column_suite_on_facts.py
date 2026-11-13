@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from decoy_engine.verification.postmask import (
     run_post_mask_tables,
 )
 from decoy_engine.verification.postmask import _column_facts as column_facts_module
+from decoy_engine.verification.postmask import runner as runner_module
 from decoy_engine.verification.postmask._column_facts import column_facts
 from decoy_engine.verification.postmask.policy_validation import (
     check_policy_validation,
@@ -233,10 +235,155 @@ def test_no_value_reaches_the_report_or_a_log_line(
     def boom(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError(f"duckdb failed on {CANARY}")
 
-    monkeypatch.setattr(column_facts_module, "column_distinct", boom)
+    monkeypatch.setattr(runner_module, "column_facts", boom)
     with caplog.at_level(logging.DEBUG):
         report = run_post_mask({"t": src}, {"t": out}, config=config)
-    assert [f["severity"] for f in report["residual_pii"]] == ["error"]
+    assert [(f["table"], f["severity"]) for f in report["residual_pii"]] == [("t", "error")]
     assert [f["severity"] for f in report["policy_validation"]] == ["error"]
     assert "RuntimeError" in report["residual_pii"][0]["message"]
     assert CANARY not in repr(report) and CANARY not in caplog.text
+
+
+SSN = [f"{100 + i:03d}-45-{6000 + i}" for i in range(30)]
+
+
+def _oracle(src: dict[str, pd.DataFrame], out: dict[str, pd.DataFrame], config: dict[str, Any]):
+    return (
+        [asdict(f) for f in check_residual_pii(out, config, source_frames=src)],
+        [asdict(f) for f in check_policy_validation(src, out, config)],
+    )
+
+
+def _parity(src: dict[str, pd.DataFrame], out: dict[str, pd.DataFrame], config: dict[str, Any]):
+    report = run_post_mask(src, out, config=config)
+    residual, policy = _oracle(src, out, config)
+    assert report["residual_pii"] == residual
+    assert report["policy_validation"] == policy
+    return report
+
+
+def _two_tables(bad: pd.DataFrame) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
+    clean = pd.DataFrame({"email": EMAILS[:40], "ssn": SSN + [None] * 10})
+    frames = {"bad": bad, "clean": clean.iloc[:40].reset_index(drop=True)}
+    config = {
+        "version": 2,
+        "tables": [
+            {"name": "bad", "columns": [{"name": "ssn", "strategy": "faker"}]},
+            {"name": "clean", "columns": [{"name": "email", "strategy": "faker"}]},
+        ],
+    }
+    return frames, config
+
+
+BAD_COLUMNS = {
+    "mixed_int_and_str": [10001, "10002", 10003, "x"] * 7 + [10005, 10006],
+    "decimal_with_float": [Decimal("1.5"), 2.5, Decimal("3.5"), 4.5] * 7 + [1.0, 2.0],
+    "set_cells": [{1, 2}, {3}] * 15,
+}
+
+
+@pytest.mark.parametrize("name", list(BAD_COLUMNS))
+def test_one_unconvertible_column_leaves_every_other_finding_as_on_the_frame_checks(name: str):
+    bad = pd.DataFrame({"ssn": SSN, "odd": BAD_COLUMNS[name]})
+    frames, config = _two_tables(bad)
+    report = _parity(frames, frames, config)
+    # The unmasked ssn and the clean table's email are both reported, not an error row.
+    assert {(f["table"], f["column"], f["severity"]) for f in report["residual_pii"]} >= {
+        ("bad", "ssn", "fail"),
+        ("clean", "email", "fail"),
+    }
+    assert "error" not in {f["severity"] for f in report["residual_pii"]}
+
+
+def test_a_zip_column_of_mixed_int_and_str_is_compared_as_on_the_frame_checks():
+    zips = [10000 + i if i % 3 else str(10000 + i) for i in range(60)]
+    frame = pd.DataFrame({"email": EMAILS[:60], "zip": zips})
+    config = _cfg(("email", "faker"), ("zip", "faker"))
+    report = _parity({"t": frame}, {"t": frame}, config)
+    assert ("zip", "fail") in {(f["column"], f["severity"]) for f in report["residual_pii"]}
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [
+        pa.array([[1, 2], [3]] * 15, pa.list_(pa.int64())),
+        pa.array([[("a", 1)], [("b", 2)]] * 15, pa.map_(pa.string(), pa.int64())),
+    ],
+    ids=["list", "map"],
+)
+def test_an_unconfigured_list_or_map_column_leaves_the_other_columns_findings(cells: pa.Array):
+    frame = pa.table({"ssn": SSN, "cells": cells}).to_pandas()
+    config = _cfg()
+    report = _parity({"t": frame}, {"t": frame}, config)
+    assert ("ssn", "fail") in {(f["column"], f["severity"]) for f in report["residual_pii"]}
+
+
+def test_a_configured_list_column_gets_its_own_policy_error_only():
+    frame = pa.table(
+        {"ssn": SSN, "cells": pa.array([[1, 2], [3]] * 15, pa.list_(pa.int64()))}
+    ).to_pandas()
+    config = _cfg(("ssn", "faker"), ("cells", "hash"))
+    report = run_post_mask({"t": frame}, {"t": frame}, config=config)
+    by_column = {f["column"]: f for f in report["policy_validation"]}
+    assert by_column["cells"]["severity"] == "error"
+    assert "ValueError" in by_column["cells"]["message"]
+    assert by_column["ssn"]["severity"] == "fail"
+    assert ("ssn", "fail") in {(f["column"], f["severity"]) for f in report["residual_pii"]}
+
+
+def test_a_table_whose_facts_fail_does_not_fail_the_other_table(monkeypatch: pytest.MonkeyPatch):
+    frames, config = _two_tables(pd.DataFrame({"ssn": SSN}))
+    real = runner_module.column_facts
+
+    def facts(source: Any, output: Any, *args: Any, **kwargs: Any) -> Any:
+        if output.name == "bad":
+            raise RuntimeError(f"broke on {CANARY}")
+        return real(source, output, *args, **kwargs)
+
+    monkeypatch.setattr(runner_module, "column_facts", facts)
+    report = run_post_mask(frames, frames, config=config)
+    fails = {(f["table"], f["column"]) for f in report["residual_pii"] if f["severity"] == "fail"}
+    assert ("clean", "email") in fails and {t for t, _ in fails} == {"clean"}
+    errors = [f for f in report["residual_pii"] if f["severity"] == "error"]
+    assert [f["table"] for f in errors] == ["bad"] and "RuntimeError" in errors[0]["message"]
+    assert [(f["table"], f["severity"]) for f in report["policy_validation"]] == [
+        ("bad", "error"),
+        ("clean", "fail"),
+    ]
+    assert CANARY not in repr(report)
+
+
+def test_a_mixed_dtype_two_table_run_equals_the_frame_checks():
+    n = 60
+    src = {
+        "a": pd.DataFrame(
+            {
+                "email": EMAILS[:n],
+                "age": pd.array(list(range(n)), "Int64"),
+                "score": [float(i) if i % 7 else float("nan") for i in range(n)],
+                "flag": [bool(i % 2) for i in range(n)],
+                "seen": pd.date_range("2026-01-01", periods=n, tz="UTC"),
+                "tier": pd.Categorical([f"t{i % 3}" for i in range(n)]),
+            }
+        ),
+        "b": pd.DataFrame({"code": [f"c{i}" for i in range(n)], "n": list(range(n))}),
+    }
+    out = {k: v.copy() for k, v in src.items()}
+    out["a"]["email"] = FAKE[:n]
+    out["b"]["n"] = [i + 1 for i in range(n)]
+    config = {
+        "version": 2,
+        "tables": [
+            {"name": "a", "columns": [{"name": c, "strategy": "faker"} for c in src["a"].columns]},
+            {"name": "b", "columns": [{"name": c, "strategy": "hash"} for c in src["b"].columns]},
+        ],
+    }
+    _parity(src, out, config)
+
+
+def test_run_post_mask_tables_refuses_a_memory_limit_above_the_cap(tmp_path: Path):
+    t = {"t": from_table("t", pa.table({"c": ["a", "b"]}))}
+    for limit in ("513MB", "2GB"):
+        with pytest.raises(ValueError):
+            run_post_mask_tables(t, t, config=_cfg(), keys=(), scratch=tmp_path, memory_limit=limit)
+    run_post_mask_tables(t, t, config=_cfg(), keys=(), scratch=tmp_path, memory_limit="512MB")

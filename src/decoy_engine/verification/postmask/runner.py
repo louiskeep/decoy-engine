@@ -18,6 +18,7 @@ hook catches that + writes a JobPostScanIntegrityReport with
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -112,30 +113,70 @@ def run_post_mask_tables(
 ) -> dict[str, Any]:
     """`run_post_mask` over tables the run holds as batches. The caller counted the declared keys
     (`check_keys`) and owns `scratch`; the column suite reads the tables in bounded batches."""
+    if _megabytes(memory_limit) > _megabytes(MEMORY_LIMIT):
+        raise ValueError("run_post_mask_tables: memory_limit is above the post-scan cap")
     return _assemble(
         dict(config),
-        lambda: (dict(source_tables), dict(output_tables)),
+        lambda: (dict(source_tables), dict(output_tables), {}),
         lambda: fk_findings(config, {}, {}, keys),
         scratch=scratch,
         memory_limit=memory_limit,
     )
 
 
+def _megabytes(limit: str) -> int:
+    match = re.fullmatch(r"(\d+)MB", limit)
+    if match is None:
+        raise ValueError("run_post_mask_tables: memory_limit must look like '512MB'")
+    return int(match.group(1))
+
+
+def _arrow_column(series: pd.Series) -> pa.Array:
+    """One column as Arrow. A column Arrow will not take (mixed int and str, Decimal with float, a
+    set) is carried as the text of each value, which is all the detectors read and which keeps
+    equal values equal. Only that column changes; its table and the others convert as before."""
+    try:
+        return pa.array(series, from_pandas=True)
+    except Exception:
+        return pa.array([None if _null(v) else str(v) for v in series.tolist()], type=pa.string())
+
+
+def _null(value: object) -> bool:
+    return value is None or (isinstance(value, float) and value != value)
+
+
+def _frame_table(name: str, frame: pd.DataFrame) -> TableBatches:
+    columns = [(str(c), _arrow_column(frame.iloc[:, n])) for n, c in enumerate(frame.columns)]
+    return from_table(name, pa.Table.from_arrays([a for _, a in columns], [c for c, _ in columns]))
+
+
 def _frame_tables(
     source_frames: dict[str, pd.DataFrame], output_frames: dict[str, pd.DataFrame]
-) -> tuple[dict[str, TableBatches], dict[str, TableBatches]]:
-    def tables(frames: dict[str, pd.DataFrame]) -> dict[str, TableBatches]:
-        return {
-            name: from_table(name, pa.Table.from_pandas(frame, preserve_index=False))
-            for name, frame in frames.items()
-        }
-
-    return tables(source_frames), tables(output_frames)
+) -> tuple[dict[str, TableBatches], dict[str, TableBatches], dict[str, str]]:
+    """Both sides as tables. A name whose frame cannot be converted at all is left out of both
+    and recorded with the error's class name, so the other tables are still checked."""
+    src: dict[str, TableBatches] = {}
+    out: dict[str, TableBatches] = {}
+    failed: dict[str, str] = {}
+    for name, out_frame in output_frames.items():
+        try:
+            out_table = _frame_table(name, out_frame)
+            if name in source_frames:
+                src[name] = _frame_table(name, source_frames[name])
+            out[name] = out_table
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            src.pop(name, None)
+            failed[name] = type(exc).__name__
+    return src, out, failed
 
 
 def _assemble(
     config: Mapping[str, Any],
-    get_tables: Callable[[], tuple[dict[str, TableBatches], dict[str, TableBatches]]],
+    get_tables: Callable[
+        [], tuple[dict[str, TableBatches], dict[str, TableBatches], dict[str, str]]
+    ],
     get_fk: Callable[[], list[FKPreservationFinding]],
     *,
     scratch: Path,
@@ -158,25 +199,16 @@ def _assemble(
     # where the full exception text already lives at the catch site.
     # A coded engine error (a file-access or lazy-source refusal) is not a check failure: it
     # propagates unchanged through `passes_through`, the rule pre-scan applies too.
-    # The two column checks share one facts pass; if it fails, each reports that error's class name.
-    suite_exc: Exception | None = None
-    source_tables: dict[str, TableBatches] = {}
-    output_tables: dict[str, TableBatches] = {}
-    facts: dict[str, dict[str, ColumnFacts]] = {}
-    try:
-        source_tables, output_tables = get_tables()
-        facts = _suite_facts(
-            source_tables, output_tables, scratch=scratch, memory_limit=memory_limit
-        )
-    except Exception as exc:
-        if passes_through(exc):
-            raise
-        suite_exc = exc
+    # One facts pass feeds both column checks. A table or column that fails is isolated: its
+    # error is recorded by class name and the other tables and columns are still checked.
+    source_tables, output_tables, failed = get_tables()
+    facts, suite_failed = _suite_facts(
+        source_tables, output_tables, scratch=scratch, memory_limit=memory_limit
+    )
+    failed = {**failed, **suite_failed}
 
     try:
-        if suite_exc is not None:
-            raise suite_exc
-        residual_pii = check_residual_pii(facts, config)
+        residual_pii = check_residual_pii(facts, config, failed)
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -211,9 +243,9 @@ def _assemble(
         ]
 
     try:
-        if suite_exc is not None:
-            raise suite_exc
-        policy_validation = check_policy_validation(config, source_tables, output_tables, facts)
+        policy_validation = check_policy_validation(
+            config, source_tables, output_tables, facts, failed
+        )
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -260,18 +292,25 @@ def _suite_facts(
     *,
     scratch: Path,
     memory_limit: str,
-) -> dict[str, dict[str, ColumnFacts]]:
-    """Facts for every output column, per output table, against its source when it has one."""
-    return {
-        name: column_facts(
-            source_tables.get(name),
-            table,
-            table.schema.names,
-            scratch=scratch,
-            memory_limit=memory_limit,
-        )
-        for name, table in output_tables.items()
-    }
+) -> tuple[dict[str, dict[str, ColumnFacts]], dict[str, str]]:
+    """Facts for every output column, per output table, against its source when it has one, and
+    the class name of the error for each table whose facts could not be computed."""
+    facts: dict[str, dict[str, ColumnFacts]] = {}
+    failed: dict[str, str] = {}
+    for name, table in output_tables.items():
+        try:
+            facts[name] = column_facts(
+                source_tables.get(name),
+                table,
+                table.schema.names,
+                scratch=scratch,
+                memory_limit=memory_limit,
+            )
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            failed[name] = type(exc).__name__
+    return facts, failed
 
 
 def _report_to_dict(report: PostMaskReport) -> dict[str, Any]:

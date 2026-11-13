@@ -401,7 +401,9 @@ def _classify(detector_id: str, configured: str | None) -> tuple[Severity, str]:
 
 
 def residual_pii_findings(
-    output_facts: Mapping[str, Mapping[str, ColumnFacts]], config: Mapping[str, Any]
+    output_facts: Mapping[str, Mapping[str, ColumnFacts]],
+    config: Mapping[str, Any],
+    failed_tables: Mapping[str, str] | None = None,
 ) -> list[ResidualPIIFinding]:
     """`check_residual_pii` from column facts: `{table: {column: ColumnFacts}}` over the output,
     in column order. The decision tables are the ones the frame check uses."""
@@ -412,7 +414,17 @@ def residual_pii_findings(
         for col_cfg in table_cfg.get("columns") or []
         if isinstance(col_cfg.get("name"), str) and isinstance(col_cfg.get("strategy"), str)
     }
-    findings: list[ResidualPIIFinding] = []
+    findings: list[ResidualPIIFinding] = [
+        ResidualPIIFinding(
+            table=table,
+            column="",
+            detector_id="",
+            match_rate=0.0,
+            severity="error",
+            message=f"residual_pii check raised {error} (see job log for details)",
+        )
+        for table, error in (failed_tables or {}).items()
+    ]
     for table_name, columns in output_facts.items():
         for col_name, fact in columns.items():
             if not fact.detectors:
@@ -421,7 +433,11 @@ def residual_pii_findings(
             configured = strategy_by_col.get((table_name, col_name))
             severity, message = _classify(top.detector_id, configured)
             # Identity needs comparable rows; none means no source column or a row-count mismatch.
-            compared = fact.comparable_rows > 0 and configured not in _NO_OP_BY_DESIGN
+            compared = (
+                fact.error is None
+                and fact.comparable_rows > 0
+                and configured not in _NO_OP_BY_DESIGN
+            )
             rate = fact.identical_rows / fact.comparable_rows if compared else None
             if rate is not None:
                 override = _escalate(
