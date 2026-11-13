@@ -29,6 +29,7 @@ __all__ = [
     "PostScanBlockedError",
     "PostScanVerdict",
     "block_location",
+    "blocked_error",
     "post_scan_verdict",
     "raise_if_ner_blocked",
     "severity_counts",
@@ -311,14 +312,23 @@ class PostScanBlockedError(DecoyError):
         return (type(self), (self.report, self.verdict))
 
 
+def blocked_error(
+    report: Mapping[str, Any], verdict: PostScanVerdict
+) -> PostScanBlockedError | None:
+    """The error that withholds the outputs when `verdict` blocks, else None. Callers outside this
+    module raise through here, so the error is always built with the verdict that decided it."""
+    return PostScanBlockedError(report, verdict) if verdict.blocking else None
+
+
 def raise_if_ner_blocked(report: Mapping[str, Any], *, ner_findings: str) -> None:
     """The run's one enforcement (SCAN-ML Q1): raise `PostScanBlockedError`, with an empty
     exception chain, when the NER predicate blocks. Any other blocking code rides along in
     `codes` (and leads by `_ORDER`) but alone stays report-only on the run path."""
     verdict = post_scan_verdict(report, ner_findings=ner_findings)
-    if _NER_BLOCKED not in verdict.codes:
+    error = blocked_error(report, verdict) if _NER_BLOCKED in verdict.codes else None
+    if error is None:
         return
     # Lazy: the helper sits in the secret-provider package, which this module need not load.
     from decoy_engine.secret_providers._errors import raise_bare
 
-    raise_bare(PostScanBlockedError(report, verdict))
+    raise_bare(error)
