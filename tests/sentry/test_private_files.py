@@ -290,7 +290,6 @@ def test_walk_is_not_vacuous() -> None:
             seen[(site.module, site.sink)] = seen.get((site.module, site.sink), 0) + 1
     known = {
         ("decoy_engine/execution/out_of_core/_scratch.py", "os.fchmod"): 1,
-        ("decoy_engine/execution/out_of_core/_duckdb.py", "os.chmod"): 1,
         ("decoy_engine/fileaccess/_protected_dir.py", "os.chmod"): 1,
         ("decoy_engine/declared_casting/_quarantine_local.py", "os.fchmod"): 1,
     }

@@ -45,7 +45,7 @@ def test_the_pool_spool_name_is_opaque_and_the_site_ran(
 
     monkeypatch.setattr(module.pq, "write_table", spy)
     work = tmp_path / "scratch"
-    work.mkdir()
+    work.mkdir(mode=0o700)
     for column in WEIRD:
         _measure(column, ["a", "b"], ["x", "y"], _pool(size=10, distinct_count=10), work)
     assert len(seen) == len(WEIRD), "the spool site did not execute for every column"

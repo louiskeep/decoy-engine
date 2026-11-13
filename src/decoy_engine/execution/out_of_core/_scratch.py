@@ -59,6 +59,13 @@ def precreate_private(path: Path) -> str:
     return str(path)
 
 
+def scratch_arena(where: ScratchArena | Path) -> ScratchArena:
+    """The arena a DuckDB connection spills into. A caller still on a path (transition arm (c))
+    has that directory adopted: missing levels made 0700, an existing one checked, nothing
+    owned, so its cleanup stays where it is."""
+    return where if isinstance(where, ScratchArena) else ScratchArena._adopt(where)
+
+
 def private_dir(path: Path) -> Path:
     """``mkdir -p`` in which every level it creates is 0700, whatever the umask."""
     return open_protected_dir(path, create=True, parents=True)

@@ -23,7 +23,7 @@ import pytest
 
 from decoy_engine import fileaccess
 from decoy_engine.execution.out_of_core import _runner, run_fk_out_of_core
-from decoy_engine.fileaccess import ScratchArena
+from decoy_engine.fileaccess import ProtectedDirUnsafe, ScratchArena
 from decoy_engine.fileaccess._scratch import ARENA_PREFIX
 from decoy_engine.plan._types import TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -447,3 +447,55 @@ def _relation_survives(root: ScratchArena, base: Path, cell: str) -> None:
     ) as joiner:
         out, orphans = joiner.join_batch(child)
     assert out.column(0).to_pylist() == ["m2", "m1", "x"] and orphans == 1
+
+
+# -- connections on the arena (T05, arm (c); S2a-1c) -------------------------------------------
+
+
+@pytest.mark.parametrize("arm", ["path", "arena"])
+def test_connect_duckdb_spills_into_its_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arm: str
+) -> None:
+    """`temp_directory` is the handed arena child, or (arm (c)) the adopted path: 0700 under
+    umask 0777, made before DuckDB is asked to spill there."""
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+
+    if os.geteuid() == 0:
+        pytest.fail("run as a non-root user: root ignores directory modes, so this is vacuous")
+    (tmp_path / "tmp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
+    with ScratchArena.open() as root:
+        spill = Path(root.local_path()) / "joins" / "duckdb"
+        old = os.umask(0o777)
+        try:
+            where = root.create_dir("joins").create_dir("duckdb") if arm == "arena" else spill
+            conn = connect_duckdb(temp_dir=where, memory_limit="64MB")
+        finally:
+            os.umask(old)
+        try:
+            (setting,) = conn.execute("SELECT current_setting('temp_directory')").fetchone()
+        finally:
+            conn.close()
+        assert Path(setting) == spill and _mode(spill) == 0o700, (setting, oct(_mode(spill)))
+
+
+def test_connect_duckdb_refuses_a_loose_spill_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An existing spill directory others can enter is refused, value-free, and left as it was:
+    a directory the engine did not create is checked, never chmodded (plan 4.2, arm (c))."""
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+
+    if os.geteuid() == 0:
+        pytest.fail("run as a non-root user: root ignores directory modes, so this is vacuous")
+    (tmp_path / "tmp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
+    with ScratchArena.open() as root:
+        loose = Path(root.local_path()) / "patients_tbl"
+        loose.mkdir()
+        os.chmod(loose, 0o755)  # noqa: S103 - the loose directory under test
+        with pytest.raises(ProtectedDirUnsafe) as info:
+            connect_duckdb(temp_dir=loose, memory_limit="64MB")
+        assert "patients_tbl" not in f"{info.value!s} {info.value!r}", repr(info.value)
+        assert _mode(loose) == 0o755, oct(_mode(loose))
+        assert list(loose.iterdir()) == []

@@ -1,6 +1,7 @@
 """The scratch native boundary (F25 S1b): DuckDB and pyarrow failures leave value-free.
 
-S1b holds the helper cells; each producer slice adds its own call-site cell here.
+S1b holds the helper cells; each producer slice adds its own call-site cell here, where the
+producer itself wraps the call (S2a-1c: `connect`).
 """
 
 from __future__ import annotations
@@ -102,7 +103,39 @@ def _assert_value_free(exc: BaseException) -> None:
     assert exc.__cause__ is None and exc.__context__ is None
 
 
-@pytest.mark.parametrize("cell", sorted(NATIVE))
+# -- call-site cells: each producer wraps its own native calls (S2a-1c on) ------------------
+
+
+def _site_connect(base: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], object]:
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+    from decoy_engine.fileaccess.adapters import duckdb as adapter
+
+    def refuse(config: dict[str, object]) -> object:
+        raise duckdb.IOException(f"Cannot create {config['temp_directory']}/ssn_col.tmp")
+
+    monkeypatch.setattr(adapter, "connect_internal", refuse)
+    return lambda: connect_duckdb(temp_dir=base / "patients_tbl")
+
+
+# The module whose own `scratch_native` wraps the call, and the call failing inside it.
+SITES = {
+    "connect": ("decoy_engine.execution.out_of_core._duckdb", _site_connect),
+}
+
+
+def _site_cell(arena: ScratchArena, monkeypatch: pytest.MonkeyPatch, cell: str) -> None:
+    module, build = SITES[cell]
+    call = build(Path(arena.local_path()), monkeypatch)
+    with monkeypatch.context() as raw_only:  # the site's own boundary lifted: the library's text
+        raw_only.setattr(f"{module}.scratch_native", lambda fn, *a, **k: fn(*a, **k), raising=False)
+        raw = _raw(call)
+    assert any(s in str(raw) for s in SENTINELS), f"non-vacuity: {raw!r}"
+    with pytest.raises(FileAccessReadError) as info:
+        call()
+    _assert_value_free(info.value)
+
+
+@pytest.mark.parametrize("cell", sorted({*NATIVE, *SITES}))
 def test_native_failure_text_is_value_free(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -111,6 +144,9 @@ def test_native_failure_text_is_value_free(
 ) -> None:
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     with ScratchArena.open() as arena, policy:
+        if cell in SITES:
+            _site_cell(arena, monkeypatch, cell)
+            return
         call = NATIVE[cell](arena)
         raw = _raw(call)
         assert any(s in str(raw) for s in SENTINELS), f"non-vacuity: {raw!r}"

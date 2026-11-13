@@ -370,7 +370,6 @@ SCRATCH_NATIVE_PENDING = frozenset(
     {
         "decoy_engine/execution/out_of_core/_relation.py",  # S2a-1c-ii
         "decoy_engine/execution/out_of_core/_multi_parent.py",  # S2a-1c-ii
-        "decoy_engine/execution/out_of_core/_duckdb.py",  # S2a-1c-i
         "decoy_engine/execution/out_of_core/_batch_join.py",  # S2a-2
         "decoy_engine/execution/out_of_core/_join.py",  # S2a-2
         "decoy_engine/execution/out_of_core/_stream_join.py",  # S2b-2

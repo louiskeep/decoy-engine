@@ -60,6 +60,7 @@ ambient_guards = [
 # `scratch_native` membership is derived from the scanner (`tests/sentry/fa/rules.py`).
 scratch_path_release = [
   "decoy_engine/declared_casting/_stream.py",
+  "decoy_engine/execution/out_of_core/_duckdb.py",
   "decoy_engine/execution/out_of_core/_runner.py",
   # Transitional (arm (a)): hands unconverted callees a released path; S2b-3 removes it.
   "decoy_engine/execution/out_of_core/_rewrite_pass.py",
