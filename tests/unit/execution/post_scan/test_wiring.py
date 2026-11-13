@@ -144,13 +144,17 @@ DEFERRED = {"namespace": "post_scan", "code": "gate_deferred_route"}
 FAIL = {"severity": "fail"}
 
 
-@pytest.mark.parametrize("integrity", [False, True], ids=["keys", "integrity"])
+@pytest.mark.parametrize(
+    ("mode", "integrity"),
+    [("full_frame", False), ("auto", True)],
+    ids=["keys-full_frame", "integrity-auto"],
+)
 def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
-    tmp_path: Path, integrity: bool
+    tmp_path: Path, mode: str, integrity: bool
 ) -> None:
     sink = RecordingSink()
     config = _config(tmp_path, broken=True, integrity=integrity)
-    exc = _blocked(lambda: _run(config, "auto", sink=sink))
+    exc = _blocked(lambda: _run(config, mode, sink=sink))
     assert exc.reason == DUPLICATES
     assert sink.calls == []
 
@@ -178,7 +182,9 @@ def test_at16_integrity_with_a_sink_and_lazy_inputs_still_withholds_on_a_failing
     cfg["subset"] = None
     cfg["post_scan"] = {"integrity": True}
     sink = RecordingSink()
-    exc = _blocked(lambda: run_pipeline(cfg, lazy, engine_version=V, sink=sink))
+    exc = _blocked(
+        lambda: run_pipeline(cfg, lazy, engine_version=V, sink=sink, execution_mode="full_frame")
+    )
     assert exc.reason == "post_scan.finding_blocked"
     assert sink.calls == []
 
