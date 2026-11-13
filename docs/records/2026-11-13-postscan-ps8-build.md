@@ -60,3 +60,17 @@ The gate's DuckDB connection is a run connection: `execute_route` binds one reco
 - `test_a_cap_above_the_detected_cpus_is_clamped_to_them`: was `{threads} == {4}`; now every connection equals the formula with the cap 64 clamped to the 4 CPUs, and the largest is 4, so the cap is still clamped to the CPUs.
 - `test_applied_pairs_are_the_distinct_connection_settings`: unchanged. It now holds because `applied` includes the gate's connection.
 - `test_a_small_memory_limit_takes_threads_below_the_cap`: unchanged.
+
+## Key type comparison (orchestrator ruling, 2026-11-13)
+
+`keys_comparable` no longer carries its own type-family table. The one exact key cast now lives in
+`decoy_engine/_arrow_types.py` (`exact_key_cast`, `key_comparison_type`); the out-of-core join's
+`cast_fk_chunk` calls it for every cast except the int-to-float refusal, which keeps its coded
+`ExecutionError`. The scan and the gate compare two key ends when that cast has a route between their types,
+and cast each child batch to the comparison type before it is loaded. Integers of any width still
+load as one BIGINT or HUGEINT column. A pair with no route, or a value with no exact cast, ends the
+key count as `key_type_mismatch`, and the gate defers (report only, reason
+`post_scan.gate_deferred_route`) rather than blocking. An inherited mismatch (child inputs against
+a generated parent) still blocks. The duplicate-parent-key block is pinned by
+`test_at24_a_subset_run_with_a_broken_key_still_blocks` and
+`test_at16_a_blocking_verdict_commits_nothing_on_every_no_sink_route`.

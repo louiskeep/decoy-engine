@@ -108,7 +108,7 @@ def test_duplicate_excess_counts_complete_keys_only(tmp_path: Path) -> None:
 def test_type_mismatch_gives_no_counts(tmp_path: Path) -> None:
     src = {
         "p": _parquet(tmp_path, "p", pa.table({"id": pa.array([1, 2], pa.int64())})),
-        "c": _csv(tmp_path, "c", "pid\n1\n9\n"),
+        "c": _parquet(tmp_path, "c", pa.table({"pid": pa.array([[1], [9]])})),
     }
     f = _facts(src, _rel(("p", ["id"]), ("c", ["pid"])))
     assert f.status == "key_type_mismatch"

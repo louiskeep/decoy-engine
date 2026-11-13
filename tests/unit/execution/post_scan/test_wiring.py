@@ -405,6 +405,72 @@ def test_a_mask_that_breaks_a_matched_key_of_a_generated_parent_still_blocks() -
 # ----- the mixed route and a sink ---------------------------------------------------------------
 
 
+# ----- key types the join casts between: the gate compares them the way the join does ---------
+
+MASK_REL = {
+    "parent": {"table": "parent", "columns": ["id"]},
+    "children": [{"table": "child", "columns": ["pid"]}],
+    "orphan_policy": "preserve",
+}
+MASK_KINDS = {"parent": "mask", "child": "mask"}
+
+
+def _typed_run(
+    parent_keys: pa.Array, child_keys: pa.Array, source_child: pa.Array | None = None
+) -> PostScanGate:
+    gate = PostScanGate({"relationships": [MASK_REL]})
+    sources = {
+        "parent": pa.table({"id": parent_keys}),
+        "child": pa.table({"pid": source_child if source_child is not None else child_keys}),
+    }
+    gate.run_resident(
+        {"parent": pa.table({"id": parent_keys}), "child": pa.table({"pid": child_keys})},
+        sources,
+        MASK_KINDS,
+    )
+    return gate
+
+
+def test_a_string_parent_with_an_int64_child_runs_under_the_gate_and_is_not_blocked() -> None:
+    gate = _typed_run(pa.array(["0", "1", "2"]), pa.array([0, 1, 2, 2], type=pa.int64()))
+    assert gate.ran and not gate.deferred
+    assert gate.verdict is not None and not gate.verdict.blocking
+    assert gate.report is not None
+    (child,) = (k for k in gate.report["keys"] if k["kind"] == "foreign")
+    assert (child["status"], child["output"]["orphan_rows"]) == ("checked", 0)
+
+
+def test_a_string_parent_with_an_int64_child_still_blocks_a_key_the_mask_broke() -> None:
+    exc = _blocked(
+        lambda: _typed_run(
+            pa.array(["0", "1", "2"]),
+            pa.array([0, 9, 2], type=pa.int64()),
+            source_child=pa.array([0, 1, 2], type=pa.int64()),
+        )
+    )
+    assert exc.reason.startswith("post_scan.")
+
+
+def test_a_key_pair_with_no_exact_cast_defers_the_gate_instead_of_blocking() -> None:
+    gate = _typed_run(
+        pa.array(["0", "1"]), pa.array([{"a": 0}, {"a": 1}], type=pa.struct([("a", pa.int64())]))
+    )
+    assert gate.ran and gate.deferred
+    assert gate.verdict is None
+
+
+def test_a_value_that_does_not_cast_exactly_blocks_as_a_key_type_mismatch() -> None:
+    # An int64 key past 2**53 has no exact double image: the join refuses it with a coded error.
+    exc = _blocked(
+        lambda: _typed_run(
+            pa.array([1.0]),
+            pa.array([2**60 + 1], type=pa.int64()),
+            source_child=pa.array([1], type=pa.int64()),
+        )
+    )
+    assert exc.reason == "post_scan.key_type_mismatch"
+
+
 def _mixed_job(tmp_path: Path) -> tuple[dict[str, Any], Any]:
     from tests.parity._f2_mixed_support import child_table, mixed_config
 

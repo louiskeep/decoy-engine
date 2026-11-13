@@ -79,6 +79,9 @@ class KeyResult:
     baseline: Baseline
     error_class: str | None = None
     baseline_error_class: str | None = None
+    # True when a `key_type_mismatch` is because the two key types have no cast route at all, as
+    # against a value the cast cannot hold exactly. Not part of the report.
+    no_cast_route: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -182,7 +185,17 @@ class _Run:
             output=out,
             baseline=baseline,
             baseline_error_class=failed,
+            no_cast_route=status == "key_type_mismatch" and not self._has_cast_route(end, parents),
         )
+
+    def _has_cast_route(self, end: _End, parents: tuple[_End, ...]) -> bool:
+        """Whether the output ends of this key have a cast route between their types."""
+        got = self._resolve("output", end, parents)
+        if isinstance(got, str) or not parents:
+            return True
+        own, found = got
+        found = [k for p in parents if isinstance(k := self._parent_keys(p), KeyBatches)]
+        return keys_comparable(_union(found), [*found[1:], own])
 
     def _baseline(
         self, end: _End, parents: tuple[_End, ...], out_status: Status
@@ -245,6 +258,8 @@ class _Run:
         facts = key_facts(
             _union(keys), [*keys[1:], own], scratch=self._scratch, memory_limit=self._limit
         )
+        if facts.status == "key_type_mismatch":
+            return "key_type_mismatch"
         if facts.status != "checked":
             return None
         c = facts.children[-1]

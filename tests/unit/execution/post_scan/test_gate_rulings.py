@@ -147,12 +147,12 @@ def test_a_fully_quarantined_table_is_not_a_type_mismatch() -> None:
     assert _warned(gate) == {QUARANTINED}
 
 
-def test_two_real_families_are_still_a_mismatch() -> None:
+def test_a_key_pair_with_no_exact_cast_defers_the_gate_and_does_not_block() -> None:
     gate = _gate()
     source = {"p": pa.table({"id": ["a"]}), "c": pa.table({"pid": ["a"]})}
-    outputs = {"p": pa.table({"id": ["a"]}), "c": pa.table({"pid": [1]})}
-    exc = _blocked(lambda: gate.run_resident(outputs, source, KINDS))
-    assert exc.reason == "post_scan.key_type_mismatch"
+    outputs = {"p": pa.table({"id": ["a"]}), "c": pa.table({"pid": [[1]]})}
+    gate.run_resident(outputs, source, KINDS)
+    assert gate.deferred and gate.verdict is None
 
 
 # ----- H1: one generated and one masked parent --------------------------------------------------
@@ -202,26 +202,37 @@ def test_a_child_that_still_resolves_against_the_masked_parent_passes() -> None:
 
 def test_an_inherited_type_mismatch_still_blocks_and_is_labelled_as_one() -> None:
     gate = _gate([GENERATED])
-    outputs = {"people": pa.table({"id": [1, 2]}), "accounts": pa.table({"person_id": ["a", "b"]})}
+    # A list key has no cast to an integer, in the source as in the output.
+    lists = pa.array([[1], [2]])
+    outputs = {"people": pa.table({"id": [1, 2]}), "accounts": pa.table({"person_id": lists})}
     exc = _blocked(
-        lambda: gate.run_resident(
-            outputs, {"accounts": pa.table({"person_id": ["a", "b"]})}, GEN_KINDS
-        )
+        lambda: gate.run_resident(outputs, {"accounts": pa.table({"person_id": lists})}, GEN_KINDS)
     )
     assert exc.reason == "post_scan.key_type_mismatch"
     (child,) = (k for k in exc.report["keys"] if k["kind"] == "foreign")
     assert child["baseline"] == "inherited_type_mismatch"
 
 
-def test_a_run_that_changes_a_key_type_beside_a_generated_parent_is_a_type_mismatch() -> None:
+def test_a_run_that_changes_a_key_to_a_type_with_no_cast_defers_beside_a_generated_parent() -> None:
+    gate = _gate([GENERATED])
+    outputs = {
+        "people": pa.table({"id": [1.0, 2.0]}),
+        "accounts": pa.table({"person_id": pa.array([[1], [2]])}),
+    }
+    sources = {"accounts": pa.table({"person_id": [1.0, 2.0]})}
+    gate.run_resident(outputs, sources, GEN_KINDS)  # not check_error, not a block
+    assert gate.deferred and gate.verdict is None
+
+
+def test_a_run_that_changes_a_float_key_to_int_beside_a_generated_parent_is_measured() -> None:
     gate = _gate([GENERATED])
     outputs = {
         "people": pa.table({"id": [1.0, 2.0]}),
         "accounts": pa.table({"person_id": pa.array([1, 2], pa.int64())}),
     }
     sources = {"accounts": pa.table({"person_id": [1.0, 2.0]})}
-    exc = _blocked(lambda: gate.run_resident(outputs, sources, GEN_KINDS))
-    assert exc.reason == "post_scan.key_type_mismatch"  # not check_error
+    gate.run_resident(outputs, sources, GEN_KINDS)
+    assert gate.ran and not gate.deferred
 
 
 # ----- M1: integrity: true withholds a run on a failing column finding --------------------------

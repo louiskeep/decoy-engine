@@ -24,6 +24,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionResult, run_pipeline
 from decoy_engine.execution._pipeline_routing import _sequential_eligible, decide_execution_route
+from decoy_engine.execution.pipeline import _post_scan as post_scan_module
 from decoy_engine.relationships import RelationshipGraph
 from tests._declared_schema import declare_rest
 
@@ -341,7 +342,14 @@ class TestInjectedLeakFailBefore:
         assert r.quality_metrics["failed_checks"] == []
         assert r.quality_metrics["post_validation_enforce"] is False
 
-    def test_post_validation_on_duplicate_pk_populates_failed_checks(self, tmp_path: Path) -> None:
+    def test_post_validation_on_duplicate_pk_populates_failed_checks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The key is declared on a relationship, and a declared relationship puts the run under
+        # the post-scan gate, which withholds a run that collapses its keys before post_validation
+        # can report it. This test is about post_validation, so the gate is off for it; the gate's
+        # own duplicate-key block is pinned in tests/unit/execution/post_scan/test_wiring.py.
+        monkeypatch.setattr(post_scan_module, "post_scan_gate_applies", lambda config: False)
         cfg, src = _dup_pk_fk_config(tmp_path)
         r = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION, post_validation=True)
         assert r.quality_metrics["quality_summary"]["failed_checks"] == ("pk_uniqueness",)

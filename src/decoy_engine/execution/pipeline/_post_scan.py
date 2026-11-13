@@ -130,6 +130,18 @@ class PostScanGate:
             if passes_through(exc):
                 raise
             failed = safe_error_class(type(exc).__name__)
+        if any(
+            key.status == "key_type_mismatch"
+            and key.no_cast_route
+            and key.baseline != "inherited_type_mismatch"
+            for key in keys
+        ):
+            # No cast route joins these key types, so the gate cannot say the join broke. A run
+            # that succeeds on main is not refused for a comparison the gate cannot make. A value
+            # the cast cannot hold exactly is different: the join refuses it, so it blocks.
+            self.deferred = True
+            self._report_only(outputs, sources, table_kinds)
+            return
         report: dict[str, Any] = {"schema_version": SCHEMA_VERSION}
         if post_scan_integrity_requested(self._config):
             try:

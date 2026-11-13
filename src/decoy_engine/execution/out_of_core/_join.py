@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Final
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._arrow_types import exact_key_cast
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import (
     FK_KEY_DTYPE_UNSUPPORTED_CODE,
@@ -452,33 +453,24 @@ def cast_fk_chunk(chunk: pa.Array, target: pa.DataType) -> pa.Array:
     if chunk.type.equals(target):
         return chunk
     if pa.types.is_integer(chunk.type) and pa.types.is_floating(target):
-        widened = chunk.cast(target, safe=False)
-        # Round-trip back to the source integer type: `Array.equals` is exact on
-        # both values and null positions, so a drifted (rounded) key makes it
-        # False while a lossless widening leaves it True.
-        if not widened.cast(chunk.type, safe=False).equals(chunk):
-            raise ExecutionError(
-                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
-                message=(
-                    f"out-of-core FK output has an integer key outside the "
-                    f"exactly-representable float range casting {chunk.type} -> "
-                    f"{target}; the whole-column type is float only because a "
-                    "fractional value was possible, and rounding the key would "
-                    "drift from the pandas oracle's exact integer, so it is "
-                    "rejected rather than published rounded."
-                ),
-            )
-        return widened
-    # pyarrow's cast error quotes the value. The same Arrow class is re-raised with the types
-    # only, after the `except` block (no cause or context): `fk_output_array` turns it into the
-    # coded refusal, and the whole-column parity battery expects the Arrow family here.
-    try:
-        return chunk.cast(target)
-    except MemoryError:
-        raise
-    except pa.ArrowException as exc:
-        failed = type(exc)
-    raise failed(f"cannot cast an FK key chunk {chunk.type} -> {target} exactly")
+        try:
+            return exact_key_cast(chunk, target)
+        except pa.ArrowInvalid:
+            pass
+        raise ExecutionError(
+            code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+            message=(
+                f"out-of-core FK output has an integer key outside the "
+                f"exactly-representable float range casting {chunk.type} -> "
+                f"{target}; the whole-column type is float only because a "
+                "fractional value was possible, and rounding the key would "
+                "drift from the pandas oracle's exact integer, so it is "
+                "rejected rather than published rounded."
+            ),
+        )
+    # The Arrow family is kept with the types only (no key value): `fk_output_array` turns it
+    # into the coded refusal, and the whole-column parity battery expects the Arrow family here.
+    return exact_key_cast(chunk, target)
 
 
 def _unified_chunk_type(types: set[pa.DataType]) -> pa.DataType | None:

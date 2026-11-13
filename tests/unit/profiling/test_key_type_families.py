@@ -129,8 +129,14 @@ COMPARABLE_PAIRS = [
 
 
 def test_every_same_family_pair_is_comparable() -> None:
-    same_family = len(INTS) * (len(INTS) - 1) + len(STRINGS) * (len(STRINGS) - 1)
-    assert len(COMPARABLE_PAIRS) == same_family
+    same_family = [
+        (p, c)
+        for group in (INTS, STRINGS)
+        for p, c in itertools.product(group, group)
+        if not p.equals(c)
+    ]
+    # Pairs the join casts between are compared too; none of the same-family pairs may drop out.
+    assert all(pair in COMPARABLE_PAIRS for pair in same_family)
 
 
 @pytest.mark.parametrize(("ptype", "ctype"), COMPARABLE_PAIRS, ids=lambda t: str(t))
@@ -185,16 +191,36 @@ def test_union_shaped_parent_widens_past_the_first_schema(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("parent", "child"),
     [
-        (pa.array([1], pa.int64()), pa.array(["1"], pa.string())),
-        (pa.array([1.0], pa.float64()), pa.array([1], pa.int64())),
-        (pa.array([1], pa.int64()).dictionary_encode(), pa.array([1], pa.int64())),
+        (pa.array([1], pa.int64()), pa.array([[1]])),
+        (pa.array(["1"], pa.string()), pa.array([{"a": 1}])),
+        (pa.array([1.0], pa.float64()), pa.array([[1.0]])),
     ],
-    ids=["int-string", "float-int", "int-dictionary-int"],
+    ids=["int-list", "string-struct", "float-list"],
 )
-def test_other_families_stay_mismatches(tmp_path: Path, parent: pa.Array, child: pa.Array) -> None:
+def test_pairs_with_no_exact_cast_stay_mismatches(
+    tmp_path: Path, parent: pa.Array, child: pa.Array
+) -> None:
     facts = _run(tmp_path, _keys(parent), _keys(child))
     assert facts.status == "key_type_mismatch"
     assert facts.children == ()
+
+
+@pytest.mark.parametrize(
+    ("parent", "child"),
+    [
+        (pa.array(["1", "2"], pa.string()), pa.array([1, 9], pa.int64())),
+        (pa.array([1.0, 2.0], pa.float64()), pa.array([1, 9], pa.int64())),
+        (pa.array([1, 2], pa.int64()).dictionary_encode(), pa.array([1, 9], pa.int64())),
+        (pa.array([1, 2], pa.int64()), pa.array(["1", "9"], pa.string())),
+    ],
+    ids=["string-int", "float-int", "int-dictionary-int", "int-string"],
+)
+def test_pairs_the_join_casts_between_are_measured_by_value(
+    tmp_path: Path, parent: pa.Array, child: pa.Array
+) -> None:
+    facts = _run(tmp_path, _keys(parent), _keys(child))
+    assert facts.status == "checked"
+    assert facts.children[0].orphan_rows == 1
 
 
 def test_keys_comparable_reads_schemas_and_opens_no_connection(
@@ -217,10 +243,8 @@ def test_keys_comparable_reads_schemas_and_opens_no_connection(
     assert keys_comparable(schema_only(pa.int32()), [schema_only(pa.uint64())])
     assert keys_comparable(schema_only(dict_string), [schema_only(pa.string())])
     assert keys_comparable(schema_only(pa.int8()), [])
-    assert not keys_comparable(schema_only(pa.int64()), [schema_only(pa.string())])
+    assert keys_comparable(schema_only(pa.int64()), [schema_only(pa.string())])
+    assert not keys_comparable(schema_only(pa.int64()), [schema_only(pa.list_(pa.int64()))])
     assert not keys_comparable(
-        schema_only(pa.int32()), [schema_only(pa.int32()), schema_only(pa.float64())]
-    )
-    assert not keys_comparable(
-        schema_only(pa.dictionary(pa.int32(), pa.int64())), [schema_only(pa.int64())]
+        schema_only(pa.int32()), [schema_only(pa.int32()), schema_only(pa.list_(pa.int32()))]
     )

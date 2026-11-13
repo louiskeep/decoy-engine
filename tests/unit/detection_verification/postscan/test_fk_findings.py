@@ -100,7 +100,7 @@ def test_no_orphan_is_info() -> None:
 
 
 def test_a_mismatch_over_a_mismatched_source_warns(tmp_path: Path) -> None:
-    data = batches(p={"id": [1]}, c={"pid": ["1"]})
+    data = batches(p={"id": [1]}, c={"pid": [[1]]})
     keys = keys_of(tmp_path, data, data)
     (f,) = fk({}, {}, keys=keys)
     assert f["severity"] == "warning"
@@ -121,7 +121,7 @@ def test_only_a_key_that_blocks_without_counts_derives_error(tmp_path: Path, cas
     output = {
         "error": batches(p={"id": [1]}, c={"pid": [1]}),
         "key_column_missing": batches(p={"id": [1]}, c={"other": [1]}),
-        "key_type_mismatch": batches(p={"id": [1]}, c={"pid": ["1"]}),
+        "key_type_mismatch": batches(p={"id": [1]}, c={"pid": [[1]]}),
     }[case]
     if case == "error":
         output["c"] = failing(output["c"])
@@ -253,13 +253,13 @@ def test_a_float_self_reference_with_only_inherited_orphans_warns() -> None:
     assert (f["severity"], f["orphan_count"], f["source_orphan_count"]) == ("warning", 1, 1)
 
 
-def test_a_non_whole_float_key_against_an_integer_parent_stays_a_mismatch() -> None:
-    # One fraction at the end of the column decides it: the whole column is read, not a sample.
+def test_a_non_whole_float_key_against_an_integer_parent_is_an_orphan() -> None:
+    # The ends compare in float, as the join casts them, so the one fraction is an orphan.
     whole = [1.0] * 2000
     source = frames(p={"id": [1, 2]}, c={"pid": [1] * 2001})
     output = frames(p={"id": [1, 2]}, c={"pid": [*whole, 1.5]})
     (f,) = fk(source, output)
-    assert (f["severity"], f["orphan_count"]) == ("error", 0)
+    assert (f["severity"], f["orphan_count"]) == ("fail", 1)
 
 
 @pytest.mark.parametrize("source_side", ["error", "key_type_mismatch"])
@@ -270,7 +270,7 @@ def test_an_introduced_orphan_over_an_unusable_source_still_fails(
         source = batches(p={"id": [1]}, c={"pid": [1]})
         source["c"] = failing(source["c"])
     else:
-        source = batches(p={"id": [1]}, c={"pid": ["1"]})
+        source = batches(p={"id": [1]}, c={"pid": [[1]]})
     keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": [1, 9]}))
     (f,) = fk({}, {}, keys=keys)
     assert (f["severity"], f["orphan_count"], f["source_orphan_count"]) == ("fail", 1, None)
@@ -283,7 +283,7 @@ def test_an_output_mismatch_over_an_unmeasured_baseline_is_an_error(
 ) -> None:
     # `key_column_missing` when the source lacks the column, `no_source` when it lacks the table.
     source = batches(p={"id": [1]}) | ({} if source_child is None else batches(c=source_child))
-    keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": ["1"]}))
+    keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": [[1]]}))
     (key,) = (k for k in keys if k.kind == "foreign")
     assert (key.status, key.baseline) == (
         "key_type_mismatch",
@@ -310,18 +310,19 @@ def test_a_whole_float_key_of_any_float_dtype_is_an_integer_key(dtype: str) -> N
 
 
 @pytest.mark.parametrize("dtype", FLOATS)
-def test_a_non_whole_float_key_of_any_float_dtype_stays_a_mismatch(dtype: str) -> None:
+def test_a_non_whole_float_key_of_any_float_dtype_is_an_orphan(dtype: str) -> None:
     source = frames(p={"id": [1, 2]}, c={"pid": [1, 2]})
     output = frames(p={"id": [1, 2]}, c={"pid": floats([1.0, 1.5, None], dtype)})
     (f,) = fk(source, output)
-    assert (f["severity"], f["orphan_count"]) == ("error", 0)
+    assert (f["severity"], f["orphan_count"]) == ("fail", 1)
 
 
 @pytest.mark.parametrize("dtype", FLOATS)
-def test_an_all_null_float_key_of_any_float_dtype_stays_a_float_mismatch(
+def test_an_all_null_float_key_of_any_float_dtype_stays_a_float_and_is_compared(
     dtype: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # No non-null value is no evidence of an integer column, so the key scan sees the float.
+    # No non-null value is no evidence of an integer column, so the key scan sees the float. A
+    # float and an integer key now compare through the join's cast, so there is no mismatch.
     seen: list[pa.DataType] = []
 
     def spy(name: str, table: pa.Table) -> TableBatches:
@@ -333,4 +334,4 @@ def test_an_all_null_float_key_of_any_float_dtype_stays_a_float_mismatch(
     data = frames(p={"id": [1, 2]}, c={"pid": floats([None, None], dtype)})
     (f,) = fk(data, data)
     assert seen and all(pa.types.is_floating(t) for t in seen)
-    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("warning", 0, 0)
+    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("info", 0, 0)

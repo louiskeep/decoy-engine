@@ -113,7 +113,7 @@ def test_type_mismatch_returns_no_counts_and_opens_no_connection(
     monkeypatch.setattr(_duckdb, "connect_duckdb", refuse)
     facts = key_facts(
         _keys(["1"], pa.string()),
-        [_keys([1], pa.int64())],
+        [_keys([[1]], pa.list_(pa.int64()))],
         scratch=tmp_path / "s",
         memory_limit="64MB",
     )
