@@ -12,7 +12,7 @@ Rules consulted: `/home/cam/dev-rules/README.md`, `00-universal.md`, `risk-and-e
 ("Where Things Go"), CLI `.importlinter`, CLI `docs/ROADMAP.md` (rows 24b, 24p, 24zd, 24ze, 24zf,
 62, 63a, 66, 77, 93).
 
-Revision 4, after the Codex confirmation review of revision 3. Every finding is resolved in the
+Revision 5, after the Codex confirmation review of revision 4. Every finding is resolved in the
 text below or logged in section 13.
 
 Bases (2026-11-13): engine `origin/main` `3a30eb89`, CLI `origin/main` `a15afcc` (pins
@@ -53,10 +53,13 @@ Owner decisions used:
   are in E1; the exit-map baseline starts with the three real classifiers; the CLI engine-flag
   acceptance path uses the isolated-worker marker.
 - Codex confirmation rulings (tech lead, 2026-11-13): D7 remains the standing registered
-  shrink-only sentry and governs every new or changed human error; reused composite instances
-  rebuild seed-dependent pools when the resolved seed changes; the canonical boundary refuses
-  unpaired surrogates with a coded, value-free error; E1 and CL1 update their CODEMAP placement
-  rows; source citations use engine `3a30eb89` and CLI `a15afcc`.
+  shrink-only sentry and governs every new or changed human error. Because the ratchet admits
+  every key in a newly registered first inventory, sentry-only prerequisite CL0 registers an
+  exact inventory of today's CLI error-emission sites and merges before CL1. Reused composite
+  instances, including `CompositeCustom`, rebuild seed-dependent pools when the resolved seed
+  changes; the canonical boundary refuses unpaired surrogates with a coded, value-free error;
+  E1 and CL1 update their CODEMAP placement rows; source citations use engine `3a30eb89` and CLI
+  `a15afcc`.
 
 Risk: R2 overall. The row moves frozen-at-release surfaces: a `--json` error shape, exit codes,
 digest bytes for non-ASCII or non-default-separator content, generated output bytes for
@@ -166,8 +169,8 @@ After this row merges, and before REL-GATE:
 1. Every CLI command writes its `--json` error object in one documented shape
    (`docs/schemas/decoy-error-v1.schema.json` in the CLI repo). Every NEW or CHANGED human error
    goes through `ui/output.py::emit_error`, which prints with `markup=False` and prints under
-   `--quiet` too. Existing sites not changed by this row remain on the exact D7 shrink-only
-   baseline that the sentry enforces, and section 13 tracks their conversion. Their JSON
+   `--quiet` too. CL0 first records exactly today's sites in D7. Existing sites not changed by
+   this row remain on that shrink-only baseline, and section 13 tracks their conversion. Their JSON
    literals are proven to fit the same shape by an AST check over every literal, not by sampling
    (AT-CL1-6).
 2. Every CLI command that maps an unexpected exception to an exit code uses one function,
@@ -302,14 +305,17 @@ Converted in CL1 (drifted or local emitters outside the hot lanes): `cli/unmask.
 `cli/fit.py:403`, `cli/tokenize.py:180`, `:520`, `cli/scanning/_multi.py:216`,
 `cli/gen/_scaffold.py:164`, `cli/reference.py:272-284`, `:300-313`. Converted in CL4:
 `cli/run/_errors.py`, `cli/run/_evidence.py`, `cli/run/_notify.py`, `cli/scan.py`. Every other
-`err_console.print(error(` site stays on the D7 baseline (CX-1 full conversion is V1+). The
-baseline records the exact `(path, function, normalized error-expression fingerprint)` for each
-legacy human or JSON error construction. A new expression or a change to an existing expression
-is therefore a gained key and must use `emit_error`; a conversion only removes a key. The
-baseline is registered in `scripts/dev/sentry_registry.toml`, and `scripts/dev/ratchet_check.py`
-compares it with the merge-base copy, so adding a site and adding it to the baseline in the same
-change still fails. AT-CL1-6 proves each retained `"status": "error"` literal fits the schema and
-seeds a new direct site. AT-CL1-8 proves a baseline gain is rejected.
+`err_console.print(error(` site stays on the D7 baseline (CX-1 full conversion is V1+). CL0's
+baseline records the exact `(path, function, normalized error-expression fingerprint)` for every
+human or JSON error construction on CLI `origin/main`. Its test recomputes that inventory from
+the source tree and requires exact equality with the committed baseline, closing the ratchet's
+first-inventory admission. CL0 registers the baseline in `scripts/dev/sentry_registry.toml` and
+`tests/sentry/_baseline_sources.py`, then merges before CL1. From CL1 onward,
+`scripts/dev/ratchet_check.py` compares with that merge-base copy, so adding a site and adding it
+to the baseline in the same change fails. A new expression or a change to an existing expression
+is a gained key and must use `emit_error`; a conversion only removes a key. AT-CL1-6 proves each
+retained `"status": "error"` literal fits the schema and seeds a new direct site. AT-CL1-8 proves
+the post-CL0 ratchet rejects every gain.
 
 ### 4.2 C2: one exception-to-exit map (CLI)
 
@@ -476,10 +482,12 @@ mismatch code and must be rebuilt; the changelog `Breaking:` line says so.
   The rule is idempotent, so a resolved spec passes through unchanged and the street pool, the
   bundle build, the `BundlePool.seed` metadata and the sample of one call all use the same seed.
   The smaller cache fix is to keep each existing one-entry cache but key it by the resolved seed:
-  `generation/composite/_address.py`, `_city_state_zip.py`, `_name_email.py`, `_person.py` and
-  `_provider.py` store the seed beside their cached pool data and rebuild when `spec.seed` differs.
-  They do not add an unbounded per-seed cache. This makes a second call on one composite instance
-  equivalent to a fresh instance created for the second resolved seed.
+  `generation/composite/_address.py`, `_city_state_zip.py`, `_custom.py`, `_name_email.py`,
+  `_person.py` and `_provider.py` store the seed beside their cached pool data and rebuild when
+  `spec.seed` differs. In `CompositeCustom`, the recorded seed governs the existing
+  `self._pools is not None` return in `_build_pools`. They do not add an unbounded per-seed cache.
+  This makes a second call on one composite instance equivalent to a fresh instance created for
+  the second resolved seed.
   The 13 all-zero fallbacks go:
   `generation/composite/_address.py:70` (street pool), `:96` (bundle build);
   `_city_state_zip.py:86` (`BundlePool.seed`); `_custom.py:184`, `:206`;
@@ -745,12 +753,12 @@ records the route so REL-GATE's checklist finds it in 24p.
 |---|---|---|---|---|
 | 1 | Value-bearing output | `emit_error` takes only a message the caller built; the loader, `CanonicalJsonError`, `EnvFlagError`, `env_int` and `seed_bytes_to_int` errors name a variable, type or field and are raised after the handler, so no `__context__` holds file bytes, a config value, an env value or a key; the surrogate refusal is fixed text and carries no input text; the signature-flag warning stops logging the raw value | AT-CL1-5, AT-CL3-3, AT-E1-4, AT-E1-9, AT-E3-3 | put `{exc}` in the decode branch; include the env value in the `EnvFlagError` text |
 | 2 | Cleanup missing on an exit path | N/A for new state: no slice adds a file, lock or scratch. The loader refuses before any output is opened, so `run` leaves nothing behind | AT-CL3-8 (no output file) | move the load after the first table write |
-| 3 | State and concurrency | Every helper is a pure function of its arguments or of one env read at call time; no module cache is added (an env flag read once at import would miss a test's monkeypatch); `resolve_seed` draws per call, never per process; the five existing one-entry composite caches rebuild when their recorded resolved seed differs | AT-E3-2, AT-CL2-2, AT-E2-5 | cache `env_flag` results in a module dict; cache `fresh_seed()` in a module global; leave the first composite pool cached after the seed changes |
+| 3 | State and concurrency | Every helper is a pure function of its arguments or of one env read at call time; no module cache is added (an env flag read once at import would miss a test's monkeypatch); `resolve_seed` draws per call, never per process; the six existing one-entry composite caches rebuild when their recorded resolved seed differs | AT-E3-2, AT-CL2-2, AT-E2-5 | cache `env_flag` results in a module dict; cache `fresh_seed()` in a module global; in each cache, including `CompositeCustom._pools`, retain the first pool after the seed changes |
 | 4 | Route parity and silent fallback | `joint_mask` runs only on the whole-frame route: it is not chunk admitted (`execution/_chunked_carry.py:225-230`), the out-of-core compat rejects it as a cross-row strategy and falls back (`out_of_core/_compat.py:28-35`, `:310-323`), and it is not native eligible (`native/_capabilities.py:376`). A1 changes the one transform that route calls. The loader is the only config path for every command, the gate included | AT-E2-2, AT-CL3-2 | leave the old seed in the gen-mode branch only; admit `joint_mask` to the chunk set |
 | 5 | Referential integrity | `joint_mask` keyed selection on non-null keys is unchanged, so a key that maps to a reference row still maps to the same row; null-key rows already had no key relationship | AT-E2-3 | route the keyed path through the new source too |
 | 6 | Untrusted producer | a config file and environment variables are user input: every decode, parse, shape and spelling failure maps to one named code or one documented safe side before any field is used | AT-CL3-1 to AT-CL3-4, AT-E3-2, AT-CL2-2 | catch only `YAMLError` again; let `safe_env_flag` raise on an unknown value |
 | 7 | Check then use (TOCTOU) | the loader reads the file once and parses those bytes; no caller re-opens the path to re-read | AT-CL3-5 | re-read the path after the decode check |
-| 8 | Weak tests and overclaimed evidence | every AT is red on the bases except named controls; byte-identity ATs compare bytes, not exit codes; the `--json` shape is proven for converted sites by running every command and for unconverted sites by an AST check of every literal, not by sampling | AT-CL1-1, AT-CL1-6; gate reviewers rerun the named mutations | relax AT-CL1-6 to the converted files; run AT-CL2-4 in `--json` mode |
+| 8 | Weak tests and overclaimed evidence | every AT is red on the bases except named controls; byte-identity ATs compare bytes, not exit codes; CL0 proves its first inventory by exact source-to-baseline equality; the `--json` shape is proven for converted sites by running every command and for unconverted sites by an AST check of every literal, not by sampling | AT-CL0-1, AT-CL1-1, AT-CL1-6; gate reviewers rerun the named mutations | weaken AT-CL0-1 to a subset check; relax AT-CL1-6 to the converted files; run AT-CL2-4 in `--json` mode |
 | 9 | Behaviour-preserving refactor drift | `seed_fingerprint_bytes` keeps `strategy_config_fingerprint` and `_config_hash` bytes (AT-E1-2); `canonical_json_bytes` keeps `records` bytes (AT-E1-5); `emit_json_document` keeps both stdout documents (AT-CL2-4); `seed_bytes_to_int` keeps `_sampler`'s 8-byte behaviour; `resolve_seed` keeps the 32-byte deterministic composite conversion and output | AT-E1-2, AT-E1-5, AT-E2-8, AT-CL2-4, pool sampler tests | set `ensure_ascii=False` in `seed_fingerprint_bytes`; truncate the composite mask key; route the streamed scan through `emit_json` |
 | 10 | Frozen contract drift | every moved surface is listed in section 9 with a dated compatibility note and a `Breaking:` fragment; REL-GATE has not frozen anything yet (row 93 NOT STARTED); goldens may change only as stop line 5 allows; the CLI evidence manifest hash is checked unchanged for non-ASCII content | AT-E2-1, golden suites, AT-CL1-1, AT-CL5-2 | let a golden for a non-`joint_mask` fixture change |
 
@@ -839,7 +847,7 @@ row 24ze when this plan passes its gate.
 | one engine flag parser (D6 part) | `internal/env_flags.py` | engine `tests/sentry/defects/test_environment_reads.py` (24ze D6; 24zf adds the flag rule) | `os.environ.get("X") == "1"`, `os.getenv("X", "0") in {...}`, `os.environ["X"].strip().lower() == "true"`, `from os import environ as e; e.get("X") != "0"`, `bool(os.environ.get("X"))` | restore `== "1"` at `loader.py:186` |
 | one generated-at shape | `datetime.now(timezone.utc).isoformat()` | engine `tests/sentry/profiling/test_generated_at_shape.py` | `.isoformat() + "Z"`, `f"{dt.isoformat()}Z"`, `datetime.utcnow()`, `from datetime import datetime as D; D.utcnow()` | restore `utcnow().isoformat() + "Z"` in `profiling/types.py` |
 | one NER mismatch raise | `_ner_config.enforce_ner_model_version` | engine `tests/sentry/defects/test_ner_mismatch_single_site.py` | a raise naming `NER_MODEL_VERSION_MISMATCH` directly, through `reasons.mask.NER_MODEL_VERSION_MISMATCH`, or through a local alias of the code | inline the raise again in `_mask_group_c.py` |
-| one error emitter (D7) | `ui/output.emit_error` | CLI `tests/sentry/cli_text/test_one_error_emitter.py` (24ze D7); exact `(path, function, normalized error-expression fingerprint)` inventory in a registered shrink-only baseline, checked against its merge-base copy | `err_console.print(error(`, `state.err_console.print(error("error:"), ...)`, a dict literal with `"status": "error"`, `dict(status="error", ...)` | add `state.err_console.print(error("error:"), msg)` in `unmask.py`; change one retained expression; add either gained key to the baseline and show the ratchet still rejects it |
+| one error emitter (D7) | `ui/output.emit_error` | CLI `tests/sentry/cli_text/test_one_error_emitter.py` (24ze D7); CL0 recomputes the exact `(path, function, normalized error-expression fingerprint)` inventory and requires equality with its newly registered baseline, then CL1 and later slices check that baseline against its merge-base copy as a shrink-only ratchet | `err_console.print(error(`, `state.err_console.print(error("error:"), ...)`, a dict literal with `"status": "error"`, `dict(status="error", ...)` | CL0: add or remove a committed baseline key without the matching source change and the equality test fails. CL1: add `state.err_console.print(error("error:"), msg)` in `unmask.py`, change one retained expression, then add the gained key to the head baseline and show the merge-base ratchet still rejects it |
 | every error literal fits the schema | `docs/schemas/decoy-error-v1.schema.json` | CLI `tests/sentry/cli_text/test_one_error_emitter.py` (AT-CL1-6 lives here) | a baseline literal with `message`, a literal missing `error`, a `code` literal that fails the pattern, or a non-JSON context value | add `"message": ...` or a `set` context value to one baseline literal |
 | one exit map | `cli/exit_codes.exit_code_for` | CLI `tests/sentry/defects/test_exit_code_owner.py` (CL3 baseline is exactly `{run/_errors.py classifier, demo map, fit DP arms}` and CL4 empties it; distinct from 24ze D10, which watches literal exit codes) | an `isinstance(exc, ...)` chain returning `EXIT_*` names; a dict from exception types to exit codes | restore `demo.py`'s three-type map |
 | one config loader (D8) | `_config_file.py` | CLI `tests/sentry/io_policy/test_config_load_choke_point.py` (24ze D8), kind allowlist of section 4.5 | `yaml.safe_load(path.read_text())`, `import yaml as _yaml; _yaml.safe_load(...)`, `yaml.load(..., Loader=...)`, `yaml.compose(...)`, `YAML().load(...)` | add `yaml.safe_load(p.read_text())` in `tokenize.py` |
@@ -873,7 +881,7 @@ Every AT below is written first and is red on the bases unless marked control.
 | AT-E2-2 | E2 | gen mode: same as AT-E2-1 on the whole-frame route; `joint_mask` is absent from the chunk-admitted set and the out-of-core compat rejects it with `out_of_core_cross_row_strategy_unsupported`; a run requested on the out-of-core route falls back and its output equals the whole-frame output |
 | AT-E2-3 | E2 | control: non-null keyed `joint_mask` output is byte-identical before and after |
 | AT-E2-4 | E2 | `seed_bytes_to_int` refuses lengths 0, 7, 9 and 32 with a value-free `ValueError`; `resolve_seed` rejects a 4-byte seed but accepts 8 and 32 bytes unchanged; the native `CompositeBuildPoolProvider.generator` refuses `None` and `b""` |
-| AT-E2-5 | E2 | with `spec.seed=None`: one `generate_bundle` call uses one seed for the street pool, the bundle build, `BundlePool.seed` and the sample (patch `fresh_seed` to count calls: exactly 1); no path uses an all-zero seed; a seeded spec's output is byte-identical before and after (control). For each of `_address`, `_city_state_zip`, `_name_email`, `_person` and `_provider`, call `generate_bundle` twice with different resolved seeds on ONE instance and assert the second output, pool metadata and seed-dependent pool-builder calls equal a fresh instance called with only the second seed. Mutation: retain the first call's cached pool when the seed changes; the second-call equality must fail |
+| AT-E2-5 | E2 | with `spec.seed=None`: one `generate_bundle` call uses one seed for the street pool, the bundle build, `BundlePool.seed` and the sample (patch `fresh_seed` to count calls: exactly 1); no path uses an all-zero seed; a seeded spec's output is byte-identical before and after (control). For each of `_address`, `_city_state_zip`, `_custom`, `_name_email`, `_person` and `_provider`, call `generate_bundle` twice with different resolved seeds on ONE instance and assert the second output, pool metadata and seed-dependent pool-builder calls equal a fresh instance called with only the second seed. Mutation: in each class, including the `self._pools is not None` branch in `_custom.py`, retain the first call's cached pool when the seed changes; the second-call equality must fail |
 | AT-E2-6 | E2 | the 8 bytes at `job_seed[:8]` do not appear as the seed of any generator in `joint_mask` (patch `default_rng` and inspect its argument) |
 | AT-E2-7 | E2 | the draw-site catalogue lists `mask.joint_mask_null_fallback` and `mask.joint_mask_gen_row`; each has exactly one registered provider, scenario and output golden; `_GOLDEN_REGISTRY` and `MASK_STRATEGY_TO_SITE` are re-captured for those reviewed entries; `gen.composite_build_pool` names `resolve_seed` |
 | AT-E2-8 | E2 | control: a deterministic `composite_person` run with a 32-byte mask key completes and its output is byte-identical to main; patching `default_rng` shows the integer argument is exactly `int.from_bytes(the_full_32_byte_key, "big")` |
@@ -889,6 +897,7 @@ Every AT below is written first and is red on the bases unless marked control.
 
 | Id | Slice | Test |
 |---|---|---|
+| AT-CL0-1 | CL0 | recompute D7's exact `(path, function, normalized error-expression fingerprint)` inventory from the CLI source tree and assert it equals `tests/sentry/baselines/one-error-emitter.json`, which is registered in both ratchet registry tables with `created_in = "CL0"`; adding or removing a committed key without the corresponding source change fails |
 | AT-CL1-1 | CL1 | for every command with `--json`, a known-bad input gives one stdout object that validates against `decoy-error-v1.schema.json` (parametrized over the command list from `__main__.py`, not hand-picked) |
 | AT-CL1-2 | CL1 | `fit --json` with a coded refusal: `code` is the code, `error` does not start with it, no `message` member |
 | AT-CL1-3 | CL1 | under `--quiet`, `unmask`, `scan` (multi) and `gen` scaffold all print the human error line to stderr and nothing to stdout |
@@ -896,7 +905,7 @@ Every AT below is written first and is red on the bases unless marked control.
 | AT-CL1-5 | CL1 | `emit_error` refuses a `context` key that shadows `command`, `status`, `error`, `code` or `hint`, and a `code` such as `Bad Code` or `ok\n` that fails `re.fullmatch` |
 | AT-CL1-6 | CL1 | AST check over every `"status": "error"` dict literal left on the D7 baseline: `command` and `error` present, `message` absent, any literal `code` matches `^[a-z][a-z0-9_.]*$`, and every member outside the fixed schema is JSON-typed; list and object context used by run is accepted, while a set is refused. A scratch source seeds a new direct human-error call and a new hand-built JSON error object; both are reported as gained D7 sites |
 | AT-CL1-7 | CL1 | every `--quiet` option's help text says errors still reach stderr (scan the Typer app, not the source) |
-| AT-CL1-8 | CL1 | the D7 baseline is registered; `ratchet_check.py` against the merge base rejects a new site, a changed retained error expression, and either gained fingerprint added to the head baseline; deleting a converted entry passes |
+| AT-CL1-8 | CL1 | with CL0's registered D7 baseline present in the merge base, `ratchet_check.py` rejects a new site, a changed retained error expression, and either gained fingerprint even when it is added to the head baseline; deleting a converted entry passes |
 | AT-CL2-1 | CL2 | `CI=false` and `CI=0`: update check runs as non-CI; `CI=true` and `CI=1`: CI |
 | AT-CL2-2 | CL2 | `DECOY_NO_UPDATE_CHECK=maybe`: the command exits 0 and makes no network call (patched fetch never called); `DECOY_NO_UPDATE_CHECK=0` runs the check; `DECOY_DEBUG=maybe` leaves debug off and the command runs |
 | AT-CL2-3 | CL2 | `NO_COLOR=` (empty) keeps colour; `NO_COLOR=1` disables it |
@@ -960,6 +969,8 @@ same slices as the paths they place.
 | error emitter, JSON document writer | `src/decoy/ui/output.py` | CLI | "Terminal output" |
 | schema-artifact layout map | `CODEMAP.md` | CLI | CL1 adds "Versioned schema artifacts": `docs/schemas/`, `<surface>-v<major>.schema.json`, contract or e2e tests, and owning schema consistency sentries |
 | error schema | `docs/schemas/decoy-error-v1.schema.json` | CLI | new "Versioned schema artifacts" row; beside `docs/schemas/decoy-ci-v1.schema.json` |
+| D7 first inventory | `scripts/dev/sentry_registry.toml`, `tests/sentry/_baseline_sources.py`, `tests/sentry/baselines/one-error-emitter.json` | CLI | "Sentry test": registry, baseline sources and baselines; CL0 commits exactly the inventory recomputed from today's source tree |
+| D7 source scanner and equality guard | `tests/sentry/cli_text/test_one_error_emitter.py` | CLI | "User-facing CLI text and crash handling": new sentries go in `tests/sentry/cli_text/` |
 | exit map | `src/decoy/cli/exit_codes.py` (existing) | CLI | "Exit codes" |
 | config loader | `src/decoy/_config_file.py` | CLI | "Private shared filesystem or process primitives used by more than one package" |
 | YAML error text (moved) | `src/decoy/cli/_yaml_errors.py` to `src/decoy/_yaml_errors.py` | CLI | same row; `cli/` fan-out pin 30 to 29 (`tests/sentry/layout/test_package_fanout.py`) |
@@ -967,7 +978,7 @@ same slices as the paths they place.
 | CLI flag parser | `src/decoy/_env_flags.py` | CLI | same row |
 | CLI layer contract | `.importlinter` (`exhaustive = true`) and the `LAYERS` snapshot in `tests/sentry/layout/test_import_layers.py`, edited in the same diff: the tier `_mask_secret`, `_mask_secret_guidance`, `_native_gate`, `_atomic`, `_row_sample` gains `_config_file` and `_env_flags` as `\|` siblings; the bottom tier `_private_file`, `_version` gains `_yaml_errors`. `_config_file` imports `_yaml_errors` (a lower tier); `_env_flags` imports nothing from `decoy`. No ignore line is added | CLI | "Layer contracts" |
 | CLI rule codes | `src/decoy/ci/rule_codes.py` gains `yaml.not_utf8`; `docs/ci-evidence/verification.md`; `tests/unit/test_ci_rule_codes.py` | CLI | existing modules |
-| CLI sentries | `tests/sentry/cli_text/test_one_error_emitter.py`, `tests/sentry/cli_text/test_stdout_writes.py`, `tests/sentry/io_policy/test_config_load_choke_point.py`, `tests/sentry/io_policy/test_environment_reads.py`, `tests/sentry/defects/test_exit_code_owner.py`; existing `tests/sentry/test_mask_secret_ref_shape.py` widened in place; `tests/sentry/test_yaml_error_leak_isolation.py` updated for the moved `_yaml_errors` owner | CLI | "User-facing CLI text and crash handling" (`cli_text/`), "Sentry test" (`io_policy/`, `defects/`); the existing root sentry stays in place |
+| other CLI sentries | `tests/sentry/cli_text/test_stdout_writes.py`, `tests/sentry/io_policy/test_config_load_choke_point.py`, `tests/sentry/io_policy/test_environment_reads.py`, `tests/sentry/defects/test_exit_code_owner.py`; existing `tests/sentry/test_mask_secret_ref_shape.py` widened in place; `tests/sentry/test_yaml_error_leak_isolation.py` updated for the moved `_yaml_errors` owner | CLI | "User-facing CLI text and crash handling" (`cli_text/`), "Sentry test" (`io_policy/`, `defects/`); the existing root sentry stays in place |
 | CLI tests | `tests/unit/test_ui_output.py`, `tests/unit/test_exit_codes.py`, `tests/unit/test_config_file.py`, `tests/unit/test_env_flags.py`, `tests/e2e/first_user/test_items_errors.py` | CLI | "Exit codes", "Terminal output", "First-user QA item tests" |
 
 No module crosses 600 lines: `ui/output.py` grows by about 75 to about 237; `exit_codes.py` by
@@ -1009,23 +1020,26 @@ paragraph, no shim, plus a `Breaking:` fragment where output or a public shape m
 | E2 | C4: A1, A3, A4, `determinism/_seeds.py`, draw-site entries, matching providers, provider scenarios and goldens, catalogue and registry content snapshots, D2 seed rule, compat note, fragment | engine | R2 (output change) | 24zd E1 to E3 merged (keeps golden diffs per row apart) | AT-E2-*, `tests/unit/transforms/`, composite and pool tests, golden suites, `tests/native/test_determinism_protocol.py`, `tests/native/test_draw_site_providers_golden.py`, `tests/native/test_draw_sites_catalogue_pinned.py` |
 | E3 | C7 engine: `internal/env_flags.py`, `EnvFlagError` and `env_flag_invalid`, sites, `_detectors.py` arm, rename, D6 flag rule, fragment | engine | R1 | none | AT-E3-*, model pack, detectors, isolated-run and faker setup tests, reason registry tests, public API test |
 | E4 | C8 and C9: `generated_at`, NER helper calls, two sentries, fragment | engine | R1 | none | AT-E4-*, profiling and text_mask tests, out-of-core group C tests |
-| CL1 | C1 part 1: `CODEMAP.md` schema-artifact row, `emit_error`, schema, the non-hot emitters, `--quiet` help texts, D7 sentry at an exact registered shrink-only baseline with AT-CL1-6 shape and new-site checks | CLI | R2 (public `--json` shape) | none (OQ-1 and OQ-2 closed) | AT-CL1-*, `tests/sentry/cli_text/`, ratchet tests, affected command unit and e2e tests |
+| CL0 | D7 prerequisite, sentry-only: source scanner and seeded-spelling self-tests, both ratchet registry entries, newly registered baseline equal to exactly today's CLI error-emission inventory, and the source-to-baseline equality guard | CLI | R2 (merge-gate sentry and ratchet baseline) | none | AT-CL0-1, `tests/sentry/cli_text/test_one_error_emitter.py`, baseline-registry and ratchet tests |
+| CL1 | C1 part 1: `CODEMAP.md` schema-artifact row, `emit_error`, schema, the non-hot emitters, `--quiet` help texts, D7 baseline shrink for converted sites, and AT-CL1-6 shape and new-site checks | CLI | R2 (public `--json` shape) | CL0 merged (OQ-1 and OQ-2 closed) | AT-CL1-*, `tests/sentry/cli_text/`, ratchet tests, affected command unit and e2e tests |
 | CL2 | C6 and C7 CLI (not `_notify.py`): `emit_json_document`, `_env_flags.py`, stdout and env sentries, layer contract entry for `_env_flags` | CLI | R1 | none | AT-CL2-*, update check, schema, scan and output tests, layer snapshot |
 | CL3 | C5 part 1 and C2 part 1: `_yaml_errors.py` move, `_config_file.py`, `parse_pipeline_yaml` adapter, `_run_config_base` checks deleted, every loader site except `_prepare.py`, `yaml.not_utf8` rule code, `exit_code_for` with run, demo and fit DP parity, `mask_secret_ref_problem`, D8 sentry with the kind allowlist, exit-code owner sentry with its exact three-entry shrink-only baseline, layer contract entries, `test_yaml_error_leak_isolation.py` import text, and regenerated `docs/diagrams/deps.svg` if the repository gate reports it stale | CLI | R2 (exit codes) | CL1 merged (uses `emit_error`) | AT-CL3-*, gate, validate, ci rule code, tokenize, unmask, report, subset, preflight, compile-explain and scaffold tests, `tests/sentry/test_mask_secret_ref_shape.py`, `tests/sentry/test_yaml_error_leak_isolation.py`, layer snapshot, fan-out sentry, dependency-diagram gate |
 | CL4 | Hot lanes: C1 part 2 (`run/_errors.py`, `_evidence.py`, `_notify.py`, `scan.py`), C2 part 2 (`run`, `demo`, `fit` call `exit_code_for`; `_errors.py` classifier deleted; exit-code owner baseline emptied), C5 part 2 (dead `UnicodeDecodeError` arm in `run/_prepare.py`), C7 `_notify.py` SMTP port | CLI | R2 (exit codes, hot lane) | rows 62 (the remaining C slices touching `_errors.py`), 63a (RUN-STREAM C1) and 66 (F29 C1) merged; CL1 and CL3 merged | AT-CL4-*, `tests/unit/test_exit_codes.py`, run error-arm, demo, fit and notify tests, `tests/sentry/cli_text/` |
 | CL5 | End-to-end checks of E1 to E4 through the CLI, and the global-handler arm for `EnvFlagError` | CLI | R1 | E1 to E4 in a daily engine release and the CLI repinned to it (row 77) | AT-CL5-* |
 
-E1, E3 and E4 touch no common file and can build in parallel; E2 waits for 24zd. CL1, CL2 and
-CL3 need no engine release (`parse_ref` is in the pinned 0.23.0; stop line 7). CL4 is the only
-slice that waits on the hot lanes; it is small once they land because CL1 and CL3 already built
-the owners. Escalation triggers (`testing.md`): E1 edits `.importlinter` and moves digests
+E1, E3 and E4 touch no common file and can build in parallel; E2 waits for 24zd. The CLI writer
+order starts with sentry-only CL0, which merges before any CL1 writer starts. CL1 then shrinks the
+now-established D7 baseline; AT-CL1-8 runs against CL0 in the merge base. CL1, CL2 and CL3 need
+no engine release (`parse_ref` is in the pinned 0.23.0; stop line 7), but CL3 still waits for CL1
+because it uses `emit_error`. CL4 is the only slice that waits on the hot lanes; it is small once
+they land because CL1 and CL3 already built the owners. Escalation triggers (`testing.md`): E1 edits `.importlinter` and moves digests
 (serialization), so its merge head gets the full engine suite against the stored main baseline;
 E2's goldens are the output alarm and must run; CL3 edits the CLI `.importlinter` and moves exit
 codes, and CL4 touches exit codes in the hot lanes, so the CLI full suite runs on each of their
 merge heads.
 
-Estimate: E1 medium, E2 small to medium, E3 small, E4 small, CL1 medium, CL2 small, CL3 medium,
-CL4 small to medium, CL5 small. Everything except CL4 and CL5 fits before 2026-11-24; CL4 lands
+Estimate: E1 medium, E2 small to medium, E3 small, E4 small, CL0 small, CL1 medium, CL2 small,
+CL3 medium, CL4 small to medium, CL5 small. Everything except CL4 and CL5 fits before 2026-11-24; CL4 lands
 as soon as rows 62, 63a and 66 merge, before the 2026-12-04 build date, leaving REL-GATE (row 93)
 unblocked.
 
@@ -1082,7 +1096,7 @@ tech-lead call recorded here, per the round 1 review and the orchestrator's ruli
 | 8 | One input, one trust class per entry point | The loader takes user config paths and text only; the policy file, layout file, CI manifest, CLI-written text and user-editable project marker keep their own named reader kinds on the D8 allowlist. `env_flag` reads user-set variables; the engine-set isolated-worker marker uses the same parser and reads `"1"` as today. |
 | 9 | Mutations on the final head | Each mutation in sections 6.1 and 6.3 reruns on the final head of its slice. |
 | 10 | Allowlisted helpers are still checked | Every allowlist (D3 kinds, D8 kinds, D7 baseline, exit-code owner baseline) keys on exact site identity and a test fails when an entry no longer matches a real site. D7 additionally fingerprints the normalized construction or emission expression, so changing a legacy error makes a gained site rather than silently reusing its `(path, function)` entry. |
-| 11 | No raised caps | No ceiling or baseline grows. D7 starts at today's count minus the converted sites and only shrinks; the exit-code owner baseline starts at the three verified classifiers and only shrinks to zero in CL4; the CLI `cli/` fan-out pin falls from 30 to 29. The engine root fan-out stays at 25 (a sub-package is added, not a module). The draw-site catalogue, provider registry, provider output and strategy-map digests are content snapshots re-captured for reviewed entries, not caps. Line-count pins moved by added lines, if any, are listed in each build report. |
+| 11 | No raised caps | No ceiling or established baseline grows. CL0's D7 first inventory equals exactly today's source inventory; after CL0 merges, CL1 and later slices may only shrink it. The exit-code owner baseline starts at the three verified classifiers and only shrinks to zero in CL4; the CLI `cli/` fan-out pin falls from 30 to 29. The engine root fan-out stays at 25 (a sub-package is added, not a module). The draw-site catalogue, provider registry, provider output and strategy-map digests are content snapshots re-captured for reviewed entries, not caps. Line-count pins moved by added lines, if any, are listed in each build report. |
 
 ## 13. V2-LOG
 
