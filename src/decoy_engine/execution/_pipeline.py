@@ -79,7 +79,6 @@ from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
 from decoy_engine.execution import _pipeline_route_dispatch as _dispatch
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._errors import vault_requires_resident_output
 from decoy_engine.execution._pipeline_context import classify_table_kinds
 from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
@@ -286,9 +285,7 @@ def run_pipeline(
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
     """
-    if sink is not None and vault_writer is not None:
-        # B0 (B-6 D1): the sink commits output inside this run; the vault could only follow it.
-        raise vault_requires_resident_output()
+    _ctx.refuse_vault_with_sink(sink, vault_writer)  # B0, before any config read
     config, stage = resolve_subset(config, subset_request, source_loader)
     stream_required = execution_mode == "stream"
     execution_mode = "auto" if stream_required else execution_mode
@@ -296,8 +293,7 @@ def run_pipeline(
     # MG-5: `tokenize` masks per-cell through a platform-injected token vault, threaded only to
     # the FULL-FRAME adapter (bounded routes fail closed with `tokenize_requires_vault`). A vault
     # is passed only for a tokenize job, so its presence forces full-frame and disables
-    # auto-chunk while the route is `auto`. An explicit execution_mode is left untouched
-    # (a caller that forces a bounded route for a tokenize job gets the honest fail-closed).
+    # auto-chunk while the route is `auto`; an explicit execution_mode is left untouched.
     if token_vault_writer is not None and execution_mode == "auto":
         execution_mode = "full_frame"
         auto_chunk = False

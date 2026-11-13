@@ -38,6 +38,7 @@ import pyarrow as pa
 from decoy_engine.config import classify_table_kinds
 from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
+from decoy_engine.execution._errors import vault_requires_resident_output
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.fileaccess import config_relative
@@ -157,6 +158,12 @@ class RouteDecision:
     mixed: MixedStaticPlan | None = None
     # Set only for a run that requires streaming and takes the chunked lane.
     stream: StreamVerdict | None = None
+
+
+def refuse_vault_with_sink(sink: Any, vault_writer: Any) -> None:
+    """B0 (B-6 D1): the sink commits output inside the run; the vault could only follow it."""
+    if sink is not None and vault_writer is not None:
+        raise vault_requires_resident_output()
 
 
 def build_run_context(
