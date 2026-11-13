@@ -84,7 +84,7 @@ def test_an_output_missing_a_key_column_is_not_run_and_blocks(tmp_path: Path) ->
 
 
 def test_source_and_output_mismatch_together_warn_and_do_not_block(tmp_path: Path) -> None:
-    data = tables(p={"id": [1]}, c={"pid": [[1]]})
+    data = tables(p={"id": [1]}, c={"pid": ["unencodable"]})
     res = results(tmp_path, RELS, data, data)[("c", "foreign")]
     assert (res.status, res.baseline) == ("key_type_mismatch", "key_type_mismatch")
     verdict = verdict_of(tmp_path, RELS, data, data)
@@ -93,7 +93,7 @@ def test_source_and_output_mismatch_together_warn_and_do_not_block(tmp_path: Pat
 
 def test_a_comparable_source_and_an_incomparable_output_block(tmp_path: Path) -> None:
     source = tables(p={"id": [1]}, c={"pid": [1]})
-    output = tables(p={"id": [1]}, c={"pid": [[1]]})
+    output = tables(p={"id": [1]}, c={"pid": ["unencodable"]})
     res = results(tmp_path, RELS, source, output)[("c", "foreign")]
     assert (res.status, res.baseline) == ("key_type_mismatch", "not_run")
     assert names(verdict_of(tmp_path, RELS, source, output).codes) == ["key_type_mismatch"]
@@ -103,7 +103,7 @@ def test_a_comparable_source_and_an_incomparable_output_block(tmp_path: Path) ->
 def test_a_source_mismatch_with_a_comparable_output_blocks_only_on_an_orphan(
     tmp_path: Path, orphan: int, blocks: bool
 ) -> None:
-    source = tables(p={"id": [1]}, c={"pid": [[1]]})
+    source = tables(p={"id": [1]}, c={"pid": ["unencodable"]})
     output = tables(p={"id": [1]}, c={"pid": [orphan]})
     res = results(tmp_path, RELS, source, output)[("c", "foreign")]
     assert (res.status, res.baseline) == ("checked", "key_type_mismatch")
@@ -118,7 +118,7 @@ def test_a_child_whose_source_parents_differ_in_type_takes_the_same_rows(
     tmp_path: Path, orphan: int, blocks: bool
 ) -> None:
     rels = [rel("a", ["id"], ("c", ["k"])), rel("b", ["id"], ("c", ["k"]))]
-    source = tables(a={"id": [1]}, b={"id": [[1]]}, c={"k": [1]})
+    source = tables(a={"id": [1]}, b={"id": ["unencodable"]}, c={"k": [1]})
     output = tables(a={"id": [1]}, b={"id": [2]}, c={"k": [orphan]})
     res = results(tmp_path, rels, source, output)[("c", "foreign")]
     assert (res.status, res.baseline) == ("checked", "key_type_mismatch")
@@ -193,7 +193,7 @@ def test_a_generated_child_has_no_source_and_any_orphan_blocks(tmp_path: Path) -
 
 def test_an_unmeasured_baseline_reports_null_source_counts(tmp_path: Path) -> None:
     cases = [
-        (tables(p={"id": [1]}, c={"pid": [[1]]}), tables(p={"id": [1]}, c={"pid": [1]})),
+        (tables(p={"id": [1]}, c={"pid": ["unencodable"]}), tables(p={"id": [1]}, c={"pid": [1]})),
         (tables(p={"id": [1]}, c={"other": [1]}), tables(p={"id": [1]}, c={"pid": [1]})),
         (tables(p={"id": [1]}, c={"pid": [1]}), tables(p={"id": [1]}, c={"other": [1]})),
         (
@@ -215,7 +215,7 @@ def test_an_unmeasured_baseline_reports_null_source_counts(tmp_path: Path) -> No
 
 
 def test_every_code_in_the_report_is_a_namespace_and_code_mapping(tmp_path: Path) -> None:
-    source = tables(p={"id": [1]}, c={"pid": [[1]]})
+    source = tables(p={"id": [1]}, c={"pid": ["unencodable"]})
     output = tables(p={"id": [1]}, c={"pid": [9]})
     found = check_keys(RELS, source, output, scratch=tmp_path / "s", memory_limit="64MB")
     report = {"keys": keys_report(found)}

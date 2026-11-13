@@ -147,10 +147,10 @@ def test_a_fully_quarantined_table_is_not_a_type_mismatch() -> None:
     assert _warned(gate) == {QUARANTINED}
 
 
-def test_a_run_that_changes_a_comparable_key_to_a_type_with_no_cast_blocks() -> None:
+def test_a_run_that_changes_a_comparable_key_to_a_value_the_join_refuses_blocks() -> None:
     gate = _gate()
-    source = {"p": pa.table({"id": ["a"]}), "c": pa.table({"pid": ["a"]})}
-    outputs = {"p": pa.table({"id": ["a"]}), "c": pa.table({"pid": [[1]]})}
+    source = {"p": pa.table({"id": [1]}), "c": pa.table({"pid": [1]})}
+    outputs = {"p": pa.table({"id": [1]}), "c": pa.table({"pid": ["unencodable"]})}
     exc = _blocked(lambda: gate.run_resident(outputs, source, KINDS))
     assert exc.reason == "post_scan.key_type_mismatch"
     assert not gate.deferred
@@ -203,22 +203,22 @@ def test_a_child_that_still_resolves_against_the_masked_parent_passes() -> None:
 
 def test_an_inherited_type_mismatch_still_blocks_and_is_labelled_as_one() -> None:
     gate = _gate([GENERATED])
-    # A list key has no cast to an integer, in the source as in the output.
-    lists = pa.array([[1], [2]])
-    outputs = {"people": pa.table({"id": [1, 2]}), "accounts": pa.table({"person_id": lists})}
+    # The join refuses the value against an integer parent, in the source as in the output.
+    bad = pa.array(["unencodable", "b"])
+    outputs = {"people": pa.table({"id": [1, 2]}), "accounts": pa.table({"person_id": bad})}
     exc = _blocked(
-        lambda: gate.run_resident(outputs, {"accounts": pa.table({"person_id": lists})}, GEN_KINDS)
+        lambda: gate.run_resident(outputs, {"accounts": pa.table({"person_id": bad})}, GEN_KINDS)
     )
     assert exc.reason == "post_scan.key_type_mismatch"
     (child,) = (k for k in exc.report["keys"] if k["kind"] == "foreign")
     assert child["baseline"] == "inherited_type_mismatch"
 
 
-def test_a_run_that_changes_a_key_to_a_type_with_no_cast_blocks_beside_a_generated_parent() -> None:
+def test_a_run_that_changes_a_key_to_a_refused_value_blocks_beside_a_generated_parent() -> None:
     gate = _gate([GENERATED])
     outputs = {
         "people": pa.table({"id": [1.0, 2.0]}),
-        "accounts": pa.table({"person_id": pa.array([[1], [2]])}),
+        "accounts": pa.table({"person_id": pa.array(["unencodable", "b"])}),
     }
     sources = {"accounts": pa.table({"person_id": [1.0, 2.0]})}
     exc = _blocked(lambda: gate.run_resident(outputs, sources, GEN_KINDS))

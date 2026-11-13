@@ -14,8 +14,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.execution.out_of_core import _duckdb
-from decoy_engine.profiling import KeyBatches, KeyFacts, _scan_integrity, key_facts, keys_comparable
+from decoy_engine.profiling import KeyBatches, KeyFacts, _key_loading, _scan_integrity, key_facts
 
 INTS = [
     pa.int8(),
@@ -119,31 +118,47 @@ def _schema_only(type_: pa.DataType) -> KeyBatches:
     return KeyBatches(pa.schema([("k0", type_)]), lambda: iter(()))
 
 
-# Built as a list, not skipped inside the test: a skipped cell would hide a pair that stopped
-# being comparable, and the count below pins that the list did not shrink.
-COMPARABLE_PAIRS = [
-    (ptype, ctype)
-    for ptype, ctype in itertools.product(INTS + STRINGS, INTS + STRINGS)
-    if not ptype.equals(ctype) and keys_comparable(_schema_only(ptype), [_schema_only(ctype)])
-]
+def test_same_family_pairs_load_by_value_never_as_tokens() -> None:
+    for group in (INTS, STRINGS):
+        for p, c in itertools.product(group, group):
+            kinds = _key_loading.duck_types([_schema_only(p).schema, _schema_only(c).schema])
+            assert kinds != [_key_loading.JOIN_KEY_KIND], (p, c)
+            if not p.equals(c):
+                assert kinds != [None], (p, c)
 
 
-def test_every_same_family_pair_is_comparable() -> None:
-    same_family = [
-        (p, c)
-        for group in (INTS, STRINGS)
-        for p, c in itertools.product(group, group)
-        if not p.equals(c)
-    ]
-    # Pairs the join casts between are compared too; none of the same-family pairs may drop out.
-    assert all(pair in COMPARABLE_PAIRS for pair in same_family)
-
-
-@pytest.mark.parametrize(("ptype", "ctype"), COMPARABLE_PAIRS, ids=lambda t: str(t))
-def test_comparable_pair_never_falls_back_to_the_declared_type(
+@pytest.mark.parametrize(
+    ("ptype", "ctype"),
+    [
+        (pa.timestamp("us", tz="UTC"), pa.timestamp("ns", tz="Europe/Paris")),
+        (pa.duration("us"), pa.duration("ms")),
+    ],
+    ids=lambda t: str(t),
+)
+def test_zone_aware_timestamps_and_durations_compare_by_value_in_a_common_unit(
     ptype: pa.DataType, ctype: pa.DataType
 ) -> None:
-    assert _scan_integrity._duck_types(_schema_only(ptype), [_schema_only(ctype)]) != [None]
+    (kind,) = _key_loading.duck_types([_schema_only(ptype).schema, _schema_only(ctype).schema])
+    assert isinstance(kind, pa.DataType)
+    assert kind.unit == ("ns" if pa.types.is_timestamp(kind) else "us")
+
+
+@pytest.mark.parametrize(
+    ("ptype", "ctype"),
+    [
+        (pa.int64(), pa.string()),
+        (pa.int64(), pa.float64()),
+        (pa.bool_(), pa.int8()),
+        (pa.date32(), pa.timestamp("us")),
+        (pa.timestamp("us"), pa.timestamp("ns")),
+        (pa.decimal128(10, 2), pa.int64()),
+        (pa.int64(), pa.list_(pa.int64())),
+    ],
+    ids=lambda t: str(t),
+)
+def test_other_mixes_go_through_the_join_tokens(ptype: pa.DataType, ctype: pa.DataType) -> None:
+    kinds = _key_loading.duck_types([_schema_only(ptype).schema, _schema_only(ctype).schema])
+    assert kinds == [_key_loading.JOIN_KEY_KIND]
 
 
 def test_uint64_never_wraps_onto_int64(tmp_path: Path) -> None:
@@ -189,62 +204,52 @@ def test_union_shaped_parent_widens_past_the_first_schema(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    ("parent", "child"),
+    ("parent", "child", "orphans"),
     [
-        (pa.array([1], pa.int64()), pa.array([[1]])),
-        (pa.array(["1"], pa.string()), pa.array([{"a": 1}])),
-        (pa.array([1.0], pa.float64()), pa.array([[1.0]])),
+        (pa.array(["1", "2"], pa.string()), pa.array([1, 9], pa.int64()), 2),
+        (pa.array([1.0, 2.0], pa.float64()), pa.array([1, 9], pa.int64()), 1),
+        (pa.array([1, 2], pa.int64()).dictionary_encode(), pa.array([1, 9], pa.int64()), 1),
+        (pa.array([1, 2], pa.int64()), pa.array(["1", "9"], pa.string()), 2),
+        (pa.array([1], pa.int64()), pa.array([[1]]), 1),
     ],
-    ids=["int-list", "string-struct", "float-list"],
+    ids=["string-int", "float-int", "int-dictionary-int", "int-string", "int-list"],
 )
-def test_pairs_with_no_exact_cast_stay_mismatches(
-    tmp_path: Path, parent: pa.Array, child: pa.Array
+def test_mixed_pairs_follow_the_join_token_rule(
+    tmp_path: Path, parent: pa.Array, child: pa.Array, orphans: int
 ) -> None:
+    """The string "7" is not the integer 7 to the join, so a string parent and an integer child
+    share no key."""
     facts = _run(tmp_path, _keys(parent), _keys(child))
+    assert facts.status == "checked"
+    assert facts.children[0].orphan_rows == orphans
+
+
+def test_a_value_the_join_refuses_is_a_key_type_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(value: object) -> str:
+        raise ValueError(f"secret {value!r}")
+
+    monkeypatch.setattr(_key_loading, "fk_join_key", refuse)
+    facts = _run(tmp_path, _keys(pa.array([1], pa.int64())), _keys(pa.array(["1"])))
     assert facts.status == "key_type_mismatch"
     assert facts.children == ()
 
 
-@pytest.mark.parametrize(
-    ("parent", "child"),
-    [
-        (pa.array(["1", "2"], pa.string()), pa.array([1, 9], pa.int64())),
-        (pa.array([1.0, 2.0], pa.float64()), pa.array([1, 9], pa.int64())),
-        (pa.array([1, 2], pa.int64()).dictionary_encode(), pa.array([1, 9], pa.int64())),
-        (pa.array([1, 2], pa.int64()), pa.array(["1", "9"], pa.string())),
-    ],
-    ids=["string-int", "float-int", "int-dictionary-int", "int-string"],
-)
-def test_pairs_the_join_casts_between_are_measured_by_value(
-    tmp_path: Path, parent: pa.Array, child: pa.Array
-) -> None:
-    facts = _run(tmp_path, _keys(parent), _keys(child))
+def test_a_read_error_is_not_a_key_type_mismatch(tmp_path: Path) -> None:
+    def broken() -> Any:
+        raise pa.ArrowInvalid("unreadable batch")
+        yield  # pragma: no cover
+
+    keys = KeyBatches(pa.schema([("k0", pa.int64())]), broken)
+    with pytest.raises(pa.ArrowInvalid):
+        _run(tmp_path, keys, _keys(pa.array([1], pa.int64())))
+
+
+def test_a_label_mixed_across_parents_still_compares_the_rest(tmp_path: Path) -> None:
+    parent = _keys(pa.array([1, 2], pa.int64()))
+    other = _keys(pa.array(["a"], pa.string()))
+    child = _keys(pa.array([1, 3], pa.int64()))
+    facts = _run(tmp_path, parent, other, child)
     assert facts.status == "checked"
-    assert facts.children[0].orphan_rows == 1
-
-
-def test_keys_comparable_reads_schemas_and_opens_no_connection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from decoy_engine.profiling import keys_comparable
-
-    def refuse(**_: Any) -> None:
-        raise AssertionError("a connection was opened")
-
-    monkeypatch.setattr(_duckdb, "connect_duckdb", refuse)
-
-    def unread() -> Any:
-        raise AssertionError("a batch was read")
-
-    def schema_only(type_: pa.DataType) -> KeyBatches:
-        return KeyBatches(pa.schema([("k0", type_)]), unread)
-
-    dict_string = pa.dictionary(pa.int32(), pa.large_string())
-    assert keys_comparable(schema_only(pa.int32()), [schema_only(pa.uint64())])
-    assert keys_comparable(schema_only(dict_string), [schema_only(pa.string())])
-    assert keys_comparable(schema_only(pa.int8()), [])
-    assert keys_comparable(schema_only(pa.int64()), [schema_only(pa.string())])
-    assert not keys_comparable(schema_only(pa.int64()), [schema_only(pa.list_(pa.int64()))])
-    assert not keys_comparable(
-        schema_only(pa.int32()), [schema_only(pa.int32()), schema_only(pa.list_(pa.int32()))]
-    )
+    assert [c.orphan_rows for c in facts.children] == [1, 1]

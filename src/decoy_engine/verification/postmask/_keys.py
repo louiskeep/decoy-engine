@@ -17,7 +17,7 @@ import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.config import RelationshipConfig
-from decoy_engine.profiling import KeyBatches, key_facts, keys_comparable, passes_through
+from decoy_engine.profiling import KeyBatches, key_facts, passes_through
 from decoy_engine.progress import safe_error_class
 from decoy_engine.reasons import ReasonCode, reason_ref_payload
 from decoy_engine.verification.postmask._stream_input import (
@@ -209,17 +209,18 @@ class _Run:
             return "no_source", KeyCounts(), None
         if isinstance(got, str):
             return "key_column_missing", None, None
-        own, found = got
-        if parents and not keys_comparable(found[0], [*found[1:], own]):
-            return "key_type_mismatch", None, None
-        if out_status == "key_type_mismatch":
-            return "not_run", None, None
         try:
-            counts = self._measure("source", end, parents)[2]
+            status, _, counts = self._measure("source", end, parents)
         except Exception as exc:
             if passes_through(exc):
                 raise
             return "error", None, _class_of(exc)
+        if status == "key_type_mismatch":
+            return "key_type_mismatch", None, None
+        if out_status == "key_type_mismatch":
+            return "not_run", None, None
+        if status != "checked":
+            return "error", None, None
         return "measured", counts, None
 
     def _inherited(
@@ -240,8 +241,6 @@ class _Run:
         if not all(isinstance(f, KeyBatches) for f in found):
             return None
         keys = [f for f in found if isinstance(f, KeyBatches)]
-        if not keys_comparable(keys[0], [*keys[1:], own]):
-            return "key_type_mismatch"
         facts = key_facts(
             _union(keys), [*keys[1:], own], scratch=self._scratch, memory_limit=self._limit
         )

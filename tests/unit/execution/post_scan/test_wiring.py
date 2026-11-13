@@ -431,37 +431,37 @@ def _typed_run(
     return gate
 
 
-def test_a_string_parent_with_an_int64_child_runs_under_the_gate_and_is_not_blocked() -> None:
+def test_a_string_parent_with_an_int64_child_is_all_orphans_in_both_and_not_blocked() -> None:
+    # The join never matches the string "1" to the integer 1, so the orphans came with the data.
     gate = _typed_run(pa.array(["0", "1", "2"]), pa.array([0, 1, 2, 2], type=pa.int64()))
     assert gate.ran and not gate.deferred
     assert gate.verdict is not None and not gate.verdict.blocking
     assert gate.report is not None
     (child,) = (k for k in gate.report["keys"] if k["kind"] == "foreign")
-    assert (child["status"], child["output"]["orphan_rows"]) == ("checked", 0)
+    assert child["status"] == "checked"
+    assert (child["source"]["orphan_rows"], child["output"]["orphan_rows"]) == (4, 4)
 
 
-def test_a_string_parent_with_an_int64_child_still_blocks_a_key_the_mask_broke() -> None:
+def test_an_int64_parent_with_a_float_child_still_blocks_a_key_the_mask_broke() -> None:
     exc = _blocked(
         lambda: _typed_run(
-            pa.array(["0", "1", "2"]),
-            pa.array([0, 9, 2], type=pa.int64()),
+            pa.array([0, 1, 2], type=pa.int64()),
+            pa.array([0.0, 9.0, 2.0]),
             source_child=pa.array([0, 1, 2], type=pa.int64()),
         )
     )
-    assert exc.reason.startswith("post_scan.")
+    assert exc.reason == "post_scan.foreign_key_orphans_introduced"
 
 
-def test_a_key_pair_with_no_cast_in_the_source_too_is_reported_and_does_not_block() -> None:
+def test_a_refused_value_in_the_source_too_is_reported_and_does_not_block() -> None:
     # The run did not make these ends incomparable, so the mismatch is inherited, not caused.
-    gate = _typed_run(
-        pa.array(["0", "1"]), pa.array([{"a": 0}, {"a": 1}], type=pa.struct([("a", pa.int64())]))
-    )
+    gate = _typed_run(pa.array([0, 1]), pa.array(["unencodable", "1"]))
     assert gate.ran and not gate.deferred
     assert gate.verdict is not None and not gate.verdict.blocking
 
 
-def test_a_value_that_does_not_cast_exactly_blocks_as_a_key_type_mismatch() -> None:
-    # An int64 key past 2**53 has no exact double image: the join refuses it with a coded error.
+def test_an_int64_key_past_2_53_against_a_float_parent_is_an_introduced_orphan() -> None:
+    # It has no float image, so it equals no float key: the join token keeps it apart.
     exc = _blocked(
         lambda: _typed_run(
             pa.array([1.0]),
@@ -469,7 +469,7 @@ def test_a_value_that_does_not_cast_exactly_blocks_as_a_key_type_mismatch() -> N
             source_child=pa.array([1], type=pa.int64()),
         )
     )
-    assert exc.reason == "post_scan.key_type_mismatch"
+    assert exc.reason == "post_scan.foreign_key_orphans_introduced"
 
 
 def _mixed_job(tmp_path: Path) -> tuple[dict[str, Any], Any]:

@@ -61,15 +61,35 @@ The gate's DuckDB connection is a run connection: `execute_route` binds one reco
 - `test_applied_pairs_are_the_distinct_connection_settings`: unchanged. It now holds because `applied` includes the gate's connection.
 - `test_a_small_memory_limit_takes_threads_below_the_cap`: unchanged.
 
-## Key type comparison (orchestrator ruling, 2026-11-13)
+## Key type comparison (orchestrator ruling, 2026-11-13, revised)
 
-`keys_comparable` no longer carries its own type-family table. The one exact key cast now lives in
-`decoy_engine/_arrow_types.py` (`exact_key_cast`, `key_comparison_type`); the out-of-core join's
-`cast_fk_chunk` calls it for every cast except the int-to-float refusal, which keeps its coded
-`ExecutionError`. The scan and the gate compare two key ends when that cast has a route between their types,
-and cast each child batch to the comparison type before it is loaded. Integers of any width still
-load as one BIGINT or HUGEINT column. A pair with no route, or a value with no exact cast, ends the
-key count as `key_type_mismatch`. The gate never defers the whole check for one key: the verdict
+The gate counts orphans, nulls and duplicates by the FK join's own key identity, not by an Arrow
+cast. Every join route matches through the token functions (`fk_key_value`, `fk_join_key`,
+`fk_join_key_tuple`), which now live in `decoy_engine/internal/fk_tokens.py`, a tier both the
+profiling and execution packages may import from, so there is no back import (`execution/_fk_keys.py` re-exports them). In
+token space the string "7" never equals the integer 7 and a date never equals a midnight
+timestamp, so a cast-based scan disagreed with the join in both directions: a string parent with an
+integer child blocked a run the join published, and an orphan to the join could look like a match.
+
+When every end of a key label has one type, or the ends differ only in integer width or string
+encoding (plain, large, dictionary), the values still compare by type in DuckDB (BIGINT or
+HUGEINT, VARCHAR), which agrees with the tokens. Any other mix maps each batch's values to the
+join token as VARCHAR before loading, batch by batch; a null stays SQL NULL, so null counting is
+unchanged. Zone-aware timestamps and durations that differ only in unit or zone also compare by type, in the finest common unit: their token is an object repr that does not fold two units of one instant, and the pandas join, the only route that takes those types, matches them by value (`test_gap6_prefer_bounded_fk.py` T5c caught the false block). A value the token functions refuse ends the key count as `key_type_mismatch`, as the
+join refuses it. `keys_comparable`, `key_comparison_type` and the cast path are gone; one
+incomparable parent end no longer switches off the check for a comparable one. `exact_key_cast`
+stays only for the out-of-core join's output-chunk unification. `postmask/_keys.py` `_baseline` now
+reads the status of the source measurement (a mismatch is the `key_type_mismatch` baseline, any
+other unchecked status is `error`), and `key_facts` catches only its private
+a private return signal, so a read error reaches the check-error path.
+
+`tests/parity/test_post_scan_key_identity.py` runs the real pandas full-frame join and the gate on
+the same data for each mixed pair and asserts the counts are equal. Tests that had been changed to
+use a list or struct key as the mismatch fixture now use the real pair with the token-rule
+expectation, or the one string `unencodable` that the test helper makes the token function refuse
+(no real column value does).
+
+The gate never defers the whole check for one key: the verdict
 blocks a mismatch the run caused (the input ends compared, or the parent is generated) and reports
 one the input already had without blocking. An inherited mismatch (child inputs against a
 generated parent) still blocks. The duplicate-parent-key block is pinned by

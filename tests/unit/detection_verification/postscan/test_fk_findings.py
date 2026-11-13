@@ -100,7 +100,7 @@ def test_no_orphan_is_info() -> None:
 
 
 def test_a_mismatch_over_a_mismatched_source_warns(tmp_path: Path) -> None:
-    data = batches(p={"id": [1]}, c={"pid": [[1]]})
+    data = batches(p={"id": [1]}, c={"pid": ["unencodable"]})
     keys = keys_of(tmp_path, data, data)
     (f,) = fk({}, {}, keys=keys)
     assert f["severity"] == "warning"
@@ -121,7 +121,7 @@ def test_only_a_key_that_blocks_without_counts_derives_error(tmp_path: Path, cas
     output = {
         "error": batches(p={"id": [1]}, c={"pid": [1]}),
         "key_column_missing": batches(p={"id": [1]}, c={"other": [1]}),
-        "key_type_mismatch": batches(p={"id": [1]}, c={"pid": [[1]]}),
+        "key_type_mismatch": batches(p={"id": [1]}, c={"pid": ["unencodable"]}),
     }[case]
     if case == "error":
         output["c"] = failing(output["c"])
@@ -270,7 +270,7 @@ def test_an_introduced_orphan_over_an_unusable_source_still_fails(
         source = batches(p={"id": [1]}, c={"pid": [1]})
         source["c"] = failing(source["c"])
     else:
-        source = batches(p={"id": [1]}, c={"pid": [[1]]})
+        source = batches(p={"id": [1]}, c={"pid": ["unencodable"]})
     keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": [1, 9]}))
     (f,) = fk({}, {}, keys=keys)
     assert (f["severity"], f["orphan_count"], f["source_orphan_count"]) == ("fail", 1, None)
@@ -283,7 +283,7 @@ def test_an_output_mismatch_over_an_unmeasured_baseline_is_an_error(
 ) -> None:
     # `key_column_missing` when the source lacks the column, `no_source` when it lacks the table.
     source = batches(p={"id": [1]}) | ({} if source_child is None else batches(c=source_child))
-    keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": [[1]]}))
+    keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": ["unencodable"]}))
     (key,) = (k for k in keys if k.kind == "foreign")
     assert (key.status, key.baseline) == (
         "key_type_mismatch",

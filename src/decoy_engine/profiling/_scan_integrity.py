@@ -14,12 +14,15 @@ The spill holds key values, which are row data, so it lives in a directory from 
 protected-directory allocator and is removed on every exit.
 
 CSV key columns are read as text, as `decoy run` reads them; other formats keep their declared
-types. Two key ends compare when the cast the FK join uses (`key_comparison_type`) has a route
-between their types, so every integer width, plain and dictionary strings, and a string end
-against an integer end are measured by value. Integers of any width load into one BIGINT or
-HUGEINT column; any other pair is cast to one type batch by batch. A pair with no cast, or a
-value that does not cast exactly, gives `key_type_mismatch` and no counts. A relationship that names a cloud table is `skipped_cloud`
-before any read, because the cloud CSV readers download the whole object.
+types. Key ends match by the FK join's own key identity (`decoy_engine.internal.fk_tokens`),
+never by an Arrow cast. When every end of a key label has one type, or the ends differ only in
+integer width or string encoding (plain, large, dictionary), the values compare by type in DuckDB
+(BIGINT or HUGEINT, VARCHAR), which agrees with the tokens. Any other mix (an integer against a
+float or a string, a date against a timestamp, and so on) maps each batch's values to the join
+token as a VARCHAR before loading, so the gate counts the orphans the join sees. A value the token
+functions refuse gives `key_type_mismatch` and no counts, as the join refuses it. A relationship
+that names a cloud table is `skipped_cloud` before any read, because the cloud CSV readers
+download the whole object.
 
 Nothing returned or raised here carries a key value: only counts, table names and positions.
 The DuckDB statements are built from fixed column labels (`k0..kn`), never from user text.
@@ -35,8 +38,8 @@ from typing import Any, Final, Literal
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine._arrow_types import exact_key_cast, key_comparison_type
 from decoy_engine.config import PipelineConfigError, RelationshipConfig, parse_relationship_config
+from decoy_engine.profiling._key_loading import JOIN_KEY_KIND, cast_batch, duck_types, value_type
 
 # Small enough that the keys of a large table never sit in memory together.
 MEMORY_LIMIT: Final = "512MB"
@@ -289,63 +292,6 @@ def _open_keys(
     )
 
 
-def _incomparable() -> pa.ArrowInvalid:
-    """Two key ends have no exact cast between their values. The text carries no key value."""
-    return pa.ArrowInvalid("key ends have no exact cast between them")
-
-
-def keys_comparable(parent: KeyBatches, children: Sequence[KeyBatches]) -> bool:
-    """Whether `key_facts` would compare these ends rather than report `key_type_mismatch`.
-    Reads schemas only and opens no connection. A pair compares when `key_comparison_type`, the
-    cast the FK join uses, has a route between the two types; a null-typed column holds no value
-    that could match or orphan, so it compares with every type."""
-    return _common_types(parent, children) is not None
-
-
-def _common_types(parent: KeyBatches, children: Sequence[KeyBatches]) -> list[pa.DataType] | None:
-    """The type each key label is compared in, folded over the parent and every child, or `None`
-    when some label has no route. Integers of any width fold to the parent's type here; the
-    loaded width is chosen by `_duck_types`."""
-    common: list[pa.DataType] = []
-    for n, wanted in enumerate(parent.schema.types):
-        found = wanted
-        for keys in children:
-            joined = key_comparison_type(found, keys.schema.types[n])
-            if joined is None:
-                return None
-            found = joined
-        common.append(found)
-    return common
-
-
-def _duck_types(
-    parent: KeyBatches, children: Sequence[KeyBatches]
-) -> list[str | pa.DataType | None]:
-    """How each key label is loaded, wide enough for every end. `None` keeps the parent's
-    declared type; `BIGINT` or `HUGEINT` is the integer width that holds every end; a type is the
-    comparison type every batch is cast to before it is loaded. The tables are created from
-    these, never from the first batch, so a later wider batch cannot overflow or narrow.
-    Null-typed ends are left out of the choice; a label that is null-typed everywhere loads as
-    BIGINT, which holds only nulls."""
-    common = _common_types(parent, children)
-    if common is None:
-        raise _incomparable()
-    schemas = [parent.schema, *(k.schema for k in children)]
-    out: list[str | pa.DataType | None] = []
-    for n in range(len(parent.schema)):
-        types = [s.types[n] for s in schemas]
-        typed = [t for t in types if not pa.types.is_null(t)]
-        if not typed:
-            out.append("BIGINT")
-        elif all(t.equals(typed[0]) for t in typed) and not pa.types.is_null(types[0]):
-            out.append(None)
-        elif all(pa.types.is_integer(t) for t in typed):
-            out.append("HUGEINT" if any(t == pa.uint64() for t in typed) else "BIGINT")
-        else:
-            out.append(common[n])
-    return out
-
-
 # ---------------------------------------------------------------------------
 # DuckDB counts
 # ---------------------------------------------------------------------------
@@ -356,16 +302,14 @@ def _before_fetch(conn: Any) -> None:
     lets a test see the spill files while the loaded tables still exist."""
 
 
-_HUGEINT_SPAN = (-(2**127), 2**127 - 1)
-
-
 def _span(t: pa.DataType) -> tuple[int, int]:
     bits = t.bit_width
-    return (
-        (0, 2**bits - 1)
-        if pa.types.is_unsigned_integer(t)
-        else (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1)
-    )
+    if pa.types.is_unsigned_integer(t):
+        return 0, 2**bits - 1
+    return -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+
+
+_SPANS: Final = {"BIGINT": _span(pa.int64()), "HUGEINT": (-(2**127), 2**127 - 1)}
 
 
 def _check_widths(
@@ -378,15 +322,10 @@ def _check_widths(
         if kind is None:
             span = _span(declared) if pa.types.is_integer(declared) else None
         else:
-            span = (
-                _span(pa.int64())
-                if kind == "BIGINT"
-                else _HUGEINT_SPAN
-                if kind == "HUGEINT"
-                else None
-            )
+            span = _SPANS.get(kind)
         if span is None:
             continue
+        actual = value_type(actual)
         if pa.types.is_null(actual):
             continue
         if (
@@ -398,45 +337,38 @@ def _check_widths(
         raise PipelineConfigError(f"key {label} of the {role} is wider than its declared type")
 
 
-def _cast_batch(batch: pa.RecordBatch, duck: Sequence[str | pa.DataType | None]) -> pa.RecordBatch:
-    """The batch with each column that has a comparison type cast to it. A value with no exact
-    cast ends the comparison as a key type mismatch; the Arrow error text is dropped because it can
-    quote the value."""
-    arrays = list(batch.columns)
-    for n, kind in enumerate(duck):
-        if isinstance(kind, pa.DataType) and not arrays[n].type.equals(kind):
-            try:
-                arrays[n] = exact_key_cast(arrays[n], kind)
-            except pa.ArrowException:
-                failed = True
-            else:
-                failed = False
-            if failed:
-                raise _incomparable()
-    return pa.RecordBatch.from_arrays(arrays, names=batch.schema.names)
-
-
 def _load(
     conn: Any, table: str, keys: KeyBatches, duck: Sequence[str | pa.DataType | None]
-) -> None:
-    # The empty first table fixes the column types; each batch is then appended.
+) -> bool:
+    """Create `table` from the empty schema, then append every batch. False if a value has no token."""
     schema = pa.schema(
         [
-            (f.name, kind if isinstance(kind, pa.DataType) else f.type)
+            (
+                f.name,
+                pa.string()
+                if isinstance(kind, str) and kind == JOIN_KEY_KIND
+                else kind
+                if isinstance(kind, pa.DataType)
+                else value_type(f.type),
+            )
             for f, kind in zip(keys.schema, duck, strict=True)
         ]
     )
     conn.register("incoming", pa.Table.from_batches([], schema=schema))
     picks = ", ".join(
-        f"{label}::{kind} AS {label}" if isinstance(kind, str) else label
+        f"{label}::{kind} AS {label}" if isinstance(kind, str) and kind != JOIN_KEY_KIND else label
         for label, kind in zip(_labels(len(duck)), duck, strict=True)
     )
     conn.execute(f"CREATE TABLE {table} AS SELECT {picks} FROM incoming")
     for batch in keys.batches():
         _check_widths(batch, keys, duck, table)
-        conn.register("incoming", pa.Table.from_batches([_cast_batch(batch, duck)]))
+        loaded = cast_batch(batch, duck)
+        if loaded is None:
+            return False
+        conn.register("incoming", pa.Table.from_batches([loaded]))
         conn.execute(f"INSERT INTO {table} SELECT * FROM incoming")
     conn.unregister("incoming")
+    return True
 
 
 def _count(conn: Any, sql: str, *, probe: bool = False) -> int:
@@ -459,11 +391,9 @@ def key_facts(
 ) -> KeyFacts:
     """Counts for `parent` and each of `children`, computed in a DuckDB connection that spills
     under `scratch` (caller-owned) and is closed on every exit. Exceptions propagate."""
-    bounded = parent.bounded and all(k.bounded for k in children)
-    try:
-        return _key_facts(parent, children, scratch, memory_limit, bounded)
-    except pa.ArrowInvalid:
-        return KeyFacts("key_type_mismatch", 0, 0, 0, (), bounded)
+    return _key_facts(
+        parent, children, scratch, memory_limit, parent.bounded and all(k.bounded for k in children)
+    )
 
 
 def _key_facts(
@@ -480,10 +410,12 @@ def _key_facts(
     labels = _labels(width)
     cols = ", ".join(labels)
     on = " AND ".join(f"p.{label} = c.{label}" for label in labels)
-    duck = _duck_types(parent, children)
+    duck = duck_types([parent.schema, *(k.schema for k in children)])
     conn = connect_duckdb(temp_dir=scratch, memory_limit=memory_limit)
+    mismatch = KeyFacts("key_type_mismatch", 0, 0, 0, (), bounded)
     try:
-        _load(conn, "parent", parent, duck)
+        if not _load(conn, "parent", parent, duck):
+            return mismatch
         complete = _complete("p", width)
         parent_rows = _count(conn, "SELECT count(*) FROM parent")
         complete_rows = _count(conn, f"SELECT count(*) FROM parent p WHERE {complete}")
@@ -492,7 +424,8 @@ def _key_facts(
         )
         counted = []
         for keys in children:
-            _load(conn, "child", keys, duck)
+            if not _load(conn, "child", keys, duck):
+                return mismatch
             counted.append(_child_facts(conn, width, on))
             conn.execute("DROP TABLE child")
     finally:
