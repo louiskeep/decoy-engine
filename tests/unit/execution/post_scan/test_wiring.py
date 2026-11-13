@@ -117,16 +117,15 @@ def test_at16_a_blocking_verdict_commits_nothing_on_every_no_sink_route(
     assert not list(tmp_path.glob("*.out.parquet"))
 
 
-def test_at16_the_commit_is_refused_before_the_sink_is_touched() -> None:
+def test_at16_a_commit_with_no_output_left_to_read_defers_the_gate() -> None:
     sink = RecordingSink()
     gate = PostScanGate({"relationships": [{"x": 1}]})
     token = _post_scan._ACTIVE.set(gate)
     try:
-        exc = _blocked(lambda: observed_commit(sink))
+        observed_commit(sink)
     finally:
         _post_scan._ACTIVE.reset(token)
-    assert exc.reason == "post_scan.check_error"
-    assert sink.calls == []
+    assert gate.deferred and sink.calls == [("commit",)]
 
 
 def test_at16_a_gate_that_ran_lets_the_commit_through() -> None:
@@ -142,18 +141,46 @@ def test_at16_a_gate_that_ran_lets_the_commit_through() -> None:
 
 
 DEFERRED = {"namespace": "post_scan", "code": "gate_deferred_route"}
+FAIL = {"severity": "fail"}
 
 
 @pytest.mark.parametrize("integrity", [False, True], ids=["keys", "integrity"])
-def test_at16_a_sink_job_is_not_withheld_and_says_the_gate_was_deferred(
+def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
     tmp_path: Path, integrity: bool
 ) -> None:
     sink = RecordingSink()
     config = _config(tmp_path, broken=True, integrity=integrity)
-    result, _ = _run(config, "auto", sink=sink)
+    exc = _blocked(lambda: _run(config, "auto", sink=sink))
+    assert exc.reason == DUPLICATES
+    assert sink.calls == []
+
+
+@pytest.mark.parametrize("route", ["sequential", "out_of_core"])
+def test_at16_a_bounded_route_that_writes_to_the_sink_defers_the_gate(
+    tmp_path: Path, route: str
+) -> None:
+    sink = RecordingSink()
+    result, routes = _run(_config(tmp_path, broken=True), route, sink=sink)
+    assert routes == [route]
     assert result.quality_metrics["post_scan_gate_deferred"] == DEFERRED
     assert ("commit",) in sink.calls
-    assert ("verdict" in result.quality_metrics.get("post_scan_integrity", {})) is False
+
+
+def test_at16_integrity_with_a_sink_and_lazy_inputs_still_withholds_on_a_failing_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        finding = {"table": "customers", "column": "email", "detector_id": "email"}
+        return {"schema_version": "post-scan-integrity/v2", "residual_pii": [finding | FAIL]}
+
+    monkeypatch.setattr(_post_scan, "run_post_mask", failing)
+    cfg, _, lazy = subset_sup.job(tmp_path)
+    cfg["subset"] = None
+    cfg["post_scan"] = {"integrity": True}
+    sink = RecordingSink()
+    exc = _blocked(lambda: run_pipeline(cfg, lazy, engine_version=V, sink=sink))
+    assert exc.reason == "post_scan.finding_blocked"
+    assert sink.calls == []
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -195,11 +222,12 @@ def test_at20_integrity_adds_the_column_suite_to_the_same_report(tmp_path: Path)
     assert {"keys", "verdict", "residual_pii", "fk_preservation"} <= set(report)
 
 
-def test_at20_lazy_inputs_defer_the_gate_and_the_run_is_not_withheld(tmp_path: Path) -> None:
+def test_at20_lazy_inputs_with_no_sink_run_the_blocking_gate(tmp_path: Path) -> None:
     cfg, _, lazy = subset_sup.job(tmp_path)
     cfg["subset"] = None
     result, _ = _run(cfg, "sequential", sources=lazy)
-    assert result.quality_metrics["post_scan_gate_deferred"] == DEFERRED
+    assert "post_scan_gate_deferred" not in result.quality_metrics
+    assert result.quality_metrics["post_scan_integrity"]["verdict"]["blocking"] is False
 
 
 def test_at20_a_gate_re_reads_lazy_inputs_in_batches_and_reports(tmp_path: Path) -> None:

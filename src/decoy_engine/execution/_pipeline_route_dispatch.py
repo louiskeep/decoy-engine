@@ -44,7 +44,10 @@ def execute_route(
 
     # One recorder for the whole run, the post-scan gate's connections included, so the resources
     # block lists every connection the run opened.
-    with bind_duckdb_run(ctx.out_of_core_threads) as recorder, bind_gate(ctx) as gate:
+    with (
+        bind_duckdb_run(ctx.out_of_core_threads) as recorder,
+        bind_gate(ctx, decision.route) as gate,
+    ):
         if ctx.has_mask_table and decision.route == "sequential":
             result = execute_sequential_route(ctx, decision)
         elif ctx.has_mask_table and decision.route == "out_of_core":

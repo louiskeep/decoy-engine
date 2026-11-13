@@ -117,12 +117,24 @@ def test_before_commit_after_a_run_lets_the_commit_through() -> None:
     assert gate.ran
 
 
-def test_before_commit_on_a_required_unrun_gate_refuses() -> None:
+def test_before_commit_with_a_sink_on_an_unrun_gate_defers_it() -> None:
+    gate = PostScanGate(KEYS)
+    gate.before_commit(object())
+    assert gate.deferred and not gate.ran
+
+
+def test_before_commit_with_no_sink_on_a_required_unrun_gate_refuses() -> None:
     gate = PostScanGate(KEYS)
     for _ in range(2):
-        exc = blocked(lambda: gate.before_commit(object()))
+        exc = blocked(lambda: gate.before_commit(None))
         assert exc.reason == "post_scan.check_error" and exc.verdict.blocking
-    assert not gate.ran
+    assert not gate.ran and not gate.deferred
+
+
+def test_a_gate_whose_outputs_are_not_resident_defers_and_is_not_blocked() -> None:
+    gate = PostScanGate(KEYS)
+    gate.run_resident({}, SOURCES, KINDS)
+    assert gate.deferred and gate.ran and gate.report is None
 
 
 def test_a_blocking_verdict_raises_with_an_empty_chain() -> None:

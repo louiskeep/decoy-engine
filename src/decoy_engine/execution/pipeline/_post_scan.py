@@ -116,6 +116,8 @@ class PostScanGate:
         raise if the verdict blocks."""
         if self.ran or not self.required:
             return
+        if not self.deferred and not _resident(outputs, table_kinds):
+            self.deferred = True  # the route wrote its output to a sink; nothing is left to read
         if self.deferred:
             self._report_only(outputs, sources, table_kinds)
             return
@@ -189,9 +191,13 @@ class PostScanGate:
         ]
 
     def before_commit(self, sink: Any) -> None:
-        """Refuse the commit when a required gate never ran. No sink's staged files can be checked
-        yet, so every sink is refused; `ran` stays false, so a retry is refused too."""
+        """A required gate that has not run when a sink commits has no resident output to read:
+        the route wrote it to the sink as it went. That run is deferred, not refused. With no sink
+        (the post-condition after the route) a gate that never ran is a wiring fault and refuses."""
         if self.ran or not self.required or self.deferred:
+            return
+        if sink is not None:
+            self.deferred = True
             return
         report = {"schema_version": SCHEMA_VERSION, "pass_failed_with": _NOT_RUN}
         error = blocked_error(report, post_scan_verdict(report))
@@ -251,22 +257,24 @@ def active_gate() -> PostScanGate | None:
     return _ACTIVE.get()
 
 
-def _deferred(ctx: PipelineRunContext) -> bool:
-    """Whether the gate cannot read this run back yet: a sink publishes staged output, a loader
-    or a lazy source feeds tables the gate does not hold, and declared casting renders them per
-    chunk. Each of these routes runs as it did before the gate until it is made readable."""
-    return (
-        ctx.sink is not None
-        or ctx.source_loader is not None
-        or any(isinstance(s, LazySource) for s in ctx.caller_sources.values())
-        or bool(lexeme_columns_by_table(ctx.config))
+def _resident(outputs: Mapping[str, pa.Table], table_kinds: Mapping[str, str]) -> bool:
+    """Whether every table the run produces is still held in `outputs`."""
+    return all(name in outputs for name in table_kinds)
+
+
+def _deferred(ctx: PipelineRunContext, route: str) -> bool:
+    """Whether this run's inputs cannot be read back by the gate before the route runs: a loader
+    supplies tables nothing can re-read, and a bounded route casts declared columns per chunk.
+    Outputs that are not resident are found later, when the gate is asked to run."""
+    return ctx.source_loader is not None or (
+        route != "full_frame" and bool(lexeme_columns_by_table(ctx.config))
     )
 
 
 @contextmanager
-def bind_gate(ctx: PipelineRunContext) -> Iterator[PostScanGate]:
+def bind_gate(ctx: PipelineRunContext, route: str) -> Iterator[PostScanGate]:
     """Bind one gate for the run. Its lazy-input snapshot is taken here, before any route reads."""
-    deferred = _deferred(ctx)
+    deferred = _deferred(ctx, route)
     facts = (
         capture_source_facts(ctx.caller_sources, ctx.table_kinds)
         if post_scan_gate_applies(ctx.config) and not deferred
