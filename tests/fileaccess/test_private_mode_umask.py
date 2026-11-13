@@ -18,7 +18,7 @@ import pytest
 from decoy_engine import fileaccess
 from decoy_engine.fileaccess import FileRequest, FileRole, RootedFileAccess
 from decoy_engine.quarantine import publish_staged_jsonl, write_jsonl_staged
-from decoy_engine.vault import VaultError, VaultWriter
+from decoy_engine.vault import VaultWriter
 
 UMASKS = pytest.mark.parametrize(
     "umask", [0o000, 0o077, 0o700, 0o770, 0o777], ids=lambda m: f"umask{m:03o}"
@@ -85,8 +85,10 @@ def test_ambient_fchmod_failure_leaves_no_stage(
     assert list(tmp_path.iterdir()) == []
     with pytest.raises(OSError):
         write_jsonl_staged(str(tmp_path / "q.jsonl"), RECORDS)
-    with pytest.raises((OSError, VaultError)):
+    with pytest.raises(PermissionError) as vault_info:  # stage creation keeps the ambient shape
         _vault().write(str(tmp_path / "v.dcyvault"))
+    assert vault_info.value.errno == errno.EPERM
+    assert vault_info.value.filename == str(tmp_path / "v.dcyvault")
     assert list(tmp_path.iterdir()) == []
 
 
@@ -103,13 +105,14 @@ def test_strict_fchmod_failure_leaves_no_stage(
         txn.create_file("data")
     assert info.value.errno == errno.EPERM and info.value.filename is None
     vault_out = rooted.output_dir(FileRequest(FileRole.VAULT, "write", "v.dcyvault", "vault"))
-    with pytest.raises((OSError, VaultError)):
+    with pytest.raises(PermissionError) as vault_info:  # stage creation keeps the strict shape
         _vault(rooted).write(vault_out)
+    assert vault_info.value.errno == errno.EPERM and vault_info.value.filename is None
     assert list((root_dir / "out").iterdir()) == []
     assert sorted(p.name for p in root_dir.iterdir()) == ["out"]
 
 
 def _vault(policy: RootedFileAccess | None = None) -> VaultWriter:
-    writer = VaultWriter(b"12345678", file_access=policy)
+    writer = VaultWriter(b"12345678" * 4, file_access=policy)
     writer.add([("ns", "m", "s")])
     return writer

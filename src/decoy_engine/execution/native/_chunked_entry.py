@@ -648,13 +648,13 @@ def run_mask_chunked(
     `vault_writer` must be `None`: a writer raises
     `ExecutionError(code="vault_requires_resident_output")` before any chunk is read (B-6 B0).
     """
+    if vault_writer is not None:
+        raise vault_requires_resident_output()
     # Local imports: the core imports this module at load time.
     from decoy_engine.execution.native.chunked import _core
     from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
     refuse_unchecked_route(config, "native_chunked")
-    if vault_writer is not None:
-        raise vault_requires_resident_output()
     return _core.mask_chunked(
         config,
         chunks,
