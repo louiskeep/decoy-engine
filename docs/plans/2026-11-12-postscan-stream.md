@@ -1025,3 +1025,12 @@ and the new `reason_ref_payload`, which `phase._reason_wire` (`phase.py:470`) mo
 the reason registry (append-only, one retirement with `replaced_by`); `run_post_mask` (one keyword
 added); `CheckId` (unchanged); `IsolatedRunOutcome` and `GovernorResult.outcome` (one value added,
 pre-GA).
+
+## Amendments 2026-11-13 (PS-8 build, tech-lead rulings)
+
+
+- 4.2, generated parent. The baseline of an edge whose parent is generated is "inherited": the count of input child key values that match no output parent key. The gate then measures introduced orphans as output orphans minus that count, both against the output parent keys. "A generate table has baseline 0" still holds for a generated child. A source orphan under `preserve` or `warn` therefore does not block, and a mask that breaks a matched child key still does.
+- 4.3, declared casting. Until PS-10, a job with declared columns and declared keys stays on the resident route (`route.post_scan_keys_resident`), because the bounded routes cast per chunk and the gate has no cast re-read yet.
+- PS-10 note: lift that clause when the cast attachment lands (AT-29), and give the two B-6 publish cells in `test_b6a_publish.py` their sink back once a staged sink is readable.
+- Route types: routing takes `ReasonCode | None` (the type route reasons already have), not `ReasonRef`.
+
