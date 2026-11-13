@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.config import post_scan_integrity_requested
+from decoy_engine.config import post_scan_model_setting
 from decoy_engine.errors import DecoyError
 
 _REASON = reasons.route.POST_SCAN_MODELS_UNSUPPORTED
@@ -46,25 +46,10 @@ class PostScanRouteError(DecoyError):
         return (type(self), (self.route, self.setting))
 
 
-def _asks_for_models(detectors: object) -> bool:
-    # Anything other than a list of `regex` entries counts as a model ask: fail closed on a raw dict.
-    if detectors is None:
-        return False
-    if isinstance(detectors, list | tuple):
-        return any(d != "regex" for d in detectors)
-    return detectors != "regex"
-
-
 def refuse_unchecked_route(config: Mapping[str, Any], route: str) -> None:
     """Raise `PostScanRouteError` when `config` asks this no-post-scan route for a model check."""
-    if not post_scan_integrity_requested(config):
-        return
-    block = config["post_scan"]
-    if _asks_for_models(block.get("detectors")):
-        setting = "post_scan.detectors"
-    elif block.get("ner_findings") == "fail":
-        setting = "post_scan.ner_findings"
-    else:
+    setting = post_scan_model_setting(config)
+    if setting is None:
         return
     # Lazy: the helper sits in the secret-provider package, which this module need not load.
     from decoy_engine.secret_providers._errors import raise_bare

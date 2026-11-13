@@ -31,6 +31,7 @@ from decoy_engine import reasons
 from decoy_engine.config._pre_scan import canonical_detectors, checked_ner_model, inactive
 from decoy_engine.detection.ner import DEFAULT_NER_MODEL
 from decoy_engine.detection.types import DetectorSource
+from decoy_engine.reasons import ReasonCode
 
 _DISMISSAL_INVALID = str(reasons.config.DISMISSAL_INVALID)
 
@@ -139,3 +140,62 @@ def post_scan_gate_applies(config: Mapping[str, Any]) -> bool:
     """True when a validated config dict needs the post-scan gate: a relationship is declared or
     Post-scan integrity is on. The one place that decision is made."""
     return bool(config.get("relationships")) or post_scan_integrity_requested(config)
+
+
+# `_snapshot._sink_class_token(None)`: the one name a run without a sink goes by.
+NO_SINK_CLASS_LABEL = "None"
+
+
+def post_scan_sink_kind(sink: object | None) -> str:
+    """The token a sink goes by in the readability decision: the no-sink name, else its class."""
+    if sink is None:
+        return NO_SINK_CLASS_LABEL
+    cls = type(sink)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def post_scan_output_readable(sink_kind: str) -> bool:
+    """True when a route's output can be checked before it becomes visible. A run with no sink
+    hands its outputs back resident; no sink class can be read back from staged files yet."""
+    return sink_kind == NO_SINK_CLASS_LABEL
+
+
+def post_scan_output_unreadable(config: Mapping[str, Any], sink: object | None) -> bool:
+    """True when the gate applies to this config and `sink` cannot be read back before commit."""
+    return post_scan_gate_applies(config) and not post_scan_output_readable(
+        post_scan_sink_kind(sink)
+    )
+
+
+def post_scan_model_setting(config: Mapping[str, Any]) -> str | None:
+    """The post-scan setting that asks for a model check (`post_scan.detectors` other than
+    regex, or `post_scan.ner_findings: fail`), or `None`. Only an enabled suite asks."""
+    if not post_scan_integrity_requested(config):
+        return None
+    block = config["post_scan"]
+    detectors = block.get("detectors")
+    # Anything other than a list of `regex` entries counts as a model ask: fail closed on a raw dict.
+    if isinstance(detectors, list | tuple):
+        asks = any(d != "regex" for d in detectors)
+    else:
+        asks = detectors is not None and detectors != "regex"
+    if asks:
+        return "post_scan.detectors"
+    return "post_scan.ner_findings" if block.get("ner_findings") == "fail" else None
+
+
+def post_scan_resident_reason(
+    config: Mapping[str, Any], *, output_readable: bool, input_baseline_readable: bool
+) -> ReasonCode | None:
+    """Why a job must stay on the resident route so the post-scan gate can run, or `None`.
+
+    `post_scan.integrity` needs the whole output (the column suite is not streamed yet). Declared
+    keys alone need the output and the inputs re-readable: a route that can read back neither
+    stays resident, where the gate runs over the tables it holds."""
+    if not post_scan_gate_applies(config):
+        return None
+    if post_scan_integrity_requested(config):
+        return reasons.route.POST_SCAN_INTEGRITY_REQUESTED
+    if not (output_readable and input_baseline_readable):
+        return reasons.route.POST_SCAN_KEYS_RESIDENT
+    return None

@@ -63,10 +63,16 @@ from decoy_engine.config._parse import (
 )
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._post_scan import (
+    NO_SINK_CLASS_LABEL,
     Dismissal,
     PostScanConfig,
     post_scan_gate_applies,
     post_scan_integrity_requested,
+    post_scan_model_setting,
+    post_scan_output_readable,
+    post_scan_output_unreadable,
+    post_scan_resident_reason,
+    post_scan_sink_kind,
 )
 from decoy_engine.config._pre_scan import PreScanConfig
 from decoy_engine.config._relationships import (
@@ -108,6 +114,7 @@ from decoy_engine.config._transforms import (
 
 __all__ = [
     "FILE_SOURCE_PATH_FIELDS",
+    "NO_SINK_CLASS_LABEL",
     "SOURCE_LOCATOR_FIELDS",
     "SOURCE_PATH_FIELDS",
     "UNIQUE_FAKER_ATTEMPTS",
@@ -158,6 +165,11 @@ __all__ = [
     "parse_relationship_config",
     "post_scan_gate_applies",
     "post_scan_integrity_requested",
+    "post_scan_model_setting",
+    "post_scan_output_readable",
+    "post_scan_output_unreadable",
+    "post_scan_resident_reason",
+    "post_scan_sink_kind",
     "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",
     "value_key",

@@ -319,6 +319,31 @@ SOURCES: tuple[Source, ...] = (
             ]
         ),
     ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-commit",
+        "tests/sentry/baselines/post-scan-commit.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-commit.json").read_text(encoding="utf-8"))["entries"]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-model-predicate",
+        "tests/sentry/baselines/post-scan-model-predicate.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-model-predicate.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-readability",
+        "tests/sentry/baselines/post-scan-readability.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-readability.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
 )
 
 # Committed data a sentry reads that is a pinned contract, not an allowlist that could grow.

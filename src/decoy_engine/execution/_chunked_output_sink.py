@@ -37,7 +37,7 @@ import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine._lexeme import lexeme_columns_by_table
-from decoy_engine.config import post_scan_integrity_requested
+from decoy_engine.config import post_scan_integrity_requested, post_scan_output_unreadable
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._publication_observer import observed_abort, observed_commit
@@ -121,13 +121,12 @@ def decide_output_mode(
         return "resident", reasons.route.FIDELITY_REPORT
     if post_validation:
         return "resident", reasons.route.POST_VALIDATION
-    if post_scan_integrity_requested(config):
-        # Post-scan integrity (`compute_post_scan_integrity`) reads `result.outputs`; a streamed
-        # run leaves it empty, so the requested check would silently no-op. Keep the
-        # output resident -- masked values are chunk-invariant, so the resident chunked
-        # output is Post-scan-correct, matching how post_scan_integrity declines the sequential, mixed,
-        # out-of-core and unified-slice routes for the same whole-output reason.
-        return "resident", reasons.route.POST_SCAN_INTEGRITY
+    if post_scan_output_unreadable(config, sink):
+        # The post-scan gate reads `result.outputs`, which a streamed run leaves empty, so the
+        # run stays resident; masked values are chunk-invariant, so the check is the same.
+        if post_scan_integrity_requested(config):
+            return "resident", reasons.route.POST_SCAN_INTEGRITY
+        return "resident", reasons.route.POST_SCAN_KEYS_RESIDENT
     return "streamed", REASON_ELIGIBLE
 
 

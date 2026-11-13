@@ -173,6 +173,14 @@ class _Run:
             return "not_run", None, None
         got = self._resolve("source", end, parents)
         if got == "no_source":
+            try:
+                inherited = self._inherited(end, parents)
+            except Exception as exc:
+                if passes_through(exc):
+                    raise
+                return "error", None, _class_of(exc)
+            if inherited is not None:
+                return "measured", inherited, None
             return "no_source", KeyCounts(), None
         if isinstance(got, str):
             return "key_column_missing", None, None
@@ -188,6 +196,33 @@ class _Run:
                 raise
             return "error", None, _class_of(exc)
         return "measured", counts, None
+
+    def _inherited(self, end: _End, parents: tuple[_End, ...]) -> KeyCounts | None:
+        """A child that is in the inputs but whose parent is generated: the input child keys that
+        match no output parent key. The generated parent has no input side, so these orphans came
+        with the data (`preserve` and `warn` keep them) and are not the run's doing. `None` when
+        the child is itself generated, or a side cannot be read or compared."""
+        own = self._lookup("source", end)
+        found = [self._lookup("output", p) for p in parents]
+        if not parents or not isinstance(own, KeyBatches):
+            return None
+        if not all(isinstance(f, KeyBatches) for f in found):
+            return None
+        keys = [f for f in found if isinstance(f, KeyBatches)]
+        if not keys_comparable(keys[0], [*keys[1:], own]):
+            return None
+        facts = key_facts(
+            _union(keys), [*keys[1:], own], scratch=self._scratch, memory_limit=self._limit
+        )
+        if facts.status != "checked":
+            return None
+        c = facts.children[-1]
+        return KeyCounts(
+            rows=c.rows,
+            null_key_rows=c.null_key_rows,
+            orphan_rows=c.orphan_rows,
+            orphan_distinct_keys=c.orphan_distinct_keys,
+        )
 
     def _lookup(self, side: str, end: _End) -> KeyBatches | str:
         table = self._sides[side].get(end[0])

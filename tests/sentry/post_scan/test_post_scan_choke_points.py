@@ -21,6 +21,9 @@ SENTRIES: dict[str, Callable[[], list[str]]] = {
     "post-scan-key-core": scan.key_core_sites,
     "post-scan-reason-identity": scan.serializer_sites,
     "post-scan-gate-applies": scan.applies_sites,
+    "post-scan-commit": scan.commit_sites,
+    "post-scan-model-predicate": scan.model_sites,
+    "post-scan-readability": scan.readability_sites,
 }
 
 
@@ -213,3 +216,79 @@ def test_setting_required_from_a_local_expression_in_the_gate_is_flagged() -> No
     found = _keys(scan.required_label, planted, scan.GATE)
     assert [k.split("::")[2] for k in found] == ["required-assign"]
     assert _keys(scan.applies_label, planted, scan.GATE)
+
+
+# ----- no commit without the gate -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [
+        ("def f(sink):\n    sink.commit()\n", "commit-call"),
+        ("def f(self):\n    self._tsink.commit()\n", "commit-call"),
+        ("def f(a, b):\n    atomic_commit(a, b)\n", "atomic-commit"),
+        ("def f(x):\n    return getattr(x, 'commit')\n", "getattr-commit"),
+    ],
+)
+def test_a_commit_outside_the_observer_is_flagged(source: str, label: str) -> None:
+    found = _keys(scan.commit_label, source, "execution/x.py")
+    assert [k.split("::")[2] for k in found] == [label]
+
+
+def test_the_publish_session_wrapper_is_not_flagged() -> None:
+    assert _keys(scan.commit_label, "def f(publish):\n    publish.commit()\n", "x.py") == []
+
+
+def test_calling_the_sink_commit_directly_in_the_sequential_route_is_flagged() -> None:
+    real = _real("execution/_sequential.py")
+    planted = real.replace("observed_commit(_tsink)", "_tsink.commit()", 1)
+    assert planted != real
+    found = _keys(scan.commit_label, planted, "execution/_sequential.py")
+    assert any("::commit-call::" in k for k in found)
+
+
+# ----- one model predicate ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [
+        ("def f(b):\n    return b.get('ner_findings')\n", "ner-findings-read"),
+        ("def f(b):\n    return b.detectors != 'regex'\n", "detectors-compare"),
+    ],
+)
+def test_a_model_check_outside_the_predicate_is_flagged(source: str, label: str) -> None:
+    found = _keys(scan.model_label, source, "verification/x.py")
+    assert [k.split("::")[2] for k in found] == [label]
+
+
+def test_inlining_the_model_test_in_the_route_guard_is_flagged() -> None:
+    planted = _real("verification/postmask/_route_guard.py") + (
+        "\n\ndef _planted(block):\n    return block.get('ner_findings') == 'fail'\n"
+    )
+    found = _keys(scan.model_label, planted, "verification/postmask/_route_guard.py")
+    assert found
+
+
+# ----- one route readability decision -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(c):\n    return post_scan_resident_reason(c, output_readable=True,"
+        " input_baseline_readable=True)\n",
+        "def f(c):\n    return post_scan_output_readable('None')\n",
+    ],
+)
+def test_a_readability_decision_outside_the_helper_is_flagged(source: str) -> None:
+    found = _keys(scan.readability_label, source, "execution/x.py")
+    assert [k.split("::")[2] for k in found] == ["decision-call"]
+
+
+def test_passing_a_literal_sink_kind_to_the_helper_is_flagged() -> None:
+    real = _real("execution/_job_estimate.py")
+    planted = real.replace("sink_kind=NO_SINK_CLASS_LABEL", "sink_kind='None'", 1)
+    assert planted != real
+    found = _keys(scan.readability_label, planted, "execution/_job_estimate.py")
+    assert [k.split("::")[2] for k in found] == ["literal-fact"]

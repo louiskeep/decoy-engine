@@ -39,15 +39,18 @@ def execute_route(
     carries the declared-route refusals the admission layers noted while deciding."""
     from decoy_engine.declared_casting._refusals import stamp
     from decoy_engine.execution import _pipeline_full_frame
+    from decoy_engine.execution.pipeline._post_scan import bind_gate, settle
 
-    if ctx.has_mask_table and decision.route == "sequential":
-        result = execute_sequential_route(ctx, decision)
-    elif ctx.has_mask_table and decision.route == "out_of_core":
-        result = execute_out_of_core_route(ctx, decision)
-    elif ctx.has_mask_table and decision.route == "mixed":
-        result = execute_mixed_route(ctx, decision)
-    else:
-        result = _pipeline_full_frame.run_full_frame_route(ctx, decision)
+    with bind_gate(ctx) as gate:
+        if ctx.has_mask_table and decision.route == "sequential":
+            result = execute_sequential_route(ctx, decision)
+        elif ctx.has_mask_table and decision.route == "out_of_core":
+            result = execute_out_of_core_route(ctx, decision)
+        elif ctx.has_mask_table and decision.route == "mixed":
+            result = execute_mixed_route(ctx, decision)
+        else:
+            result = _pipeline_full_frame.run_full_frame_route(ctx, decision)
+        settle(gate, ctx, result)
     stamp(result.quality_metrics, refusals)
     return result
 

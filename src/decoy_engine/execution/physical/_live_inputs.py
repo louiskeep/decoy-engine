@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import NO_SINK_CLASS_LABEL
 from decoy_engine.execution.physical._inputs import (
     OutOfCoreRoutingFacts,
     PhysicalPlanInputs,
@@ -35,12 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = ["build_live_physical_plan_inputs"]
 
-# `_sink_class_token(None)`'s own return value (`_snapshot.py`) -- the D3
-# admission predicate guarantees no sink on this lane's admitted path, so
-# this constructor never receives one to derive the token from. A named
-# constant, not an inline literal, so a bare `"None"` string here does not
-# read as a credential to a naive secret-scanner.
-_NO_SINK_CLASS_LABEL = "None"
+_NO_SINK_CLASS_LABEL = NO_SINK_CLASS_LABEL
 
 
 def build_live_physical_plan_inputs(

@@ -127,7 +127,7 @@ def test_post_scan_integrity_is_forwarded_to_the_router(
     real = routing.decide_execution_route
 
     def spy(*args: Any, **kwargs: Any) -> Any:
-        seen.append(bool(kwargs.get("post_scan_integrity")))
+        seen.append(kwargs.get("post_scan_resident") is not None)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(routing, "decide_execution_route", spy)

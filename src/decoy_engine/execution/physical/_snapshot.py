@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import post_scan_sink_kind
 from decoy_engine.execution import _pipeline_finalize
 from decoy_engine.execution._planner import (
     AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
@@ -42,10 +43,7 @@ __all__ = ["capture_physical_plan_inputs"]
 
 
 def _sink_class_token(sink: TransactionalSink | None) -> str:
-    if sink is None:
-        return "None"
-    cls = type(sink)
-    return f"{cls.__module__}.{cls.__qualname__}"
+    return post_scan_sink_kind(sink)
 
 
 def capture_physical_plan_inputs(

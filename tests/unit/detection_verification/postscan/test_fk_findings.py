@@ -17,8 +17,6 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.config import PipelineConfig, RelationshipConfig
-from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._pipeline_finalize import compute_post_scan_integrity
 from decoy_engine.verification.postmask import (
     SCHEMA_VERSION,
     TableBatches,
@@ -222,16 +220,17 @@ def _pipeline_config(tmp_path: Path) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(("child", "severity"), [(["a", "b"], "info"), (["a", "z"], "fail")])
-def test_the_in_run_report_keeps_fk_findings_without_keys(
+def test_the_report_adapter_keeps_fk_findings_without_keys(
     tmp_path: Path, child: list[str], severity: str
 ) -> None:
     sources = {"p": pa.table({"id": ["a", "b"]}), "c": pa.table({"pid": ["a", "b"]})}
-    result = ExecutionResult(
-        outputs={"p": sources["p"], "c": pa.table({"pid": child})},
-        table_kinds={"p": "mask", "c": "mask"},
+    outputs = {"p": sources["p"], "c": pa.table({"pid": child})}
+    report = run_post_mask(
+        source_frames={n: t.to_pandas() for n, t in sources.items()},
+        output_frames={n: t.to_pandas() for n, t in outputs.items()},
+        config=_pipeline_config(tmp_path),
     )
-    compute_post_scan_integrity(result, config=_pipeline_config(tmp_path), sources=sources)
-    (f,) = result.quality_metrics["post_scan_integrity"]["fk_preservation"]
+    (f,) = report["fk_preservation"]
     assert (f["parent_table"], f["child_table"], f["severity"]) == ("p", "c", severity)
 
 
