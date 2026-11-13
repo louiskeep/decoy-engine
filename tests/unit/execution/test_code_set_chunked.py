@@ -632,7 +632,7 @@ class TestCorpusPinning:
                 {
                     "name": "a",
                     "columns": [
-                        {"name": "id", "strategy": "hash"},
+                        {"name": "id", "strategy": "hash", "namespace": "ids"},
                         _code_set_col("code", "icd10"),
                     ],
                 },

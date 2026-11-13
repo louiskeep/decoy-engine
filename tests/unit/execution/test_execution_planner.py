@@ -499,7 +499,12 @@ def _date_shift_no_format_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
     path = _write_csv(tmp_path, "ds", df)
     cfg = _base_config(
         tmp_path,
-        tables=[{"name": "ds", "columns": [{"name": "dt", "strategy": "date_shift"}]}],
+        tables=[
+            {
+                "name": "ds",
+                "columns": [{"name": "dt", "strategy": "date_shift", "namespace": "dt_ns"}],
+            }
+        ],
         sources={"ds": path},
     )
     return cfg, {"ds": pa.Table.from_pandas(df, preserve_index=False)}

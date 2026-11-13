@@ -18,7 +18,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import ExecutionError, PandasExecutionAdapter
-from decoy_engine.plan import compile_plan
+from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.profile import ColumnProfile, Profile, TableProfile
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
@@ -177,12 +177,11 @@ def test_fails_closed_without_a_vault() -> None:
 
 def test_fails_closed_without_a_namespace() -> None:
     df = pd.DataFrame({"pan": ["x"]})
-    with pytest.raises(ExecutionError) as exc:
+    # Plan compile refuses it before the handler runs; the handler guard stays as a backstop.
+    with pytest.raises(PlanCompileError) as exc:
         _run(df, namespace=None, vault=FakeVault())
-    assert (
-        "tokenize_requires_namespace" in str(exc.value)
-        or getattr(exc.value, "code", "") == "tokenize_requires_namespace"
-    )
+    assert exc.value.code == "tokenize_requires_namespace"
+    assert exc.value.path == "tables.t.columns.pan.namespace"
 
 
 # --- HIGH-1: V0 canonicalization guard (string/object dtype only) ----------

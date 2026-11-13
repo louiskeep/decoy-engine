@@ -505,7 +505,7 @@ def test_resident_contract_admission_declines_an_unsupported_strategy(tmp_path: 
     compiles with `execution is None` -- the resident-contract check must
     decline, not admit a partial slice."""
     source = pa.table({"c": pa.array(["12345", "23456", "34567"], type=pa.string())})
-    config, source = _build(tmp_path, [{"name": "c", "strategy": "fpe"}], source)
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "fpe", "namespace": "ns"}], source)
     profile, plan = _profile_and_plan(config, source)
     physical_plan, registry = _compile(config, profile, plan, source)
     assert _resident_contract(physical_plan, plan, source, registry=registry) is None
