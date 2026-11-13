@@ -107,7 +107,9 @@ class DeclaredRelationship:
 class KeyBatches:
     """The key columns of one table as Arrow batches labelled `k0..kn`, in declared order.
 
-    `batches` can be called again: each call starts a new read."""
+    `batches` can be called again: each call starts a new read. Every batch's column types are
+    the declared schema's types or narrower in the same family; a wider batch is refused before
+    it is loaded (`_check_widths`)."""
 
     schema: pa.Schema
     batches: Callable[[], Iterator[pa.RecordBatch]]
@@ -341,6 +343,46 @@ def _before_fetch(conn: Any) -> None:
     lets a test see the spill files while the loaded tables still exist."""
 
 
+_HUGEINT_SPAN = (-(2**127), 2**127 - 1)
+
+
+def _span(t: pa.DataType) -> tuple[int, int]:
+    bits = t.bit_width
+    return (
+        (0, 2**bits - 1)
+        if pa.types.is_unsigned_integer(t)
+        else (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1)
+    )
+
+
+def _check_widths(
+    batch: pa.RecordBatch, keys: KeyBatches, duck: Sequence[str | None], role: str
+) -> None:
+    """Refuse a batch whose integer key column does not fit the type its table was created with.
+    DuckDB would raise its own overflow error, whose text can carry the value."""
+    columns = zip(_labels(len(duck)), keys.schema.types, duck, batch.schema.types, strict=False)
+    for label, declared, kind, actual in columns:
+        if kind is None:
+            span = _span(declared) if pa.types.is_integer(declared) else None
+        else:
+            span = (
+                _span(pa.int64())
+                if kind == "BIGINT"
+                else _HUGEINT_SPAN
+                if kind == "HUGEINT"
+                else None
+            )
+        if span is None:
+            continue
+        if (
+            pa.types.is_integer(actual)
+            and span[0] <= _span(actual)[0]
+            and _span(actual)[1] <= span[1]
+        ):
+            continue
+        raise PipelineConfigError(f"key {label} of the {role} is wider than its declared type")
+
+
 def _load(conn: Any, table: str, keys: KeyBatches, duck: Sequence[str | None]) -> None:
     # The empty first table fixes the column types; each batch is then appended.
     conn.register("incoming", pa.Table.from_batches([], schema=keys.schema))
@@ -350,6 +392,7 @@ def _load(conn: Any, table: str, keys: KeyBatches, duck: Sequence[str | None]) -
     )
     conn.execute(f"CREATE TABLE {table} AS SELECT {picks} FROM incoming")
     for batch in keys.batches():
+        _check_widths(batch, keys, duck, table)
         conn.register("incoming", pa.Table.from_batches([batch]))
         conn.execute(f"INSERT INTO {table} SELECT * FROM incoming")
     conn.unregister("incoming")

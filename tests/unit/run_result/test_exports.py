@@ -20,3 +20,24 @@ def test_package_exports() -> None:
         assert name in run_result.__all__
         assert hasattr(run_result, name)
     assert not set(NEW) & set(decoy_engine.__all__)
+
+
+BUILD = (
+    "BaselineLink",
+    "ConfigRef",
+    "EvidenceLink",
+    "FailureInput",
+    "Links",
+    "LogLink",
+    "NativeRoute",
+    "RouteView",
+    "RunFacts",
+    "build_run_result",
+)
+
+
+def test_build_exports() -> None:
+    for name in BUILD:
+        assert name in run_result.__all__
+        assert hasattr(run_result, name)
+    assert not set(BUILD) & set(decoy_engine.__all__)

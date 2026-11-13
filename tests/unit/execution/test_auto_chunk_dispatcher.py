@@ -160,17 +160,17 @@ def test_routed_job_calls_run_mask_chunked_once_with_the_run_context(
     spies = support.spy_lanes(monkeypatch)
     # Admission wraps the supplied provider in a run-scoped prepared one (closed when the run
     # ends), so the key the lane received is read at call time and compared by value.
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
 
     seen_keys: list[tuple[bytes, str]] = []
-    spied_entry = _chunked_entry.run_mask_chunked
+    spied_entry = _native_core.mask_chunked
 
     def record_key(*args: Any, **kwargs: Any) -> Any:
         received = kwargs["key_provider"]
         seen_keys.append((received.mask_key(), received.key_version))
         return spied_entry(*args, **kwargs)
 
-    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", record_key)
+    monkeypatch.setattr(_native_core, "mask_chunked", record_key)
     result = support.run_default(
         cfg, src, native_threads=3, vault_writer=writer, key_provider=provider
     )
@@ -557,13 +557,15 @@ def test_a_vault_writer_keyed_differently_from_the_mask_key_is_rejected_before_a
 
     cfg, src = _vault_job(tmp_path)
     spies = support.spy_lanes(monkeypatch)
-    with pytest.raises((VaultError, ExecutionError)):
+    # A floor-valid key that is not the run's mask root, so the route's key-match guard refuses it.
+    with pytest.raises(VaultError) as err:
         support.run_default(
             cfg,
             src,
-            vault_writer=VaultWriter((42).to_bytes(8, "big")),
+            vault_writer=VaultWriter(b"\x42" * 32),
             key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
         )
+    assert err.value.code == "vault_key_mismatch"
     assert spies["entry.run_mask_chunked"] == []
     assert spies["oracle.run_mask_pipeline_chunked"] == []
 

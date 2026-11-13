@@ -224,6 +224,7 @@ def run_seq_quarantined(
     return (adapter or PandasExecutionAdapter()).run_sequential(
         shape.plan,
         lambda t: srcs[t],
+        config={},
         registry=s.REGISTRY,
         relationship_graph=shape.graph,
         namespace_registry=s.NAMESPACES,

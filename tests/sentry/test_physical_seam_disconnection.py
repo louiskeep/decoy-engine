@@ -64,6 +64,8 @@ REPO_ROOT = ENGINE_ROOT.parents[1]
 GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline.py",
     "execution/pipeline/_subset_stage.py",
+    # PS-7: the post-scan gate core checks outputs before commit; no physical import.
+    "execution/pipeline/_post_scan.py",
     "execution/_pipeline_routing.py",
     "execution/_pipeline_routing_signals.py",
     "execution/_pipeline_chunk_route.py",
@@ -103,6 +105,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pandas_adapter.py",
     "execution/_sequential.py",
     "execution/_chunked.py",
+    "execution/chunked/_progress.py",
     "execution/_adapter.py",
     "execution/_substrate.py",
     "execution/_runner.py",
@@ -396,8 +399,18 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/__init__.py",
             "src/decoy_engine/execution/pipeline/_cgroup.py",
             "src/decoy_engine/execution/pipeline/_host.py",
+            # SCAN-ML M5: the guard-free core of native `run_mask_chunked` that `run_pipeline`'s
+            # auto-chunk lane calls (new private sub-package). Neither imports `execution.physical`.
+            "src/decoy_engine/execution/native/chunked/__init__.py",
+            "src/decoy_engine/execution/native/chunked/_core.py",
             # SUB-RUN E2: the subset stage imports the public `decoy_engine.subset` surface only.
             "src/decoy_engine/execution/pipeline/_subset_stage.py",
+            # SAMPLE SE2: the sample's exact/approximate column label reads config and the
+            # strategy vocabulary only.
+            "src/decoy_engine/execution/pipeline/_sample.py",
+            # PS-7: the post-scan gate core, not yet wired; imports nothing from
+            # `execution.physical`.
+            "src/decoy_engine/execution/pipeline/_post_scan.py",
             # RUN-STREAM E3: `route_summary` reads recorded quality_metrics blocks and imports
             # nothing from `execution.physical`.
             "src/decoy_engine/execution/pipeline/_route_summary.py",
@@ -489,6 +502,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # The deleted execution/polars/ tree itself is carved out of the filter below.
             "src/decoy_engine/execution/__init__.py",
             "src/decoy_engine/execution/_chunked.py",
+            # The chunked entries' progress helper (new sub-package); it is in GUARDED_MODULES,
+            # so it imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/chunked/__init__.py",
+            "src/decoy_engine/execution/chunked/_progress.py",
             "src/decoy_engine/execution/_chunked_adapter_gate.py",
             "src/decoy_engine/execution/_planner.py",
             "src/decoy_engine/execution/_strategies/_top_code.py",
@@ -964,10 +981,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_strategies/_redact.py",
             # GEN-REL E1: the capacity probe loosens a bounded `reference` column's per-parent
             # bounds to the scaled row counts, so a scaled config stays feasible, and reads a
-            # table's generate columns through `config.generate_columns_of`. GEN-REL E2: it
-            # also holds a self-reference's explicit `root_count` to the scaled row count,
-            # using `config.is_self_reference`. It still imports nothing from
-            # `execution.physical`.
+            # table's generate columns through `config.generate_columns_of` and the bounds
+            # through `config.per_parent_bounds`. GEN-REL E2: it also holds a
+            # self-reference's explicit `root_count` to the scaled row count, using
+            # `config.is_self_reference`, and reads whether a parent key is exact through
+            # `config.is_exact_sequence_key`, the one copy of that rule. It still imports
+            # nothing from `execution.physical`.
             "src/decoy_engine/execution/_probe_scale.py",
         }
     )

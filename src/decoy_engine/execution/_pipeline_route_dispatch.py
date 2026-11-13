@@ -72,6 +72,7 @@ def _sequential_route(
     ctx: PipelineRunContext, decision: RouteDecision, loader: Any, cast_run: Any
 ) -> ExecutionResult:
     return _route_exec.run_sequential_route(
+        config=ctx.config,
         plan=ctx.plan,
         loader=loader,
         registry=ctx.registry,

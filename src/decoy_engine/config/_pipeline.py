@@ -49,6 +49,7 @@ from decoy_engine.config._generate_relational import (
     aggregate_problems,
     is_self_reference,
     parent_lookup_problems,
+    per_parent_bounds,
     per_parent_problems,
     self_reference_problems,
 )
@@ -406,8 +407,7 @@ class PipelineConfig(BaseModel):
         parent's declared `row_count`; the run re-checks both bounds on the real key count.
         """
         if not any(
-            (c.model_extra or {}).get("min_per_parent")
-            or (c.model_extra or {}).get("max_per_parent")
+            any(per_parent_bounds(c.model_extra or {}))
             for t in self.tables
             for c in t.generate_columns
         ):

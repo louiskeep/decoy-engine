@@ -17,9 +17,12 @@ TOKENIZE_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.tokenize",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_tokenize.py:126",
+        call_site="execution/_strategies/_tokenize.py:124",
         entropy_root="mask_key",
-        seed_derivation="derive(mask_key, namespace, nfc_normalize(str(value)).encode())",
+        seed_derivation=(
+            "derive(K_tok, namespace, nfc_normalize(str(value)).encode()); K_tok = "
+            "derive(mask_key, namespace, b'tokenize-key/v1' || len(scope) || scope)"
+        ),
         api_operation="determinism.derive -> HMAC-SHA256 digest hex",
         call_shape="'tok_' + derive(...).hex()[:32]  # per value, then vault-recorded",
         consumes_variable_draws=False,
@@ -36,7 +39,9 @@ TOKENIZE_DRAW_SITES: tuple[DrawSite, ...] = (
             "like mask.hash's string branch, not a raw str(value). The HMAC digest "
             "seeds a fresh surrogate token; the (plaintext, token) pair -- plaintext "
             "is the SAME NFC-normalized string the token derives from -- is then "
-            "recorded in the PLATFORM vault. The vault is external state: "
+            "recorded in the PLATFORM vault. K_tok binds the vault's own "
+            "derivation_scope (B-6 D2), so two vaults tokenize apart and a token "
+            "payload is never a mask.hash output. The vault is external state: "
             "lookup_existing may override the freshly drawn token with a previously "
             "stored one (the vault is the identity boundary). tokenize is never "
             "native-routed (no compiled kernel; per-cell vault callback), so this "

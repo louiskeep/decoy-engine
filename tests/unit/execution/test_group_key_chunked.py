@@ -31,6 +31,7 @@ import pytest
 
 from decoy_engine import run_mask_pipeline_chunked, run_pipeline
 from decoy_engine.config import PipelineConfig
+from decoy_engine.execution import _chunked_oracle
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_fk import CHUNK_SAFE_STRATEGIES
 from decoy_engine.execution._chunked_group_key import (
@@ -489,8 +490,8 @@ class TestCacheCollisionFloatSignedZero:
         sources = {"people": table}
 
         with mock.patch(
-            "decoy_engine.execution._chunked.run_mask_pipeline_chunked",
-            wraps=run_mask_pipeline_chunked,
+            "decoy_engine.execution._chunked_oracle._mask_pipeline_chunked",
+            wraps=_chunked_oracle._mask_pipeline_chunked,
         ) as spy:
             result = run_pipeline(
                 cfg,
@@ -567,8 +568,8 @@ class TestTextRedactMaskedGroupByRoutesToOracle:
     def test_auto_route_falls_back_to_oracle(self, tmp_path, text_redact_pc) -> None:
         cfg, sources = self._cfg(tmp_path, text_redact_pc)
         with mock.patch(
-            "decoy_engine.execution._chunked.run_mask_pipeline_chunked",
-            wraps=run_mask_pipeline_chunked,
+            "decoy_engine.execution._chunked_oracle._mask_pipeline_chunked",
+            wraps=_chunked_oracle._mask_pipeline_chunked,
         ) as spy:
             result = run_pipeline(
                 cfg,
@@ -620,8 +621,8 @@ class TestCacheCollisionDecimalSignedZero:
         sources = {"people": table}
 
         with mock.patch(
-            "decoy_engine.execution._chunked.run_mask_pipeline_chunked",
-            wraps=run_mask_pipeline_chunked,
+            "decoy_engine.execution._chunked_oracle._mask_pipeline_chunked",
+            wraps=_chunked_oracle._mask_pipeline_chunked,
         ) as spy:
             result = run_pipeline(
                 cfg,

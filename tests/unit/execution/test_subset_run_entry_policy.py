@@ -8,6 +8,7 @@ Named limit: other prefixes are not walked, and a deliberately evasive name is n
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import textwrap
 from collections.abc import Callable
@@ -32,6 +33,15 @@ REFUSES = {
     "run_native_or_oracle_chunked",
     "compile_plan",
     "probe_peak_bytes",
+}
+# Refusing entries whose pre-read sequence lives once, in the guard-free core they return (the
+# resident auto-chunk lane calls the same core): the entry returns the core, the core refuses.
+IN_CORE = {
+    "run_mask_pipeline_chunked": (
+        "decoy_engine.execution._chunked_oracle",
+        "_mask_pipeline_chunked",
+    ),
+    "run_mask_chunked": ("decoy_engine.execution.native.chunked._core", "mask_chunked"),
 }
 # Splits the block off and checks the rest.
 SPLITS = {"validate_plan"}
@@ -59,11 +69,28 @@ def _calls(fn: Callable[..., object], callee: str) -> bool:
     )
 
 
+def _guard_holder(name: str, fn: Callable[..., object]) -> Callable[..., object]:
+    """The function that must call the guard: the entry itself, or the core it returns."""
+    if name not in IN_CORE:
+        return fn
+    module, core = IN_CORE[name]
+    source = textwrap.dedent(inspect.getsource(inspect.unwrap(fn)))
+    returned = [
+        n.value.func
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
+    ]
+    assert any(isinstance(f, ast.Attribute) and f.attr == core for f in returned), (
+        f"{name} does not return its core {core}"
+    )
+    return getattr(importlib.import_module(module), core)
+
+
 def test_every_refusing_entry_calls_the_guard() -> None:
     entries = _public_callables()
     for name in sorted(REFUSES):
         assert name in entries, f"{name} is no longer exported; update REFUSES"
-        assert _calls(entries[name], "refuse_unapplied_subset"), name
+        assert _calls(_guard_holder(name, entries[name]), "refuse_unapplied_subset"), name
 
 
 def test_splitting_and_applying_entries_call_the_split() -> None:

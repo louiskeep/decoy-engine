@@ -26,8 +26,11 @@ pytestmark = pytest.mark.filterwarnings("ignore")
 
 class _MemTokenVault:
     """In-memory TokenVaultWriter for the tokenize sentry fixture. The write-seam
-    fails closed without a vault; the token itself is derived from key, namespace
-    and plaintext, not from vault state, so two runs with fresh vaults agree."""
+    fails closed without a vault; the token itself is derived from key, namespace,
+    the vault's derivation scope and plaintext, not from vault state, so two runs with
+    fresh vaults of one scope agree."""
+
+    derivation_scope = b"mem-token-vault-scope-0123456789"
 
     def __init__(self) -> None:
         self._m: dict[tuple[str, str], str] = {}
@@ -430,7 +433,7 @@ def test_vault_writer_keyed_differently_is_rejected_before_any_table_masks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from decoy_engine.keyprovider import SecretKeyProvider
-    from decoy_engine.vault import VaultWriter
+    from decoy_engine.vault import VaultError, VaultWriter
 
     cfg, sources = mt.build_job(
         tmp_path,
@@ -443,15 +446,17 @@ def test_vault_writer_keyed_differently_is_rejected_before_any_table_masks(
     adapter_calls = mt.spy_adapter_run(monkeypatch)
     errors: list[BaseException] = []
     for extra in ({}, mt.off_kw()):
-        with pytest.raises(Exception) as raised:
+        # A floor-valid key that is not the run's mask root, so the key-match guard refuses it.
+        with pytest.raises(VaultError) as raised:
             run_pipeline(
                 cfg,
                 sources=sources,
-                vault_writer=VaultWriter((42).to_bytes(8, "big")),
+                vault_writer=VaultWriter(b"\x42" * 32),
                 key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
                 **mt.kw(**extra),
             )
         errors.append(raised.value)
+    assert [getattr(e, "code", None) for e in errors] == ["vault_key_mismatch"] * 2
     assert calls == [] and adapter_calls == []
     assert mt.same_error(errors[0], errors[1])
 

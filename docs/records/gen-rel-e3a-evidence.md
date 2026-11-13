@@ -620,3 +620,252 @@ commit changes no Python file.
 - `CODEMAP.md`'s Generation row and the docstring of `generation/relational/__init__.py` are
   ledger text; the package docstring still says callers import its names from the package,
   which the tree draw and the lookup do not (they are imported from their modules, as in E2).
+
+## Forward merge (2026-11-13)
+
+Each total in this section and the next belongs to the head named beside it. These two
+sections supersede the sections above for the final head.
+
+`origin/feat/gen-rel-e2` at `45c99dff` (slice 2's review fixes; it holds slice 1 `872f097d`
+and `origin/main` `c86ca58d`, 0.23.0 released) merged as `72823f4c` (parents `e91b848c`,
+`45c99dff`). Main is not merged into this branch directly. The venv was resynced
+(`uv sync --frozen --python 3.10 --extra dev --extra lint --extra vault --extra cloud`) and
+`decoy_engine.__file__` is `/home/user/wt-e3a/src/decoy_engine/__init__.py`.
+
+Conflicts, each resolved as a union:
+
+- `config/__init__.py` (imports and `__all__`), `config/_pipeline.py` (imports): both sides'
+  names (`GenerateInputRef`, `is_exact_sequence_key`, `iter_generate_input_refs`,
+  `parent_key_problem`, `parent_lookup_problems`, `per_parent_bounds`).
+- `config/_generate_relational.py`: the module docstring keeps both paragraphs (the parent
+  lookup rule and the exact-sequence-key predicate); `__all__` holds both sides' names; the
+  function region keeps slice 2's `is_exact_sequence_key`, `_not_above_zero` and
+  `_key_is_valid` beside this slice's `parent_key_problem`.
+- `tests/unit/config/test_generate_relational.py`: the docstring names both; both appended
+  blocks are kept (this slice's AT-11 cells, then slice 2's predicate cells).
+
+Adaptations required by the slice 1 and 2 guards:
+
+- Sequence-key guard: `parent_key_problem` restated the rule (`type == "sequence" and not
+  _nulls_on(null_probability)`). It is now built on the predicate:
+  `return None if is_exact_sequence_key(candidate) else code`. Every value a validated config
+  can carry reads the same; on rates the registry refuses, the predicate's fail-closed reading
+  applies, as for every other caller.
+- A silent semantic merge: git took this slice's `_tree_problem` line (the tree key through
+  `parent_key_problem`) over slice 2's `_key_is_valid` without a conflict, which dropped slice
+  2's item 1 (a self-reference key that declares `output_type` is refused). `_tree_problem`
+  calls `_key_is_valid` again, and `_key_is_valid` now asks `parent_key_problem` (the one key
+  rule, so this slice's `test_the_self_reference_key_rule_is_the_same_predicate` spy still
+  sees both keys) and then refuses an `output_type`. The guard's caller inventory
+  (`tests/sentry/defects/test_sequence_key_predicate.py`, `CALLERS`) names
+  `parent_key_problem` in place of `_key_is_valid`, the function in that file that now calls
+  the predicate; the restatement scan is unchanged.
+- Per-parent bounds guard: no E3a code reads `min_per_parent` or `max_per_parent`; the merged
+  `_column_problem` and `_tree_problem` read them through `per_parent_bounds` (slice 1 and 2's
+  bodies merged without a conflict).
+- `UNRELEASED` imports: every reason module that still declares a `since=UNRELEASED` code
+  keeps the import (`reasons/config/_part2.py`, `reasons/runtime/_part1.py`, `_part2.py`,
+  `_part3.py`, `reasons/plan/_part3.py`, `reasons/warning/_part1.py`); the package imports.
+
+Auto-merged files read against both parents: `generation/synthesize.py` (unchanged from this
+slice's side: 598 lines, no census entry), `config/_generate_options.py` (554), `CODEMAP.md`,
+`docs/reasons.md`, `docs/strategies.md`, `changelog.d/` (`gen-rel-e1.md`, `gen-rel-e2.md`,
+`gen-rel-e3a.md`; main's release removed the stamped fragments), `generation/_admission.py`,
+`plan/checks/_generate_columns.py`, `reason_adapter.py`, `tests/sentry/secret_material_census.json`,
+`tests/sentry/test_reason_registry.py`, `tests/sentry/test_sentry_manifest.py` and
+`tests/sentry/defects/test_generate_option_reads.py`. The draw-site scan is green on the
+merge head (slice 1 and 2 catalogued the repair and the tree draws; this slice adds no draw
+module: an anchored date reuses the `windowed_date` site). No digest, golden or snapshot moved.
+
+## Review round 1 (2026-11-13)
+
+Review of `e91b848c`: GO-WITH-FIXES, no V1, two DESIGN items, both built. Commits:
+
+| Commit | Subject |
+| --- | --- |
+| `72823f4c` | `Merge feat/gen-rel-e2 into feat/gen-rel-e3a` |
+| `3cb57c98` | `test(config): pin one expression reference extractor and lookup edge` (red first) |
+| `a457fdc4` | `refactor(expressions): one column-reference extractor` |
+| `f05bc3d9` | `refactor(config): carry the parent key on the input edge` (final source head) |
+| `eb256ebf` | `docs(generation): note the extractor and the edge key in the changelog` |
+| `4abbe6ba` | `test(sentry): seed each via-scan trigger in a shape of its own` |
+
+### Item 1: one compiled-expression column-reference extractor
+
+`column_refs(compiled) -> frozenset[str]` in `expressions/_lark_parser.py` (the module that
+owns the grammar and `CompiledExpression`), exported from `decoy_engine.expressions`. It takes
+a `CompiledExpression` or one parse subtree. `config` and `expressions` share a tier, and
+`plan` and `transforms` sit above it, so no `.importlinter` ignore was needed.
+
+Callers: `config/_generate_relational.py:_named_columns` (sorted, so the edge order does not
+follow the hash seed; every consumer of the edges reads them as a set or per source),
+`plan/_checks.py:check_derived_column_refs`, `transforms/derived.py:apply_derived`,
+`execution/_runner.py`, `execution/_column_access.py`, `execution/_strategies/_derived.py`,
+and `generation/_numeric_derived.py` (its `has(node)` walked a subtree for `col_ref` itself, a
+third copy the guard found; it now asks `column in column_refs(node)`, which is why the
+extractor accepts a subtree). `transforms/derived._get_column_refs` is deleted (pre-GA hard
+delete); its two test files call `column_refs`. The owner module's dunder check also walks for
+`col_ref`, inside the owner. Behaviour is identical for every expression the grammar accepts;
+the only visible change is the deterministic order of a derived column's expression edges.
+
+Cells: `tests/unit/expressions/test_column_refs.py` pins 21 reference shapes of the grammar
+(identifier, paren, negation, arithmetic, comparison, `in` with a list and an empty list,
+logic, `concat`, `slice` with two and three arguments, `days_between`, the ternary, `if()`,
+`case_when`, nesting, repeats, literals only, a string that looks like a name, keywords,
+underscores) from the extractor, from the input resolver and from the plan check (accepted
+with exactly those columns, refused when any one is missing). Guard:
+`tests/sentry/defects/test_expression_column_refs.py` (listed in the sentry manifest) fails on
+any function outside the owner module that holds `"col_ref"` and calls a Lark walk
+(`iter_subtrees`, `iter_subtrees_topdown`, `find_data`, `find_pred`, `scan_values`); meta
+cells seed five walk shapes and two non-walks. `test_generate_input_edges.py`'s
+`RESOLVER_LITERALS` drops `"col_ref"`, which the resolver no longer holds.
+
+### Item 2: one resolver of a lookup column
+
+Chosen: the edge carries the key. `GenerateInputRef` has a new field `source_key`, the parent
+key column an input read through a foreign key is found by ("" for any other input, or when
+the lookup column names no key). Why: the edge is the one central record of what a column
+reads, and GEN-INHERIT, the next consumer, needs the parent table and key together; a separate
+helper would leave the run reading the edge for the table and a sibling for the key.
+
+Within `config`, the two places that followed the lookup column now share one private
+function, `_via_target(columns, via_name) -> (parent table, key) | None`. The resolver's
+`_source_table` returns `(table, key)` through it, and `parent_lookup_problems` calls it and
+hands the target to `_lookup_problem` (self-lookup when the target table is the consumer's
+own; otherwise `parent_key_problem` over the target's key). `_parent_anchor_cells` reads
+`anchor.source_key` and no longer reads `reference_column` from the siblings. Every validated
+config reads the same: the refusal codes and locations of AT-11 and AT-15 are unchanged.
+
+Guard (`tests/sentry/defects/test_generate_input_edges.py`, scan 8): no generate-side function
+other than `_via_target` reads a `reference_table` or `reference_column` literal while it
+handles a lookup (it holds a lookup key name read from the registry, `anchor_via`, or calls
+`lookup_parent_values` or `parent_key_problem`); `_via_target` is defined once and its callers
+are inventoried (`_source_table`, `parent_lookup_problems`). Meta cells seed the three shapes
+this slice had (each with one trigger) and a reference read outside a lookup.
+
+Resolver string-constant pin: `RESOLVER_FUNCTIONS` gains `_via_target` and
+`RESOLVER_LITERALS` gains `"reference_column"`, both for the new field; `"col_ref"` leaves it
+under item 1. Nothing else in the pin changed. Cells in
+`tests/unit/config/test_generate_options.py`: the key on a cross-table edge (a key named
+`pkey`), empty on a same-table edge, on a lookup column that is not a reference, names no
+table or names no key, and on a `column_in_named_table` edge.
+
+### Red first (`3cb57c98` on the source of `72823f4c`)
+
+Python 3.10.20: 40 failed, 294 passed over the four new or changed test files and the sentry
+manifest.
+
+- Item 1 (31): 21 `test_the_extractor_names_every_column_the_expression_reads`,
+  `test_the_extractor_reads_a_parse_subtree_too`, `test_the_extractor_is_public` and
+  `test_the_owner_defines_the_public_extractor` (`column_refs` absent: `ImportError` or not in
+  `__all__`); 6 `test_the_input_resolver_reads_the_same_columns` (the edges came in walk order,
+  not sorted: `['b', 'a', 'c']`); `test_only_the_owner_walks_a_parse_tree_for_column_references`
+  found three walks (`config/_generate_relational.py`, `generation/_numeric_derived.py`,
+  `transforms/derived.py`). The 21 plan-check cells and 15 resolver cells passed on both heads,
+  as they pin the same answer.
+- Item 2 (9): 5 edge cells (`AttributeError`: no `source_key`);
+  `test_the_resolver_holds_no_option_name_and_no_column_type_list` and its meta cell
+  (`_via_target` not found); `test_only_the_via_resolver_follows_a_lookup_column_to_its_parent`
+  found `_lookup_problem` and `_parent_anchor_cells`;
+  `test_the_via_resolver_is_defined_once_and_called_by_the_inventoried_functions` (not defined).
+
+### Mutations (final source head `f05bc3d9`, run on `4abbe6ba`; 81 of 81 red)
+
+The 69 recorded E3a mutations and 12 new ones, applied once each in a detached worktree at
+`/home/user/wt-e3a-mut` importing its own `src` (Python 3.10.20), named tests run, file
+restored; the worktree was clean at the end and is removed. Statuses are read from the
+harness's results JSON (81 `RED`). No E3a witness runs a child process, so no checkout run was
+needed.
+
+- Re-anchored to the merged and fixed code, same intent, each anchor matched exactly once: C1
+  (the key rule accepts any column with no nulls), C1b (the key rule accepts a nullable
+  sequence), C1c (the key rule ignores the caller's code), C2 (the self-lookup refusal
+  dropped), C3 (a lookup column that is not a reference is followed anyway, now in
+  `_via_target`), C5 (the tree key restated inline in `_key_is_valid`), R3 (a lookup column
+  that is not a reference yields no target). Their red counts equal the previous run's.
+- Every other anchor matched unchanged. Red counts equal the previous run's except R1 (the
+  resolver ignores the companion key): 34, one more, the new `column_in_named_table` key cell.
+- An earlier run on `eb256ebf` had V5 not red: the seeded shape it guards also held the
+  `anchor_via` literal, so dropping the lookup call from the scan's triggers changed nothing.
+  `4abbe6ba` gives each trigger a shape of its own (tests only); all 81 were rerun there.
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| X1 | the plan check walks the parse tree itself | `plan/_checks.py` | 1: `test_only_the_owner_walks_a_parse_tree_for_column_references` |
+| X2 | the input resolver walks the parse tree itself | `config/_generate_relational.py` | 1: the same |
+| X3 | numeric typing walks a subtree itself | `generation/_numeric_derived.py` | 1: the same |
+| X4 | the extractor accepts a compiled expression only | `expressions/_lark_parser.py` | 9: `test_the_extractor_reads_a_parse_subtree_too`, `test_same_numeric_typing[...]` ... |
+| X5 | the extractor reads only the top-level operands | `expressions/_lark_parser.py` | 55: `test_the_extractor_names_every_column_the_expression_reads[...]` ... |
+| X6 | guard scan: `find_data` is not a walk | `tests/sentry/defects/test_expression_column_refs.py` | 1: `test_meta_each_walk_shape_is_seen` |
+| X7 | guard scan: nested functions and lambdas are skipped | the same | 1: `test_meta_each_walk_shape_is_seen` |
+| V1 | the date generator re-reads the parent key from the siblings | `generation/_grouped_windowed_generators.py` | 1: `test_only_the_via_resolver_follows_a_lookup_column_to_its_parent` |
+| V2 | the lookup check follows the lookup column itself | `config/_generate_relational.py` | 2: that and `test_the_via_resolver_is_defined_once_and_called_by_the_inventoried_functions` |
+| V3 | the input edge drops the parent key column | `config/_generate_relational.py` | 22: `test_an_input_read_through_a_foreign_key_carries_the_parent_key`, `test_at11_the_date_follows_the_parent_row_not_the_same_named_child_column` ... |
+| V4 | the resolver follows the lookup column inline | `config/_generate_relational.py` | 1: `test_the_via_resolver_is_defined_once_and_called_by_the_inventoried_functions` |
+| V5 | guard scan: a parent-lookup call does not mark a lookup | `tests/sentry/defects/test_generate_input_edges.py` | 1: `test_meta_a_second_via_resolution_is_seen[a generator re-reads the key from the siblings]` |
+
+### Gates (head `4abbe6ba`; source is `f05bc3d9`'s)
+
+`GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
+ruff,format,mypy,sentry,layers,licenses,tests` over the 78 E3a T1 paths plus
+`tests/unit/reasons`, `tests/native/test_draw_site_inventory_coverage.py`,
+`tests/native/test_draw_sites_catalogue_pinned.py`, `tests/unit/expressions`,
+`tests/unit/transforms`, `tests/unit/test_expressions.py`,
+`tests/unit/execution/test_derived_strategy.py`, `tests/unit/execution/derived_visibility`,
+`tests/unit/execution/test_engine_transforms_routes.py`, `tests/unit/execution/test_runner.py`,
+`tests/native/test_column_access_surfaces.py`, the merged guards
+(`tests/sentry/defects/test_generate_option_reads.py`, `test_sequence_key_predicate.py`) and the
+new and changed ones, `tests/unit/config/test_generate_relational.py`,
+`tests/unit/execution/test_probe_scale.py`, `test_probe_scale_kills.py`, `tests/unit/plan/checks`
+and the other native catalogue readers (`test_draw_sites_assembly.py`,
+`test_determinism_protocol.py`, `test_c1b_i_metadata_inventory.py`,
+`test_c5b_i_metadata_inventory.py`). Python 3.10.20, PyArrow 24.0.0, DuckDB 1.5.4, pandas
+2.3.3, NumPy 2.2.6; `origin/main` at `c86ca58d`.
+
+| Step | Branch (`4abbe6ba`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5489 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 10902 passed, 0 failed, 113 skipped (10892 in the parallel pass, 10 in the serial pass) |
+
+Failure sets: branch 0, baseline 0, branch-only 0; every branch step passed, so `origin/main`
+was not rerun. There is no branch failure.
+`test_static_scan_finds_no_uncatalogued_draw_site` passed (the inventory file 12 of 12) and
+`test_draw_sites_catalogue_pinned.py` passed 5 of 5. No digest, golden or snapshot moved.
+
+### Script checks
+
+On `4abbe6ba` (clean tree), `origin/main` at `c86ca58d` (main has not moved past it):
+`registry_renumber.py --check --main origin/main` exit 0 (`registry consistent`),
+`ratchet_check.py --base origin/main` exit 0, `check_fragment.py --base origin/main` exit 0,
+`reason_release_pin.py --check` exit 0 (`reason release pin current`).
+
+Line counts: `generation/synthesize.py` 598, `config/_generate_options.py` 554,
+`config/_generate_relational.py` 393, `expressions/_lark_parser.py` 555, `plan/_checks.py` 699
+(census ceiling 700, one line shorter), `tests/sentry/defects/test_generate_input_edges.py`
+638.
+
+### V2-LOG (accepted from review, not built)
+
+- a. `generation/_pinned_compile.py`: `_reject_column` runs before
+  `relational_option_unsupported`, so a child with `anchor_via` and an unrelated same-named
+  categorical child column is refused with `plan.pinned_windowed_anchor_not_absolute` naming
+  the wrong column instead of `plan.pinned_relational_option_unsupported`. Still a refusal.
+- b. `tests/unit/generation/relational/test_parent_lookup.py` has no cell for mixed int and
+  float keys or a float64 parent key against an int foreign key.
+- c. `generation/synthesize.py:generation_order` reads only `type: reference` columns, not the
+  resolved edges the plan names. Correct today because a valid `anchor_via` must name a
+  reference; E3b's `column_in_named_table` needs it wired or recorded again.
+- d. (this round) `_lookup_problem` judges a self-lookup by comparing the resolved parent
+  table with the consumer table rather than through `is_self_reference`; the two agree for
+  every input (a `reference` to a named table equal to a non-empty table name).
+
+### Not run
+
+The full suite; the gate steps under Python 3.11; a rerun of `origin/main` (no branch step
+failed). The `tests`, `mypy`, `layers` and `licenses` steps on the docs-only commit that adds
+these sections.

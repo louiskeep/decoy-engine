@@ -322,6 +322,7 @@ def test_self_ref_hash_is_native_beside_a_row_erroring_column(
     result = PandasExecutionAdapter().run_sequential(
         plan,
         lambda t: src[t],
+        config={},
         registry=s.REGISTRY,
         relationship_graph=shape.graph,
         namespace_registry=s.NAMESPACES,

@@ -153,6 +153,8 @@ class SecretKeyProvider:
             raise WeakMaskSecret(
                 f"mask secret must be at least {MIN_SECRET_BYTES} bytes; got {len(self.secret)}."
             )
+        # A caller-held `bytearray` must not change the key after admission.
+        object.__setattr__(self, "secret", bytes(self.secret))
 
     def __repr__(self) -> str:
         # DE-02 (Codex MEDIUM 7): NEVER render the raw secret bytes in a repr --

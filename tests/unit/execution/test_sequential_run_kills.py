@@ -235,6 +235,7 @@ def test_quarantine_covers_row_error_filters_and_records(tmp_path: Path) -> None
     res = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -282,6 +283,7 @@ def test_no_quarantine_fails_loud_before_any_output(tmp_path: Path) -> None:
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -306,6 +308,7 @@ def test_trigger_present_but_not_matching_still_fails_loud(tmp_path: Path) -> No
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -329,6 +332,7 @@ def test_missing_enabled_key_defaults_to_disabled(tmp_path: Path) -> None:
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -346,6 +350,7 @@ def test_enabled_triggers_without_output_path_refuses_to_run(tmp_path: Path) -> 
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -371,6 +376,7 @@ def test_quarantine_enabled_but_no_triggers_runs_clean() -> None:
     seq = adapter.run_sequential(
         fx.plan,
         _loader(fx.sources),
+        config={},
         registry=fx.registry,
         relationship_graph=fx.graph(OrphanPolicy.PRESERVE),
         namespace_registry=fx.namespace_registry,
@@ -393,6 +399,7 @@ def test_quarantine_with_transactional_sink_commits_and_publishes(tmp_path: Path
     res = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -424,6 +431,7 @@ def test_sink_aborts_and_publishes_nothing_on_fail_loud(tmp_path: Path) -> None:
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -446,6 +454,7 @@ def test_key_error_cascades_to_child_and_is_recorded(tmp_path: Path) -> None:
     res = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -550,6 +559,7 @@ def test_multi_table_quarantine_keeps_both_tables_entries(tmp_path: Path) -> Non
     res = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -592,6 +602,7 @@ def test_byte_parity_with_full_frame(policy) -> None:
     seq = adapter.run_sequential(
         fx.plan,
         _loader(fx.sources),
+        config={},
         registry=fx.registry,
         relationship_graph=graph,
         namespace_registry=fx.namespace_registry,
@@ -608,6 +619,7 @@ def test_fail_policy_aborts(tmp_path: Path) -> None:
         adapter.run_sequential(
             fx.plan,
             _loader(fx.sources),
+            config={},
             registry=fx.registry,
             relationship_graph=fx.graph(OrphanPolicy.FAIL),
             namespace_registry=fx.namespace_registry,
@@ -632,6 +644,7 @@ def test_callable_sink_streams_each_table_once(tmp_path: Path) -> None:
     res = adapter.run_sequential(
         fx.plan,
         _loader(fx.sources),
+        config={},
         registry=fx.registry,
         relationship_graph=fx.graph(OrphanPolicy.PRESERVE),
         namespace_registry=fx.namespace_registry,
@@ -667,6 +680,7 @@ def test_keyed_mask_differs_from_unkeyed(tmp_path: Path) -> None:
     unkeyed = adapter.run_sequential(
         fx.plan,
         _loader(fx.sources),
+        config={},
         registry=fx.registry,
         relationship_graph=graph,
         namespace_registry=fx.namespace_registry,
@@ -674,6 +688,7 @@ def test_keyed_mask_differs_from_unkeyed(tmp_path: Path) -> None:
     keyed = adapter.run_sequential(
         fx.plan,
         _loader(fx.sources),
+        config={},
         registry=fx.registry,
         relationship_graph=graph,
         namespace_registry=fx.namespace_registry,
@@ -749,6 +764,7 @@ def test_group_by_anchor_uses_pre_mask_snapshot(tmp_path: Path) -> None:
     res = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -781,6 +797,7 @@ def test_result_reports_conversion_and_timings(tmp_path: Path) -> None:
     res = adapter.run_sequential(
         fx.plan,
         _loader(fx.sources),
+        config={},
         registry=fx.registry,
         relationship_graph=fx.graph(OrphanPolicy.PRESERVE),
         namespace_registry=fx.namespace_registry,
@@ -875,6 +892,7 @@ def test_clean_fk_child_ri_matches_full_frame(tmp_path: Path) -> None:
     seq = adapter.run_sequential(
         plan,
         _loader(sources),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -957,6 +975,7 @@ def test_self_ref_fk_key_error_cascades(tmp_path: Path) -> None:
     res = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -1068,6 +1087,7 @@ def test_diamond_second_child_ri_matches_full_frame(tmp_path: Path) -> None:
     seq = adapter.run_sequential(
         plan,
         _loader(sources),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -1148,6 +1168,7 @@ def test_row_error_count_accumulates_same_key(tmp_path: Path) -> None:
     res = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(_sources(config)),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -1194,6 +1215,7 @@ def test_sink_quarantine_preexisting_file_refuses_to_publish(tmp_path: Path) -> 
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -1218,6 +1240,7 @@ def test_sink_quarantine_alias_committed_table_refuses(tmp_path: Path) -> None:
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -1245,6 +1268,7 @@ def test_sink_post_commit_publish_failure_does_not_abort(tmp_path: Path) -> None
         PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,

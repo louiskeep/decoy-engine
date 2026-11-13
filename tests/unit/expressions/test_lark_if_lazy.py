@@ -11,9 +11,9 @@ import random
 import pytest
 
 from decoy_engine.errors import ValidationError
-from decoy_engine.expressions import compile_expr, evaluate
+from decoy_engine.expressions import column_refs, compile_expr, evaluate
 from decoy_engine.generation._numeric_derived import derived_uses_as_numbers
-from decoy_engine.transforms.derived import DerivedConfig, _get_column_refs, apply_derived
+from decoy_engine.transforms.derived import DerivedConfig, apply_derived
 
 
 def _ev(expr: str, ctx: dict) -> object:
@@ -167,12 +167,12 @@ class TestIfTypesLikeTernary:
         assert self._numbers("if(a > 0, out + 1, 0)") is True
 
     def test_same_column_refs(self) -> None:
-        a = _get_column_refs(compile_expr("if(c, x, y)"))
-        b = _get_column_refs(compile_expr("x if c else y"))
+        a = column_refs(compile_expr("if(c, x, y)"))
+        b = column_refs(compile_expr("x if c else y"))
         assert a == b == frozenset({"c", "x", "y"})
 
     def test_missing_ref_in_either_branch_is_visible_to_the_ref_check(self) -> None:
-        refs = _get_column_refs(compile_expr("if(c, x, if(d, y, z))"))
+        refs = column_refs(compile_expr("if(c, x, if(d, y, z))"))
         assert refs == frozenset({"c", "x", "d", "y", "z"})
 
 

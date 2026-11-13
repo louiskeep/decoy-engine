@@ -2,10 +2,9 @@
 
 Pattern: HMAC-SHA256 (RFC 2104, stdlib).
   Reference: https://datatracker.ietf.org/doc/html/rfc2104
-  Rationale: stdlib-only keyed-hash primitive used throughout the engine
-  (internal/crypto.py hmac_hex, determinism/_hkdf.py). We do NOT use
-  the ``cryptography`` package for consistency with existing keyed-hash
-  surface (see determinism/_hkdf.py lines 6-11).
+  Rationale: the stdlib keyed-hash primitive the engine uses for HMAC
+  (internal/crypto.py hmac_hex). The signing key is derived through
+  determinism/_hkdf.py (RFC 5869, PyCA ``cryptography``).
 
 Signing algorithm (``sign_manifest``):
     1. Serialise the manifest to canonical JSON: ``json.dumps(d, sort_keys=True,

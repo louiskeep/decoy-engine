@@ -547,6 +547,342 @@ Checks on `87d8f8a6` with `origin/main` at `c0961a17`:
 
 Not run for this merge: the full suite and the paths the "Not run" section lists.
 
+## Review round 1 (2026-11-13)
+
+Review round 1 on `9b1b78bf` returned GO-WITH-FIXES with no V1: the draw-site catalogue entry
+the owner ruled (option A) and two DESIGN items. Commits on top of `9b1b78bf`:
+
+| Commit | Subject |
+| --- | --- |
+| `f90e5962` | `test(generation): pin one per-parent bounds reader and its scan` (red first) |
+| `74239829` | `fix(native): catalogue the reference repair draw` |
+| `9e31b706` | `refactor(config): one per-parent bounds reader` (final source head) |
+
+### A. The repair draw in the catalogue (owner ruling: option A)
+
+`test_static_scan_finds_no_uncatalogued_draw_site` failed on `9b1b78bf`:
+`generation/relational/_cardinality.py` holds `rng.shuffle` and `rng.randrange` and was in no
+`execution/native/_draw_sites_*.py` entry. The repair is not a new site: it runs on the
+`random.Random` of `gen.reference` (the whole-table draw and the V1 `ColumnGenerator` both hand
+it their column Random), so the existing `gen.reference` entry is corrected rather than a second
+id added.
+
+- `gen.reference` in `execution/native/_draw_sites_gen.py`: the mirror call site
+  `generators/columns.py:596` (the repair's old home; that file is now 574 lines) becomes
+  `generation/relational/_cardinality.py:198`, and the notes now say the repair adds
+  `rng.shuffle` and `rng.randrange` (no longer `choices`) on the same stream and that both
+  generators route to it. No other field, entry, order or map changed.
+- `tests/native/test_draw_sites_catalogue_pinned.py`: re-pinned by its own procedure, a dated
+  `Re-pinned for ...` line above `_CATALOGUE_DIGEST` and a per-entry comment above the changed
+  entry digest. Two digests moved: the catalogue (`972cd0b5...` to `3e12aa89...`) and the
+  `gen.reference` entry (`7d9bce36...` to `a53519d7...`). The 40 ids, their order, the other 39
+  entry digests and every map and enum digest are unchanged.
+- No allowlist entry was added. `_draw_sites_gen.py` was already on `permitted_non_physical` in
+  the seam sentry with its data-module comment; earlier catalogue edits did not add per-change
+  comments there, so that list is unchanged. The module imports nothing from
+  `execution.physical`.
+- The catalogue is metadata: no draw, seed or output byte moved. The determinism goldens, the
+  draw-site provider goldens and every re-pinned value in this file's earlier sections pass
+  unchanged.
+
+### B. One reader of a positive per-parent bound
+
+`per_parent_bounds(col) -> tuple[int, int]` in `config/_generate_relational.py`, exported from
+`decoy_engine.config`. It returns `(min_per_parent, max_per_parent)` with 0 meaning unset, the
+meaning every caller already gave 0 (the registry, the repair's `max_eff`, the `> 0` gates), so
+no caller needed a None branch. A bound is an int above zero; anything else reads as unset.
+
+The six sites now call it: `config/_generate_relational.py` (`_column_problem`),
+`execution/_probe_scale.py` (`_loosen_per_parent_bounds`; its private `_positive` copy is gone),
+`generation/relational/_cardinality.py` (`check_reference_pool` and `check_fitted_bounds`; `_bound`
+is gone), `generation/_admission.py` (`classify_reference`), `generation/_synthesize_derived.py`
+(`_reference`) and `generators/columns.py` (`_generate_reference_column`). The seam sentry's
+`_probe_scale.py` comment names the helper.
+
+Edge comparison of the readers before the change (the registry holds both keys as
+`_int_at_least(0)` with `type(v) is int`, and lists them in `_NONE_MEANS_ABSENT`):
+
+| Input | Registry | config `_positive` | probe `_positive` | `_cardinality._bound` | `_admission` gate | `int(v or 0)` (`_synthesize_derived`, `columns.py`) | `per_parent_bounds` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| absent | accepted | 0 | 0 | 0 | False | 0 | 0 |
+| None | accepted | 0 | 0 | 0 | False | 0 | 0 |
+| 0 | accepted | 0 | 0 | 0 | False | 0 | 0 |
+| 3 | accepted | 3 | 3 | 3 | True | 3 | 3 |
+| -1 | refused | 0 | 0 | 0 | False | -1 | 0 |
+| True | refused | 0 | 0 | 1 | True | 1 | 0 |
+| False | refused | 0 | 0 | 0 | False | 0 | 0 |
+| 2.5 | refused | 0 | 0 | 2 | True | 2 | 0 |
+| 2.0 | refused | 0 | 0 | 2 | True | 2 | 0 |
+| '3' | refused | 0 | 0 | 3 | True | 3 | 0 |
+| 'abc' | refused | 0 | 0 | ValueError | ValueError | ValueError | 0 |
+| '0' | refused | 0 | 0 | 0 | False | 0 | 0 |
+
+- Every value a validated config can carry (absent, None, 0, a positive int) reads the same in
+  all six, so output is byte-identical for every validated config. The gates confirm it: no
+  golden, snapshot or byte pin moved.
+- The readers differ only on values the registry refuses. The helper takes the config-side
+  reading: such a value never becomes a bound by coercion, so a raw dict that skipped
+  validation cannot turn `True`, `2.5` or `'3'` into a repair. A `-1` was already inert on the
+  run-time path (the repair's deficit and `max_eff` treat it as 0, and the donor step needs a
+  positive deficit).
+- Other places name the keys but are not bound readers: `config/_pipeline.py`'s early-exit
+  gate before `per_parent_problems`, `config/_generate_unique.py`'s pair-member conflict check
+  (the same positive-int reading), and `plan/_generation.py`'s fitted-conflict presence check
+  (`is not None`, deliberately any value). They are outside the run-time packages and were left
+  as they are.
+
+Guard: `test_per_parent_bounds_are_read_only_through_the_config_helper` in
+`tests/sentry/defects/test_generate_option_reads.py` parses every module under `generation/`,
+`generators/` and `execution/` and fails on any `"min_per_parent"` or `"max_per_parent"`
+literal that is not the target of a write (the probe's loosened bounds are written back with
+`col["min_per_parent"], col["max_per_parent"] = ...`). A literal passed to a local helper, as
+`_bound(col, "min_per_parent")` was, counts as a read. `test_the_bound_scan_sees_a_direct_read`
+pins the scanner. `config/_generate_relational.py` joins `READER_FILES`, so the registry keys
+stay read once the run-time modules stop naming them.
+
+### C. The repair module in the option-read sentry
+
+`generation/relational/_cardinality.py` is in `READER_FILES` of
+`tests/sentry/defects/test_generate_option_reads.py`. The widened scan was green on `9b1b78bf`:
+every key the module reads (`type`, `name`, `reference_table`, `reference_column`,
+`distribution`, `weights`) is in the registry, so no read needed fixing. The bound reads it
+held went through `_bound(col, key)` with a variable key, which this scan cannot see; the guard
+under B covers that shape. The entry landed in the red-first commit since it was a test-only
+widening that was not red.
+
+### Red first (`f90e5962` on the source of `9b1b78bf`)
+
+Run in a detached worktree importing its own `src`: 18 failed, 95 passed.
+
+- 16 cells in `tests/unit/config/test_generate_relational.py` (the seven validated-value
+  cells, eight refused-value cells and the per-key cell): `AttributeError`, `decoy_engine.config`
+  has no `per_parent_bounds`.
+- `test_per_parent_bounds_are_read_only_through_the_config_helper`: eight direct reads
+  (`execution/_probe_scale.py:167`, `generation/_admission.py:213`,
+  `generation/_synthesize_derived.py:199` and `:200`, `generation/relational/_cardinality.py:166`
+  and `:187`, `generators/columns.py:441` and `:442`).
+- `test_static_scan_finds_no_uncatalogued_draw_site`: `['generation/relational/_cardinality.py']`
+  (the recorded defect, unchanged).
+- Passing as expected: `test_the_bound_scan_sees_a_direct_read`, the two new `READER_FILES`
+  parametrizations and the catalogue pin (the catalogue had not changed yet).
+
+### Mutation rerun (final source head `9e31b706`, 61 of 61 red)
+
+All 55 recorded mutations and six new ones, applied once each in a detached worktree at
+`/home/user/` importing its own `src` (Python 3.10.20), named tests run, file restored; the
+worktree was clean at the end and is removed. One anchor was re-spelled for the helper (A6f2:
+`if keys and any(per_parent_bounds(col)):` to `if any(per_parent_bounds(col)):`, the same
+mutation); every other anchor matched unchanged and every one of the 55 red counts equals the
+previous run's. M4's witness spawns a child interpreter; it was also applied once in the main
+worktree at `9e31b706`, clean before and after: red, 2 tests.
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| R1 | drop the repair from the draw-site catalogue | `execution/native/_draw_sites_gen.py` | 1: `test_static_scan_finds_no_uncatalogued_draw_site` |
+| R2 | the bounds helper ignores `max_per_parent` | `config/_generate_relational.py` | 4: `test_per_parent_bounds_reads_every_value_a_valid_config_carries` (three cells), `test_per_parent_bounds_reads_each_bound_from_its_own_key` |
+| R3 | the bounds helper coerces a refused value | `config/_generate_relational.py` | 3: `test_per_parent_bounds_never_coerces_a_value_the_registry_refuses[True]`, `[2.5]`, `[2.0]` |
+| R4 | the whole-table reference draw reads the bounds itself | `generation/_synthesize_derived.py` | 1: `test_per_parent_bounds_are_read_only_through_the_config_helper` |
+| R5 | the capacity probe reads the bounds itself | `execution/_probe_scale.py` | 1: `test_per_parent_bounds_are_read_only_through_the_config_helper` |
+| R6 | a mistyped option key read in the repair module | `generation/relational/_cardinality.py` | 1: `test_every_read_key_is_in_the_registry[generation/relational/_cardinality.py]` |
+
+### Gates (final source head `9e31b706`)
+
+`GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
+ruff,format,mypy,sentry,layers,licenses,tests` over the 59 T1 paths, `tests/unit/reasons`,
+`tests/native/test_draw_site_inventory_coverage.py` and the other native files that read the
+catalogue (`test_draw_sites_assembly.py`, `test_determinism_protocol.py`,
+`test_c1b_i_metadata_inventory.py`, `test_c5b_i_metadata_inventory.py`, `test_capabilities.py`;
+`test_draw_sites_catalogue_pinned.py`, `test_determinism_goldens.py` and
+`test_draw_site_providers_golden.py` are T1 paths). The changed test files sit in
+`tests/unit/config` and `tests/sentry`. Python 3.10.20, PyArrow 24.0.0, DuckDB 1.5.4, pandas
+2.3.3, NumPy 2.2.6; `origin/main` at `c86ca58d`.
+
+| Step | Branch (`9e31b706`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5285 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 12048 passed, 0 failed, 62 skipped |
+
+Failure sets: branch 0, main 0, branch-only 0; no step failed, so `origin/main` was not rerun.
+The draw-site scan passes. No digest, golden or snapshot of generated output moved; the only
+re-pin is the catalogue metadata under A.
+
+### Script checks
+
+On `9e31b706` (clean tree). `origin/main` has moved to `c86ca58d` since the branch merged
+`c0961a17`, and main is not merged again (no conflict on the PR):
+
+| Check | `origin/main` (`c86ca58d`) | `c0961a17` |
+| --- | --- | --- |
+| `registry_renumber.py --check --main` | exit 2 (`main-not-merged`) | exit 0 (`registry consistent`) |
+| `ratchet_check.py --base` | exit 1 (five baselines gained keys from main's own new code: `_tokenize.py`, `_reorder_budget.py`, `fileaccess/_local.py`, `vault.py`) | exit 0 |
+| `check_fragment.py --base` | exit 0 | exit 0 |
+| `reason_release_pin.py --check` | exit 0 (`reason release pin current`) | |
+
+The changelog fragment is unchanged: nothing a user sees changes for a validated config.
+
+### V2-LOG accepted from review (not built)
+
+- a. `config/_generate_relational.py` says an empty child "is not a capacity question", but a
+  `row_count: 0` child with a non-empty parent and `min_per_parent: 1` is refused at run, which
+  is correct. Fix the comment and pin that cell.
+- b. `unique: true` with an empty parent under `orphan_policy: warn` warns and then refuses with
+  `uniqueness_impossible`.
+- c. The public `ColumnGenerator._generate_reference_column` path skips `check_reference_pool`,
+  keeps the weights fallback and reports infeasible bounds as `reference_bounds_unsatisfied`.
+  No engine route reaches it.
+- d. The `.importlinter` ignore `config._generate_unique -> generation.pool._capacity` stays,
+  although the plan's leaf would let it go.
+- e. `generation/_pinned_plan.py`: the `reference_policies` decoder can raise inside the
+  existing `except`; `from None` hides the cause but `PinnedModeError.__context__` stays set
+  (input: a pinned plan with `reference_policies: [["kids", "pid", "UNKNOWN_POLICY"]]`). Raise
+  after leaving the `except` block.
+
+### Not run for round 1
+
+The full suite; the paths the "Not run" section lists beyond the native catalogue files added
+here; Python 3.11; a rerun of `origin/main` (no branch step failed); a merge of `origin/main`.
+
+### Main merge (2026-11-13)
+
+PR #523 showed a conflict after round 1, so `origin/main` at `c86ca58d` was merged once
+(merge commit `26ffedb2`, no rebase). Main had released 0.23.0 since `c0961a17`, so the venv
+was resynced (`uv sync --frozen --python 3.10 --extra dev --extra lint --extra vault --extra
+cloud`; `decoy-engine` 0.22.0 to 0.23.0) and `decoy_engine.__file__` checked to be in this
+checkout. Main is not merged again after this.
+
+Conflicts, each resolved as a union:
+
+- `src/decoy_engine/config/__init__.py`: `__all__` keeps this branch's `per_parent_bounds`
+  and `per_parent_problems` and main's `post_scan_gate_applies`; both import lines merged
+  without conflict.
+- `tests/native/test_draw_sites_catalogue_pinned.py`: keeps main's `mask.tokenize` entry
+  digest and both `Re-pinned for ...` lines (B-6, then GEN-REL E1), and the catalogue digest
+  is recomputed with both changes in, by the file's procedure: main `483f424e...`, this branch
+  `3e12aa89...`, merged `49e1c138...`. Against main's pin file only the catalogue digest and
+  the `gen.reference` entry digest (`a53519d7...`) differ; `mask.tokenize` is main's.
+
+Files both sides touched that merged without a conflict were read against both parents:
+`CODEMAP.md` (main's rows added beside this branch's), `docs/reasons.md` (main's
+`registry_version` 1.25.0 from its release beside this branch's GEN-REL paragraph),
+`tests/sentry/test_physical_seam_disconnection.py` (main's new permitted entries beside the
+`_probe_scale.py` entry) and `tests/sentry/test_sentry_manifest.py` (main's new sentries
+added). Main's changes are in the vault, post-scan, connector, run-result, chunked and
+reason areas; none touches `generation/`, `generators/`, the reference draw, the draw-site
+entries this branch edits or the option registry. The ten GEN-REL codes stay
+`since=UNRELEASED` beside main's released stamps (`reason_release_pin.py --check` current,
+`registry_renumber.py` consistent). The five ratchet baselines that gained keys in main
+(`exception-context`, `f29-producer-inventory`, `gcs-call-kwargs`, `private-file-sinks`,
+`secret-material-census`) are main's own rows; this branch adds no key to them, and
+`ratchet_check.py --base origin/main` now exits 0.
+
+On the merge head `26ffedb2` (before review round 2): 61 of 61 mutations red in a detached
+worktree, every anchor matched once and every red count equal to the run on `9e31b706`; M4
+applied once in this checkout, red, clean before and after. The T1 gate run started on that
+head was stopped for review round 2, which changed source; the gates below are on the final
+source head.
+
+### Review round 2 (2026-11-13)
+
+Review round 2 (delta on `9e1734e1`) found two config-side readers of the bounds that the
+exclusivity sentry could not see. The widened sentry found a third.
+
+| Commit | Subject |
+| --- | --- |
+| `dc8956ef` | `test(sentry): scan config modules for per-parent bound reads` (red first) |
+| `f6e2a63b` | `refactor(config): read config-side per-parent bounds through the helper` (final source head) |
+
+Sentry: `test_per_parent_bounds_are_read_only_through_the_config_helper` now scans `config/`
+beside `generation/`, `generators/` and `execution/`. The only owners are named definitions,
+not directories: `per_parent_bounds` in `config/_generate_relational.py`, and `_BASE_OPTIONS`
+and `_NONE_MEANS_ABSENT` in `config/_generate_options.py`
+(`test_every_bound_key_owner_names_a_real_definition` fails if one is renamed away). A key
+counts as read when it is passed to a call, used as a subscript, compared, or listed in a
+tuple, list or set that is iterated or assigned to a name. A key that only labels a problem
+location (`return ("min_per_parent", code)`, `problems.append((("max_per_parent",), code))`)
+or is a write target reads nothing. `test_the_bound_scan_sees_a_direct_read` pins each case.
+
+Red on `26ffedb2` source (`dc8956ef`): 1 failed, 56 passed;
+`config/_generate_unique.py:73`, `config/_generate_unique.py:123`, `config/_pipeline.py:343`
+and `config/_pipeline.py:344`.
+
+The three readers, now routed through `per_parent_bounds`:
+
+- `config/_generate_unique.py` `column_conflict_problems`: `type(value) is int and value > 0`
+  per key, now one helper call; each positive bound still reports its own location, in the
+  same order.
+- `config/_generate_unique.py` `_pair_member_blocked`: the bounds left `_PAIR_MEMBER_BLOCKED`
+  (found by the widened scan; it read them through `_is_set`) and are tested through the
+  helper. The helper is imported inside a small wrapper because `_generate_relational`
+  imports `_tables`, which imports `_generate_unique`.
+- `config/_pipeline.py` `_per_parent_bounds_valid`: the early exit asks the helper instead of
+  truth-testing both keys.
+
+| Input | Registry | unique conflict (`type(v) is int and v > 0`) | `_pair_member_blocked` (`_is_set`) | pipeline early exit (truthiness) | `any(per_parent_bounds)` |
+| --- | --- | --- | --- | --- | --- |
+| absent | accepted | False | False | False | False |
+| None | accepted | False | False | False | False |
+| 0 | accepted | False | False | False | False |
+| 3 | accepted | True | True | True | True |
+| -1 | refused | False | True | True | False |
+| True | refused | False | True | True | False |
+| False | refused | False | False | False | False |
+| 2.5 | refused | False | True | True | False |
+| 0.0 | refused | False | False | False | False |
+| '3' | refused | False | True | True | False |
+| '0' | refused | False | True | True | False |
+
+Every value a validated config can carry reads the same in all three, so behaviour is
+unchanged for validated configs. The early exit only skips `per_parent_problems`, which reads
+through the helper, so its result is unchanged for every input. The pair-member check differs
+only on values the registry refuses, where the config is refused either way. With this, the
+three non-readers noted under round 1 B are settled: two were readers and now use the helper;
+`plan/_generation.py`'s fitted-conflict check stays a presence test (`is not None`) outside the
+scanned packages.
+
+### Final runs (final source head `f6e2a63b`)
+
+Mutations: 64 of 64 red in a detached worktree at `/home/user/` importing its own `src`
+(Python 3.10.20), removed after; every anchor matched exactly once, and the 61 earlier red
+counts equal the run on `9e31b706`. M4 applied once in this checkout at `f6e2a63b`, clean
+before and after: red, 2 tests. New:
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| R7 | a config module reads the bound itself (unique conflict check) | `config/_generate_unique.py` | 1: `test_per_parent_bounds_are_read_only_through_the_config_helper` |
+| R8 | the pipeline early exit bypasses the helper | `config/_pipeline.py` | 1: `test_per_parent_bounds_are_read_only_through_the_config_helper` |
+| R9 | the pair-member check reads a bound through its own key tuple | `config/_generate_unique.py` | 1: `test_per_parent_bounds_are_read_only_through_the_config_helper` |
+
+Gates, same command and paths as round 1, `origin/main` `c86ca58d`, Python 3.10.20:
+
+| Step | Branch (`f6e2a63b`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5427 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 12268 passed, 0 failed, 62 skipped |
+
+Failure sets: branch 0, main 0, branch-only 0. In that run
+`tests/native/test_draw_site_inventory_coverage.py` passed 12 of 12 (including
+`test_static_scan_finds_no_uncatalogued_draw_site`) and
+`tests/native/test_draw_sites_catalogue_pinned.py` passed 5 of 5;
+`tests/sentry/defects/test_generate_option_reads.py` passed 57 of 57.
+
+Script checks on `f6e2a63b` with `origin/main` at `c86ca58d`:
+`registry_renumber.py --check --main origin/main` exit 0, `ratchet_check.py --base
+origin/main` exit 0, `check_fragment.py --base origin/main` exit 0,
+`reason_release_pin.py --check` exit 0.
+
+No digest, golden or snapshot of generated output moved. Not run: the full suite, Python
+3.11, a rerun of `origin/main` (no branch step failed).
+
 ## Not run
 
 - The full suite. Before the merges, a wider sweep of `tests/unit/{generation, generators, config,

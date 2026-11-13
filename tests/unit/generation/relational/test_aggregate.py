@@ -176,6 +176,55 @@ def test_at12_the_unrelated_parent_amount_keeps_its_numeric_arrow_type(tmp_path:
     assert _same(_totals(out), _oracle(out, "sum"))
 
 
+# The column type comes from the op and the child column, never from the values: a parent with
+# no children would otherwise turn `mean` into Arrow `null` and a `sum` over floats into `int64`.
+PRICE = {"name": "price", "type": "distribution", "family": "uniform", "low": 1, "high": 50}
+TYPED_INPUTS = {
+    "int": ({"name": "amount", "type": "categorical", "categories": [2, 3, 5]}, pa.int64()),
+    "float": ({**PRICE, "name": "amount"}, pa.float64()),
+    "decimal": (
+        {"name": "amount", "type": "sequence", "start": 1, "output_type": "decimal(2)"},
+        pa.decimal128(38, 2),
+    ),
+    # A reference copies `orders.price`, so the column it reads decides the type.
+    "reference": (ref("amount", "orders", "price"), pa.float64()),
+}
+# (line rows, options of `lines.oid`): no line at all, every key null, or some orders childless.
+CHILD_SHAPES = {
+    "no-child-rows": (0, {}),
+    "all-keys-null": (6, {"null_probability": 1.0}),
+    "mixed": (6, {}),
+}
+
+
+def _typed_case(op: str, kind: str, shape: str) -> dict[str, Any]:
+    amount, _ = TYPED_INPUTS[kind]
+    lines, oid = CHILD_SHAPES[shape]
+    orders = [ORDER_ID, ORDER_AMOUNT, PRICE, aggregate_column(op)]
+    kids = [LINE_ID, ref("oid", "orders", **oid), amount]
+    return per_parent(op, lines=lines, order_cols=orders, line_cols=kids)
+
+
+@pytest.mark.parametrize("shape", sorted(CHILD_SHAPES))
+@pytest.mark.parametrize("kind", sorted(TYPED_INPUTS))
+@pytest.mark.parametrize("op", AGGREGATE_OPS)
+def test_at12_the_aggregate_type_follows_the_op_and_child_column_not_the_values(
+    op: str, kind: str, shape: str, tmp_path: Path
+) -> None:
+    config = _typed_case(op, kind, shape)
+    PipelineConfig.model_validate(copy.deepcopy(config))
+    out = run_route("resident", config, tmp_path)
+    childless = _childless(out)
+    if shape == "mixed":
+        assert 0 < len(childless) < out["orders"].num_rows, "the mixed shape is not mixed"
+    else:
+        assert len(childless) == out["orders"].num_rows
+    want = {"count": pa.int64(), "mean": pa.float64()}.get(op, TYPED_INPUTS[kind][1])
+    assert out["orders"].schema.field("total").type == want
+    totals = _totals(out)
+    assert [totals[i] for i in childless] == [IDENTITY[op]] * len(childless)
+
+
 def test_at12_a_parent_with_no_same_named_column_is_aggregated_the_same_way(
     tmp_path: Path,
 ) -> None:

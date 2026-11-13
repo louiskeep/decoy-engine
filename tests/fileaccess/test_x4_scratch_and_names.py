@@ -184,7 +184,12 @@ def test_scratch_stays_inside_its_root_and_the_output_is_unchanged(
 
     plan, sources, graph = _jobs(*PLAIN)
     plain_out = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "plain-work"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "plain-work",
     ).outputs
 
     outer = tmp_path / "outer"
@@ -195,7 +200,7 @@ def test_scratch_stays_inside_its_root_and_the_output_is_unchanged(
     weird = _weird_names(base)
     plan2, sources2, graph2 = _jobs(*weird)
     result = run_fk_out_of_core(
-        plan2, sources2, registry=_REG, relationship_graph=graph2, temp_dir=work
+        plan2, sources2, config={}, registry=_REG, relationship_graph=graph2, temp_dir=work
     )
     assert driver["resident"] >= 3 and driver["reorder"] == 0
     # Nothing was created beside the scratch root, and every probed path is beneath it.
@@ -247,6 +252,7 @@ def test_the_reorder_driver_names_nothing_from_a_column_or_edge(
     run_fk_out_of_core(
         plan,
         lazy,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(out / "result"),
@@ -270,7 +276,7 @@ def test_relations_sharing_one_parent_do_not_collide(tmp_path: Path) -> None:
     plan, sources, graph = _jobs(*PLAIN)
     work = tmp_path / "work"
     result = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=work
+        plan, sources, config={}, registry=_REG, relationship_graph=graph, temp_dir=work
     )
     # Both children resolve against their own relation of the shared parent.
     assert result.outputs["child1"].num_rows == 6 and result.outputs["child2"].num_rows == 5

@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 197 (asserted by the sentry).
+# Count: 196 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1003,16 +1003,6 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 [[entry]]
 module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
-sink = "os.open"
-ordinal = 0
-disposition = "private"
-rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
-owner = "cam"
-reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
-
-[[entry]]
-module = "decoy_engine/fileaccess/_local.py"
-function = "LocalOutputTxn.create_file"
 sink = "Path.mkdir"
 ordinal = 0
 dir_category = "output_parent"
@@ -1025,7 +1015,7 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "os.open"
-ordinal = 1
+ordinal = 0
 disposition = "public"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
@@ -1045,7 +1035,7 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "os.open"
-ordinal = 2
+ordinal = 1
 disposition = "public"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"

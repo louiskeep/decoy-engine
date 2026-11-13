@@ -74,6 +74,7 @@ def _run_sequential(plan: Any, table_name: str, table: pa.Table) -> ExecutionRes
     return PandasExecutionAdapter().run_sequential(
         plan,
         lambda t: {table_name: table}[t],
+        config={},
         registry=_REG,
         relationship_graph=_GRAPH,
         namespace_registry=_NS,

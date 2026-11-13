@@ -7,7 +7,7 @@ safe_eval / BASE_GLOBALS / MASK_GLOBALS
   arbitrary Python expressions within the simpleeval allowlist. The
   original security rationale is in ``_safe_eval.py``.
 
-compile_expr / evaluate
+compile_expr / evaluate / column_refs
   Lark-backed CLOSED-VOCABULARY parser for the ``derived`` and
   ``case_when`` strategies. Accepts ONLY the explicit operator set
   defined in grammar.lark (arithmetic, comparison, logical, membership,
@@ -29,6 +29,7 @@ from __future__ import annotations
 # Lark closed-grammar API for derived / case_when strategies.
 from decoy_engine.expressions._lark_parser import (
     CompiledExpression,
+    column_refs,
     compile_expr,
     evaluate,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "MASK_GLOBALS",
     "CompiledExpression",
     "_SafeRe",
+    "column_refs",
     "compile_expr",
     "evaluate",
     "formula_is_evaluable",

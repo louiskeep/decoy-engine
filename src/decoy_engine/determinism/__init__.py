@@ -27,9 +27,8 @@ Source patterns:
 - HKDF-SHA256 (RFC 5869): https://datatracker.ietf.org/doc/html/rfc5869
 - HMAC-SHA256 (RFC 2104): https://datatracker.ietf.org/doc/html/rfc2104
 
-Implementation lives on stdlib `hmac` + `hashlib`; no PyCA `cryptography`
-dependency is added (the engine has an explicit anti-PyCA design choice
-in `transforms/fpe.py` lines 21-23 that this package preserves).
+HKDF is PyCA `cryptography`'s (`_hkdf.py`); the per-source HMAC is stdlib
+`hmac` + `hashlib`.
 """
 
 from __future__ import annotations

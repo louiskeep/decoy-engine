@@ -46,7 +46,7 @@ from functools import wraps
 from typing import Any, Literal, TypeVar
 
 from decoy_engine.errors import DecoyError
-from decoy_engine.reasons import ReasonRef, UnknownReasonError, require_known
+from decoy_engine.reasons import ReasonRef, UnknownReasonError, reason_ref_payload, require_known
 from decoy_engine.safe_output._exception import safe_error_type
 
 __all__ = [
@@ -469,8 +469,8 @@ def _check_header(phase: str, status: str, schema: str, expected: str) -> None:
 # `__context__` to the callee's error, whose text can carry the input.
 def _reason_wire(ref: ReasonRef) -> dict[str, str]:
     try:
-        spec = require_known(ref)
-        return {"namespace": spec.namespace, "code": spec.code}
+        require_known(ref)
+        return reason_ref_payload(ref)
     except UnknownReasonError:
         pass
     raise PhaseContractError("unknown reason identity")

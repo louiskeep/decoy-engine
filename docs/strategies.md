@@ -1526,11 +1526,13 @@ for each employee, a parent category for each category. The rows are generated a
 - With `max_per_parent`, a row picks uniformly among the earlier rows that have fewer than
   `max_per_parent` children. No key gets more children than that. This is a degree-bounded
   variant, not the uniform recursive tree.
-- The same seed gives the same tree. The column's Arrow type is the key column's type.
+- The same seed gives the same tree. The column copies the key's drawn values and has the key
+  column's Arrow type. A reference cannot declare `output_type`, so a key that declares one is
+  refused: its cast values would match none of the copied keys.
 
 | When | Refused | Code |
 | --- | --- | --- |
-| Validate | `reference_column` is not an earlier `sequence` column of the same table, or that column has `null_probability` above 0 | `config.generate_self_reference_key_invalid` |
+| Validate | `reference_column` is not an earlier `sequence` column of the same table, or that column has `null_probability` above 0 or declares `output_type` | `config.generate_self_reference_key_invalid` |
 | Validate | `distribution` other than `random`, a positive `min_per_parent`, `null_probability` above 0, `unique: true`, or the column is a `unique_together` member | `config.generate_self_reference_option_unsupported` |
 | Validate | `root_count` below 1 or above a positive `row_count` | `config.generate_option_range` |
 | Validate | `root_count` on a reference to another table | `config.generate_option_unknown` |
@@ -1631,6 +1633,9 @@ customer's order count.
   form, and a child with a null foreign key belongs to no parent.
 - A parent with no children gets 0 for `sum` and `count` and a null for `mean`, `min` and `max`,
   never NaN.
+- Without an `output_type` the column's Arrow type follows the op and the child column, not the
+  values, even when no parent has children: `count` is `int64`, `mean` `float64`, and `sum`,
+  `min` and `max` take the child column's type (a `decimal(n)` child gives that decimal).
 - The column is filled after every table has been generated, and the returned parent table holds
   the filled values. No other column can read it: a same-table reader, a child's `anchor`, a
   reference, a formula or another aggregate that names it is refused at validate.

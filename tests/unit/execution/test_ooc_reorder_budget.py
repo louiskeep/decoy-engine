@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from decoy_engine import errors
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._reorder_budget import (
     F_DUCKDB,
@@ -48,6 +49,8 @@ def test_undersized_ceiling_rejected():
     with pytest.raises(ExecutionError) as exc_info:
         resolve_reorder_budgets(10_000_000, 10**12)
     assert exc_info.value.code == "out_of_core_reorder_budget_too_small"
+    # A memory ceiling too small is a work-size verdict: exit 5 keeps it.
+    assert exc_info.value.code in errors.CAPACITY_REASON_CODES
 
 
 def test_minimum_viable_ceiling_accepted():
@@ -70,7 +73,7 @@ def test_disk_ledger_rejects_when_insufficient():
             mandatory_staging_bytes=staging,
             estimated_output_bytes=output,
         )
-    assert exc_info.value.code == "out_of_core_reorder_budget_too_small"
+    assert exc_info.value.code == "out_of_core_reorder_disk_budget_too_small"
 
     enough_budgets = resolve_reorder_budgets(ceiling, staging + 3 * output)
     assert (
@@ -97,4 +100,4 @@ def test_disk_ledger_accounts_two_x_merge():
             mandatory_staging_bytes=staging,
             estimated_output_bytes=output,
         )
-    assert exc_info.value.code == "out_of_core_reorder_budget_too_small"
+    assert exc_info.value.code == "out_of_core_reorder_disk_budget_too_small"

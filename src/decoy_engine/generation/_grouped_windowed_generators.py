@@ -76,8 +76,8 @@ def _parent_anchor_cells(
 ) -> list[Any]:
     """The parent row's anchor for each row of a `windowed_date` column with `anchor_via`.
 
-    The anchor's table and column come from the column's resolved input, so a same-named
-    column of this table is never read. The row is found by the one parent lookup: a null
+    The anchor's table, column and parent key come from the column's resolved input, so a
+    same-named column of this table is never read. The row is found by the one parent lookup: a null
     foreign key gives a null anchor (and so a null date), and a foreign key with no parent row
     is that lookup's refusal. A parent row that is found but holds no anchor is refused here:
     the child asked for a date counted from its parent's, and there is none to count from.
@@ -92,15 +92,14 @@ def _parent_anchor_cells(
     table, name, via = str(col.get(TABLE_KEY) or ""), str(col["name"]), str(col["anchor_via"])
     edges = iter_generate_input_refs({"name": table, "generate_columns": siblings}, col)
     anchor = next((e for e in edges if e.option == "anchor"), None)
-    key = next((s.get("reference_column") for s in siblings if s.get("name") == via), None)
     # Plan compile refuses an anchor that resolves to no finished table; a caller that skipped
     # it gets the same fixed text as any other anchor that is not a date.
-    if anchor is None or anchor.source_table not in pools or not isinstance(key, str):
+    if anchor is None or anchor.source_table not in pools or not anchor.source_key:
         raise WindowedDateError(table=table, column=name)
     looked_up = lookup_parent_values(
         dict(pools),
         parent_table=anchor.source_table,
-        key_column=key,
+        key_column=anchor.source_key,
         value_column=anchor.source_column,
         foreign_keys=generated[via],
         child_table=table,

@@ -32,6 +32,10 @@ A generated `windowed_date` column can now be anchored to a date of its parent r
   foreign key is not. A `derived` expression's inputs are the columns it reads; a column name
   that only appears inside a string literal is no longer counted as an input.
 - `decoy_engine.config` exports `GenerateInputRef`, `iter_generate_input_refs`,
-  `parent_key_problem` and `parent_lookup_problems`.
+  `parent_key_problem` and `parent_lookup_problems`. An input read through a foreign key
+  carries its parent table and the parent key column (`GenerateInputRef.source_key`).
+- `decoy_engine.expressions.column_refs` returns the column names a compiled expression reads.
+  The derived-column plan check, the generate-input resolver and numeric typing all use it; the
+  private `transforms.derived._get_column_refs` is removed.
 
 Every config without `anchor_via` keeps its bytes.

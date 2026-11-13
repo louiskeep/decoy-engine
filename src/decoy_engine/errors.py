@@ -561,6 +561,7 @@ CAPACITY_EXCLUSIONS: Final[Mapping[str, str]] = types.MappingProxyType(
         reasons.quality.DP_BUDGET_CATEGORICAL_PAIR_UNSCHEDULED: _NOT_MEMORY,
         reasons.subset.SUBSET_BUDGET_EXCEEDED: _NOT_MEMORY,
         reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED: _DISK,
+        reasons.runtime.OUT_OF_CORE_REORDER_DISK_BUDGET_TOO_SMALL: _DISK,
         reasons.runtime.OUT_OF_CORE_PREDICTED_SPILL_BYTES_INVALID: _SETTING,
         reasons.runtime.HOLD_BACK_SPILL_UNAVAILABLE: _NOT_SET,
         reasons.verification.CANARY_RESOURCE_LIMIT: _NOT_MEMORY,

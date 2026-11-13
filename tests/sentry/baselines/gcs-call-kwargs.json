@@ -233,9 +233,6 @@
     "decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::open::1": {
       "reason": "os.open on a local path, not a GCS Blob"
     },
-    "decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::open::2": {
-      "reason": "os.open on a local path, not a GCS Blob"
-    },
     "decoy_engine/fileaccess/_local.py::_LocalStageDir.create_file::open::0": {
       "reason": "os.open on a local path, not a GCS Blob"
     },

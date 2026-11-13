@@ -72,6 +72,7 @@ def test_t11_joiner_and_build_caps_match_reorder_budgets_not_batch_model(
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(tmp_path / "out"),
@@ -111,6 +112,7 @@ def test_t11_reorder_path_never_consults_resolve_phase_memory_limits(
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -161,6 +163,7 @@ def test_t11_middle_table_reorder_build_gets_undivided_sink_cap(
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(tmp_path / "out"),

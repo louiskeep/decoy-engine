@@ -709,6 +709,63 @@ def test_an_anchor_whose_lookup_column_leads_nowhere_has_no_source_table(via_col
         assert _edges(table, column) == [("anchor", "", "born", False, "inline"), via_edge]
 
 
+def _keyed(table: dict[str, Any], column: dict[str, Any]) -> list[tuple[str, str, str]]:
+    from decoy_engine.config import iter_generate_input_refs
+
+    return [
+        (e.option, e.source_table, e.source_key) for e in iter_generate_input_refs(table, column)
+    ]
+
+
+def test_an_input_read_through_a_foreign_key_carries_the_parent_key() -> None:
+    """The edge is the one answer to "which parent row": its table and the key the row is
+    found by, so no consumer follows the lookup column again."""
+    fk = {"name": "pid", "type": "reference", "reference_table": "p", "reference_column": "pkey"}
+    column = {
+        "name": "v",
+        "type": "windowed_date",
+        "anchor": "born",
+        "anchor_via": "pid",
+        "max_days": 3,
+    }
+    table = {"name": "t", "generate_columns": [fk, column]}
+    assert _keyed(table, column) == [("anchor", "p", "pkey"), ("anchor_via", "t", "")]
+    same_table = {"name": "v", "type": "windowed_date", "anchor": "born", "max_days": 3}
+    assert _keyed(_kids(), same_table) == [("anchor", "t", "")]
+
+
+@pytest.mark.parametrize(
+    "via_column",
+    [
+        {"name": "pid", "type": "sequence", "start": 1},
+        {"name": "pid", "type": "reference", "reference_table": 7, "reference_column": "id"},
+        {"name": "pid", "type": "reference", "reference_table": "p", "reference_column": 7},
+    ],
+    ids=["not-a-reference", "no-table-name", "no-key-name"],
+)
+def test_a_lookup_column_that_names_no_key_gives_an_empty_key(via_column: Any) -> None:
+    column = {"name": "v", "type": "windowed_date", "anchor": "born", "anchor_via": "pid"}
+    table = {"name": "t", "generate_columns": [via_column, column]}
+    anchor = _keyed(table, column)[0]
+    assert anchor[0] == "anchor" and anchor[2] == ""
+
+
+def test_an_input_in_a_named_table_has_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from decoy_engine.config import _generate_options as options
+
+    spec = options.TypeOptions(
+        {
+            "from": options.OptionSpec(),
+            "column": options.OptionSpec(
+                ref_kind="column_in_named_table", ref_context_key="from", ref_phase="post_fill"
+            ),
+        }
+    )
+    monkeypatch.setitem(options.GENERATE_OPTIONS, "probe", spec)  # type: ignore[index]
+    column = {"name": "total", "type": "probe", "column": "amount", "from": "lines"}
+    assert _keyed(_kids(), column) == [("column", "lines", "")]
+
+
 def test_an_input_in_a_named_table_resolves_to_that_table(monkeypatch: pytest.MonkeyPatch) -> None:
     """The descriptor a per-parent aggregate registers: `column` lives in the table `from` names."""
     from decoy_engine.config import _generate_options as options

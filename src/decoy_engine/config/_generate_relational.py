@@ -25,15 +25,22 @@ table's rows (`generation/relational/_self_reference`). `is_self_reference` is t
 that shape, and `self_reference_problems` holds its rules, so `per_parent_problems` leaves such
 a column alone. A tree needs a key that is distinct and never null before the column is drawn,
 so the key must be an earlier `sequence` column of the same table with no `null_probability`.
+The tree copies the key's drawn values and a reference cannot declare `output_type`, so a key
+that declares one is refused: its cast values would match no copied foreign key.
 The draw is uniform over earlier rows with an optional `max_per_parent`; any other distribution,
 a minimum, nulls or uniqueness would be dropped without a word, so each is refused. `root_count`
 must lie between 1 and the table's `row_count`, and is ignored for a table with no rows.
 
 A column that reads its parent's row (a `windowed_date` with `anchor_via`) needs a foreign key
-that reaches exactly one parent row. `parent_key_problem` is the one rule for such a key, a
-`sequence` column with no `null_probability`; the tree's key goes through it too. The lookup
-column must be a `reference` to another table: the rows of the table being drawn are not
-finished, so a lookup through a self-reference is refused.
+that reaches exactly one parent row. `parent_key_problem` is the one rule for such a key, built
+on `is_exact_sequence_key`. The lookup column must be a `reference` to another table: the rows
+of the table being drawn are not finished, so a lookup through a self-reference is refused.
+
+`is_exact_sequence_key` is the one test for a key column whose every row is a distinct value:
+a `sequence` with no positive `null_probability`. The self-reference key check, the capacity
+probe's bounds and the plan's weights-length check all read it. It fails closed: a rate that is
+not absent, None or a real number (bool excluded) reads as "may have nulls", the safe answer for
+every caller. A NaN rate is not above 0, so it counts as no nulls, as the earlier copies read it.
 
 A `derived_aggregate` with `from_table` is a per-parent aggregate: `via` names the child's
 `reference` back to this table, and each parent row gets `op` over its own children. The child
@@ -53,6 +60,7 @@ A problem carries its reason code only: a bound, weight or key never reaches a m
 
 from __future__ import annotations
 
+import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -61,16 +69,19 @@ from decoy_engine import _capacity, reasons
 from decoy_engine.config._generate_options import GENERATE_OPTIONS, OptionSpec
 from decoy_engine.config._generate_type_checks import numeric_as_text_read
 from decoy_engine.config._tables import generate_columns_of
-from decoy_engine.expressions import compile_expr
+from decoy_engine.expressions import column_refs, compile_expr
 
 __all__ = [
     "GenerateInputRef",
     "aggregate_problems",
+    "aggregate_via_target",
+    "is_exact_sequence_key",
     "is_per_parent_aggregate",
     "is_self_reference",
     "iter_generate_input_refs",
     "parent_key_problem",
     "parent_lookup_problems",
+    "per_parent_bounds",
     "per_parent_problems",
     "reference_root",
     "self_reference_problems",
@@ -95,8 +106,18 @@ _NOT_NUMERIC = str(reasons.config.GENERATE_AGGREGATE_INPUT_NOT_NUMERIC)
 
 
 def _positive(value: Any) -> int:
-    """A bound as a positive int, or 0 for absent, zero, or anything the registry refuses."""
     return value if type(value) is int and value > 0 else 0
+
+
+def per_parent_bounds(col: Mapping[str, Any]) -> tuple[int, int]:
+    """`(min_per_parent, max_per_parent)` of a generate column, 0 meaning unset.
+
+    The one reader of the bounds: validate, the capacity probe, admission and both reference
+    draws all ask here. A bound is an int above zero; absent, None and 0 are unset. A value the
+    registry refuses (a negative, bool, float or string) also reads as unset, so a raw dict that
+    skipped validation can never turn one into a bound by coercion.
+    """
+    return _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
 
 
 def _row_count(table: Mapping[str, Any] | None) -> int | None:
@@ -112,7 +133,7 @@ def _column_problem(
     col: Mapping[str, Any], rows: int | None, parent_rows: int | None
 ) -> tuple[str, str] | None:
     """The first `(option, code)` problem of one reference column, or None."""
-    lo, hi = _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
+    lo, hi = per_parent_bounds(col)
     if not lo and not hi:
         return None
     if lo > hi > 0:
@@ -161,19 +182,42 @@ def is_self_reference(table_name: Any, col: Mapping[str, Any]) -> bool:
     )
 
 
+def is_exact_sequence_key(column: Mapping[str, Any]) -> bool:
+    """Whether `column` is a `sequence` that injects no nulls, so every row is a distinct key."""
+    if column.get("type") != "sequence":
+        return False
+    rate = column.get("null_probability")
+    if rate is None:
+        return True
+    if not isinstance(rate, numbers.Real) or isinstance(rate, bool):
+        return False
+    return _not_above_zero(rate)
+
+
+def _not_above_zero(rate: Any) -> bool:
+    # Typed `Any`: `numbers.Real` declares no ordering against an int literal.
+    return not rate > 0
+
+
 def parent_key_problem(columns: Sequence[Any], key_name: Any, code: str) -> str | None:
-    """`code` unless `key_name` is a `sequence` column of `columns` that injects no nulls.
+    """`code` unless `key_name` is a column of `columns` that `is_exact_sequence_key` accepts.
 
     The one rule for a key that reaches exactly one row: distinct by construction and never
     null. Each caller passes the columns the key may come from and its own reason code.
     """
     for candidate in columns:
         if isinstance(candidate, Mapping) and candidate.get("name") == key_name:
-            unique = candidate.get("type") == "sequence" and not _nulls_on(
-                candidate.get("null_probability")
-            )
-            return None if unique else code
+            return None if is_exact_sequence_key(candidate) else code
     return code
+
+
+def _key_is_valid(columns: Sequence[Any], c_idx: int, key_name: Any) -> bool:
+    """Whether `key_name` is an uncast `sequence` column declared before `c_idx` with no nulls."""
+    earlier = columns[:c_idx]
+    if parent_key_problem(earlier, key_name, _KEY_INVALID):
+        return False
+    key = next(c for c in earlier if isinstance(c, Mapping) and c.get("name") == key_name)
+    return "output_type" not in key
 
 
 def _tree_problem(
@@ -181,11 +225,11 @@ def _tree_problem(
 ) -> tuple[str, str] | None:
     """The first `(option, code)` problem of one self-reference column, or None."""
     # A tree's key is read while the table is drawn, so only an earlier column can be one.
-    if parent_key_problem(columns[:c_idx], col.get("reference_column"), _KEY_INVALID):
+    if not _key_is_valid(columns, c_idx, col.get("reference_column")):
         return ("reference_column", _KEY_INVALID)
     if col.get("distribution") not in (None, "random"):
         return ("distribution", _OPTION_UNSUPPORTED)
-    if _positive(col.get("min_per_parent")):
+    if per_parent_bounds(col)[0]:
         return ("min_per_parent", _OPTION_UNSUPPORTED)
     if _nulls_on(col.get("null_probability")):
         return ("null_probability", _OPTION_UNSUPPORTED)
@@ -229,18 +273,35 @@ def self_reference_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem
     return problems
 
 
+def _via_target(columns: Sequence[Any], via_name: Any) -> tuple[str, str] | None:
+    """The parent table and key column that the lookup column `via_name` of `columns` leads to.
+
+    None when no column has that name, and two empty names when it is not a `reference` to a
+    named table. The one place a lookup column is followed: the resolver puts the answer on the
+    edge for the run, and the lookup check judges it.
+    """
+    for sibling in columns:
+        if isinstance(sibling, Mapping) and sibling.get("name") == via_name:
+            parent, key = sibling.get("reference_table"), sibling.get("reference_column")
+            if sibling.get("type") != "reference" or not isinstance(parent, str):
+                return "", ""
+            return parent, key if isinstance(key, str) else ""
+    return None
+
+
 def _lookup_problem(
-    via: Mapping[str, Any], table_name: Any, by_name: Mapping[Any, Mapping[str, Any]]
+    target: tuple[str, str], table_name: Any, by_name: Mapping[Any, Mapping[str, Any]]
 ) -> str | None:
-    """The reason code a lookup through the column `via` of table `table_name` is refused with.
+    """The reason code a lookup that leads to `target` from table `table_name` is refused with.
 
     A column that is not a `reference` names no parent table, so it has no parent key either.
     """
-    if is_self_reference(table_name, via):
+    parent, key = target
+    if isinstance(table_name, str) and table_name and parent == table_name:
         return _LOOKUP_SELF
-    parent = by_name.get(via.get("reference_table")) if via.get("type") == "reference" else None
-    columns = generate_columns_of(parent) if parent is not None else []
-    return parent_key_problem(columns, via.get("reference_column"), _LOOKUP_KEY)
+    found = by_name.get(parent) if parent else None
+    columns = generate_columns_of(found) if found is not None else []
+    return parent_key_problem(columns, key, _LOOKUP_KEY)
 
 
 def parent_lookup_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
@@ -254,12 +315,12 @@ def parent_lookup_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]
     problems: list[Problem] = []
     for t_idx, table in enumerate(tables):
         columns = [c for c in generate_columns_of(table) if isinstance(c, Mapping)]
-        named = {c.get("name"): c for c in columns}
         for c_idx, col in enumerate(columns):
             via_name = col.get("anchor_via")
-            if not isinstance(via_name, str) or via_name not in named:
+            target = _via_target(columns, via_name) if isinstance(via_name, str) else None
+            if target is None:
                 continue
-            code = _lookup_problem(named[via_name], table.get("name"), by_name)
+            code = _lookup_problem(target, table.get("name"), by_name)
             if code is not None:
                 problems.append((("tables", t_idx, "generate_columns", c_idx, "anchor_via"), code))
     return problems
@@ -268,6 +329,18 @@ def parent_lookup_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]
 def is_per_parent_aggregate(col: Mapping[str, Any]) -> bool:
     """Whether `col` is a `derived_aggregate` filled per parent row from another table."""
     return col.get("type") == "derived_aggregate" and col.get("from_table") is not None
+
+
+def aggregate_via_target(
+    tables: Mapping[Any, Mapping[str, Any]], col: Mapping[str, Any]
+) -> tuple[str, str] | None:
+    """The parent table and key that the `via` column of a per-parent aggregate `col` leads to.
+
+    `tables` maps a table name to its config. `_via_target` over the `from_table` child's
+    columns, so validation and the run match a child row to its parent by the same key.
+    """
+    child = tables.get(col.get("from_table"))
+    return _via_target(generate_columns_of(child) if child is not None else [], col.get("via"))
 
 
 def _aggregate_problem(
@@ -287,17 +360,16 @@ def _aggregate_problem(
         return ("via", "missing")
     if _nulls_on(col.get("null_probability")):
         return ("null_probability", _NULL_CONFLICT)
-    child = by_name.get(col.get("from_table"))
-    columns = generate_columns_of(child) if child is not None else []
-    via = next((c for c in columns if isinstance(c, Mapping) and c.get("name") == col["via"]), None)
-    if via is not None:
-        if is_self_reference(child.get("name") if child else None, via):
+    target = aggregate_via_target(by_name, col)
+    if target is not None:
+        parent, key = target
+        if parent == col.get("from_table"):
             return ("via", _LOOKUP_SELF)
-        if via.get("type") != "reference" or via.get("reference_table") != table_name:
+        if not parent or parent != table_name:
             return ("via", _LOOKUP_KEY)
         # The key is the parent table's own column, finished before the post-pass, but the rule
         # is the one every parent lookup follows: an earlier non-null `sequence`.
-        if parent_key_problem(earlier, via.get("reference_column"), _LOOKUP_KEY):
+        if parent_key_problem(earlier, key, _LOOKUP_KEY):
             return ("via", _LOOKUP_KEY)
     if not _input_numeric(by_name, col.get("from_table"), col.get("column")):
         return ("column", _NOT_NUMERIC)
@@ -406,7 +478,10 @@ class GenerateInputRef:
     """One resolved input: `option` of the consumer column reads the source column.
 
     Resolved from the registry's ``ref_kind`` descriptors. An empty ``source_table`` means the
-    companion column leads to no table.
+    companion column leads to no table. ``source_key`` is set for an input read through a
+    foreign key: the parent key column whose row holds the source value, so a consumer finds
+    the parent row from the edge alone. It is empty for any other input, or when the companion
+    column names no key.
     """
 
     consumer_table: str
@@ -414,6 +489,7 @@ class GenerateInputRef:
     option: str
     source_table: str
     source_column: str
+    source_key: str
     must_be_earlier: bool
     phase: str
 
@@ -427,21 +503,23 @@ def _named_columns(kind: str, value: Any) -> list[str]:
     if kind != "expression":
         return [value]
     try:
-        tree = compile_expr(value).tree
+        compiled = compile_expr(value)
     except Exception:
         return []
-    return [str(t.children[0]) for t in tree.iter_subtrees() if t.data == "col_ref"]
+    # Sorted: a frozenset's order follows the hash seed, and the edges must not.
+    return sorted(column_refs(compiled))
 
 
-def _source_table(table: Mapping[str, Any], option: OptionSpec, context: Any) -> str | None:
-    """The table an option's columns live in: "" when `context` leads to none, None to skip."""
+def _source_table(
+    table: Mapping[str, Any], option: OptionSpec, context: Any
+) -> tuple[str, str] | None:
+    """The table an option's columns live in and the parent key that finds the row.
+
+    "" when `context` leads to no table or names no key, None to skip the option.
+    """
     if option.ref_kind == "column_in_named_table":
-        return context if isinstance(context, str) else None
-    for sibling in generate_columns_of(table):
-        if isinstance(sibling, Mapping) and sibling.get("name") == context:
-            parent = sibling.get("reference_table")
-            return parent if sibling.get("type") == "reference" and isinstance(parent, str) else ""
-    return None
+        return (context, "") if isinstance(context, str) else None
+    return _via_target(generate_columns_of(table), context)
 
 
 def iter_generate_input_refs(
@@ -460,16 +538,25 @@ def iter_generate_input_refs(
         if option.ref_kind is None:
             continue
         context = column.get(option.ref_context_key) if option.ref_context_key else None
-        source, phase = here, option.ref_phase
+        (source, source_key), phase = (here, ""), option.ref_phase
         if option.ref_context_key and context is None:
             phase = "inline"
         elif option.ref_context_key:
             found = _source_table(table, option, context)
             if found is None:
                 continue
-            source = found
+            source, source_key = found
         earlier = phase == "inline" and source == here
         for name in _named_columns(option.ref_kind, column.get(key)):
-            ref = GenerateInputRef(here, str(column.get("name")), key, source, name, earlier, phase)
+            ref = GenerateInputRef(
+                consumer_table=here,
+                consumer_column=str(column.get("name")),
+                option=key,
+                source_table=source,
+                source_column=name,
+                source_key=source_key,
+                must_be_earlier=earlier,
+                phase=phase,
+            )
             refs[ref] = None
     return tuple(refs)
