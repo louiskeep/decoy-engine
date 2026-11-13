@@ -176,9 +176,7 @@ def _frame_column_facts(
     if source_frames is not None:
         identity = _source_identity(source_frames, table_name, col_name, series)
         if identity is not None:
-            rate, identical, distinct = identity
-            # The count behind the rate; any positive count gives rate 0 when nothing matched.
-            comparable = round(identical / rate) if identical else 1
+            identical, comparable, distinct = identity
     return ColumnFacts(
         table=table_name,
         column=col_name,
@@ -201,10 +199,10 @@ def _source_identity(
     table_name: str,
     col_name: str,
     out_col: pd.Series,
-) -> tuple[float, int, int] | None:
+) -> tuple[int, int, int] | None:
     """Positional out==src identity over comparable rows, or None.
 
-    Returns ``(identity_rate, identical_count, source_distinct)``. None
+    Returns ``(identical_count, comparable_count, source_distinct)``. None
     when the source lacks the table/column, row counts differ (a
     row-count mismatch is policy_validation's M13 concern, not a leak
     signal), or the comparison itself fails. Must never raise: the
@@ -228,7 +226,7 @@ def _source_identity(
             return None
         identical = int((src[both_present] == out[both_present]).sum())
         src_distinct = int(src.nunique(dropna=True))
-        return (identical / comparable, identical, src_distinct)
+        return (identical, comparable, src_distinct)
     except Exception:
         return None
 
