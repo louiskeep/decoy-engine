@@ -86,6 +86,9 @@ TRIAGED: dict[tuple[str, str], str] = {
     ("0.23.0", "`ConnectorError` takes a keyword `kind`, one of `access_deni"): (
         "Breaking: S3 and GCS connector errors carry fixed text and a `kind`"
     ),
+    ("0.23.0", "`config.post_scan_gate_applies(config)` is the one decision "): (
+        "new gate core; no route calls it yet, so no existing run is refused"
+    ),
     ("0.23.0", "`declared_casting` gains the `boolean/text/v1` format (gener"): (
         "new opt-in cast format: a config that does not declare it is unchanged"
     ),
