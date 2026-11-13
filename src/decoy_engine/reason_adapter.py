@@ -21,6 +21,7 @@ itself stays a leaf (it imports none of them).
 from __future__ import annotations
 
 import errno
+import sys
 import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -38,13 +39,16 @@ _PUBLICATION_OPERATIONS = frozenset(
 _INTERRUPTS = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
 # (module, class, namespace of its ``.code``) for every engine family that carries a code.
+# Each module is the class's DEFINING module (``cls.__module__``), never a re-export: a live
+# exception guarantees only its defining module is imported, and `_loaded_families` reads
+# ``sys.modules`` without importing. A guard test enforces this for both tables.
 _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.errors", "PipelineValidationError", "config"),
     ("decoy_engine.errors", "ValidationError", "config"),
     ("decoy_engine.relationships._namespace", "NamespaceConfigError", "config"),
     ("decoy_engine.subset._errors", "SubsetConfigError", "config"),
     ("decoy_engine.plan._errors", "PlanCompileError", "plan"),
-    ("decoy_engine.contracts.declared_casting", "DeclaredCastContractError", "plan"),
+    ("decoy_engine.contracts._declared_base", "DeclaredCastContractError", "plan"),
     ("decoy_engine.execution._errors", "DeclaredCastRouteError", "route"),
     ("decoy_engine.execution._errors", "DeclaredCastValueError", "runtime"),
     ("decoy_engine.execution._errors", "QuarantineError", "runtime"),
@@ -74,7 +78,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.execution.native._companion_status", "NativeCompanionCheckError", "runtime"),
     ("decoy_engine.execution.native._crypto_ext", "CryptoExtensionUnavailableError", "runtime"),
     ("decoy_engine.execution.native._crypto_ext", "FpeConfigError", "runtime"),
-    ("decoy_engine.execution.native._draw_site_providers", "DrawSiteProtocolError", "runtime"),
+    ("decoy_engine.execution.native.protocol.providers_base", "DrawSiteProtocolError", "runtime"),
     ("decoy_engine.execution.native._pool_quality", "PoolQualityError", "runtime"),
     ("decoy_engine.io.bounded_reader", "BoundedReadError", "runtime"),
     ("decoy_engine.fileaccess._protected_dir", "ProtectedDirAclFailed", "runtime"),
@@ -131,6 +135,42 @@ def _families() -> tuple[dict[type, str], dict[type, ReasonCode]]:
     for module, name, reason in _FIXED:
         fixed[getattr(importlib.import_module(module), name)] = reason
     return coded, fixed
+
+
+def _loaded_families() -> tuple[dict[type, str], dict[type, ReasonCode]]:
+    """The same tables, limited to modules this process has already imported.
+
+    An exception instance's class lives in a module that is already imported, so a classifier
+    never needs to import one. Importing here ran the whole `quality.dp` stack (opendp, scikit-learn,
+    scipy's OpenBLAS) at failure time, which is when a memory-capped child has no address space left
+    to initialise it and spins instead of reporting the failure.
+    """
+    coded: dict[type, str] = {}
+    for module, name, namespace in _CODED:
+        cls = getattr(sys.modules.get(module), name, None)
+        if cls is not None:
+            coded[cls] = namespace
+    fixed: dict[type, ReasonCode] = {}
+    for module, name, reason in _FIXED:
+        cls = getattr(sys.modules.get(module), name, None)
+        if cls is not None:
+            fixed[cls] = reason
+    return coded, fixed
+
+
+def registered_family_names() -> frozenset[str]:
+    """The class name of every trusted family, read from the tables without importing any module."""
+    return frozenset(name for _module, name, _ in (*_CODED, *_FIXED))
+
+
+def loaded_families() -> frozenset[type]:
+    """The trusted families whose module this process has already imported.
+
+    Enough for `isinstance` on a live exception, whose class is always in an imported module,
+    and safe on a failure path because it imports nothing.
+    """
+    coded, fixed = _loaded_families()
+    return frozenset(coded) | frozenset(fixed)
 
 
 def registered_families() -> frozenset[type]:
@@ -195,7 +235,7 @@ def _classify(exc: BaseException, phase: Phase, context: ReasonContext | None) -
     )
     if publishing and _capacity_evidence(exc):
         return _record(reasons.decoy.STORAGE_CAPACITY_EXHAUSTED, phase, context)
-    coded, fixed = _families()
+    coded, fixed = _loaded_families()
     namespace = _first_in_mro(exc, coded)
     if namespace is not None:
         code = _read_code(exc)

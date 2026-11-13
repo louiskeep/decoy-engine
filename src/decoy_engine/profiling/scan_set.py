@@ -337,7 +337,7 @@ def passes_through(exc: BaseException) -> bool:
     """True when `exc` must reach the caller unchanged: the file-access and validation errors, a
     scan error, or any engine error family the reason adapter classifies. Only an unclassified
     failure is stripped to its class name."""
-    return isinstance(exc, (*_PASS_THROUGH, ScanSourceError, *reason_adapter.registered_families()))
+    return isinstance(exc, (*_PASS_THROUGH, ScanSourceError, *reason_adapter.loaded_families()))
 
 
 def _read_and_profile(
