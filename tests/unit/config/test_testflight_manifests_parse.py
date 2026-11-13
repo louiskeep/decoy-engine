@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from testflight._builder import assemble_config
+from testflight._coverage import check_suite_strategy_coverage
 from testflight._spec import load_manifest
 
 JOBS = Path(__file__).resolve().parents[3] / "testflight" / "jobs"
@@ -29,3 +30,13 @@ def test_manifest_config_validates(path: Path, tmp_path: Path) -> None:
         t.name: str(tmp_path / f"{t.name}.parquet") for t in manifest.tables if t.kind != "generate"
     }
     assemble_config(manifest, sources, tmp_path, str(tmp_path / "quarantine.jsonl"))
+
+
+def test_live_registries_are_covered_by_the_flight_jobs() -> None:
+    """A new generate type, strategy or validator needs a flight job (or a reasoned allowlist
+    entry) in the PR that adds it.
+
+    The nightly flight runs this same guard, but only after merge. Running it here, on the live
+    registries against the committed manifests, fails the adding PR instead.
+    """
+    check_suite_strategy_coverage([load_manifest(p) for p in MANIFESTS])
