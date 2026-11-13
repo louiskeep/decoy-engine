@@ -1,7 +1,8 @@
 # GEN-INHERIT E2 build evidence
 
-Status: built on `feat/gen-inherit-e2`. No census number, threshold, pin, baseline or allowlist
-rose. No existing digest, golden or snapshot moved, and no expected output value was edited.
+Status: built on `feat/gen-inherit-e2`; forward-merged and review round 1 fixed (the last two
+sections). No census number, threshold, pin, baseline or allowlist rose. No existing
+digest, golden or snapshot moved, and no expected output value was edited.
 
 Spec: `docs/plans/2026-11-10-gen-inherit.md` on `origin/plan/gen-inherit`, slice row E2 (the
 conditional categorical: `condition_on` plus `by:` on a `categorical` generate column). The plan
@@ -565,3 +566,250 @@ This record is added in a docs-only commit on top of `6d0297cf`. On that commit 
   it will need another move first (the definition-owner record freezes every top-level
   definition of `synthesize.py`, so only function-body blocks can move without editing it).
 - The pre-existing draw-site scan failure above.
+
+## Forward merge (2026-11-13)
+
+Each total in this section and the next belongs to the head named beside it. These two sections
+supersede the sections above for the final head.
+
+`origin/feat/gen-rel-e3b` at `91c554f2` (slice 4 with its forward merge and review round 1; it
+holds slices 1 to 3 and `origin/main` `c86ca58d`, 0.23.0 released) merged as `3f0c16f7` (parents
+`ecdc4f57`, `91c554f2`). Main is not merged into this branch directly. Gates and checks ran in a
+Python 3.10.20 venv under the session scratch directory, synced after the merge with
+`uv sync --frozen --python 3.10 --extra dev --extra lint --extra vault --extra cloud`;
+`decoy_engine.__file__` is `/home/user/decoy-engine/src/decoy_engine/__init__.py`. PyArrow
+24.0.0, DuckDB 1.5.4.
+
+Conflicts: none. Git merged every file both sides changed as a union (`CODEMAP.md`,
+`docs/reasons.md`, `docs/strategies.md`, `config/__init__.py`, `config/_generate_unique.py`,
+`generation/_admission.py`, `generation/_grouped_windowed_generators.py`,
+`plan/checks/_generate_columns.py`, `tests/sentry/defects/test_generate_option_reads.py`,
+`tests/unit/config/test_generate_options.py`). The release removed the fragments it consumed;
+`changelog.d/gen-inherit-e2.md` stays beside the four GEN-REL fragments.
+
+Silent-merge checks (each function both sides edited, read on the merge head):
+
+- `config/_generate_unique.py::column_conflict_problems`: this slice's `condition_on` conflict
+  and slice 1's bounds read through `per_parent_bounds` are both present; `_pair_member_blocked`
+  is slice 1's.
+- `generation/_admission.py`: `classify_plan`'s conditional decline (this slice) and
+  `classify_reference` through `per_parent_bounds` (slice 1) are in separate branches; the
+  import line holds `categorical_arrow_type`, `is_self_reference`, `per_parent_bounds`.
+- `generation/_grouped_windowed_generators.py`: `grouped_windowed_values` (this slice's move)
+  dispatches to `_windowed_date_generate`, whose `_parent_anchor_cells` now takes the key from
+  `anchor.source_key` (slice 3); the dispatch passes `pools` and `siblings` unchanged.
+- `plan/checks/_generate_columns.py`: `_check_categories` reads `categorical_categories`
+  (this slice); `_check_reference_weights` uses `is_exact_sequence_key` (slice 2).
+- `tests/sentry/defects/test_generate_option_reads.py`: `READER_FILES` holds
+  `generation/kinds/_categorical.py` and slices 1 to 4's entries, with no duplicate.
+
+Adaptations: none were needed. E2's code reads no per-parent bound, restates no sequence key,
+walks no parse tree for `col_ref`, and resolves no lookup (`condition_on` is a same-table
+`column` edge with an empty `source_key`). The bounds, sequence-key, extractor and scan 8 guards
+and both draw-site tests passed on the merge tree (`tests/sentry` without the import-layer test,
+plus the two draw-site files, `tests/unit/config`, `tests/unit/generation`, `tests/unit/plan`,
+`tests/unit/expressions`, `tests/unit/reasons`). E2 touches no `execution/native` file, so the
+draw-site catalogue pin needed nothing from this side. Every reason module that still declares
+a `since=UNRELEASED` code keeps the import (`reasons/runtime/_part2.py` among them).
+
+`generation/synthesize.py` is 597 lines on the merge head and the final head: slices 3 and 4 did
+not touch it after `16b2fcde`, so nothing moved and there is no census entry. The draw-site scan
+failure recorded under "Pre-existing failure on the stack" is gone on the merged head (the
+catalogue entries for `_cardinality.py` and `_self_reference.py` arrived with slices 1 to 4).
+
+## Review round 1 (2026-11-13)
+
+Review of `ecdc4f57`: GO-WITH-FIXES, two V1, both built; four V2-LOG items, recorded below.
+
+| Commit | Subject |
+| --- | --- |
+| `3f0c16f7` | `Merge feat/gen-rel-e3b into feat/gen-inherit-e2` |
+| `7c924b9b` | `test(generation): add red entry-width and late-formula read cells` (red first) |
+| `49f01f14` | `fix(generation): bound a conditional categorical by every entry's categories` |
+| `c3a5e451` | `fix(plan): refuse reading a formula filled after the column loop` |
+| `95e680e0` | `test(generation): give the reproducibility fixture a readable dependency` (final source head) |
+
+### V1 1: the width bound and the memory estimate read every entry's categories
+
+`generation/_bounds.py::categorical_payload_bound` and
+`execution/_mem_estimate_schema.py::generate_column_width_bytes` read only the top-level
+`categories`; a conditional column also draws each `by` entry's list. Both now read
+`config.categorical_categories` (the top-level list for a plain column; the top-level list plus
+every entry's for a conditional one). The memory estimate passes
+`{"categories": [], **extras}`, so a column with no categories stays unpriceable as before.
+`execution/_mem_estimate_schema.py` is on `permitted_non_physical` in
+`tests/sentry/test_physical_seam_disconnection.py` on this base; its reason comment gains one
+line, and it imports `decoy_engine.config` only, nothing from `execution.physical`. No other
+`execution/` file changed. The fragment gains one sentence.
+
+### V1 2: a non-formula reader of a formula with `references` is refused
+
+A `formula` with `references` holds `None` placeholders until the post-pass after the column
+loop, so any column that reads it while it is drawn sees nulls. The refusal is in the one input
+check, `plan/checks/_generate_columns.py::_check_input_edges`: the set of earlier columns an
+inline edge (`must_be_earlier`) may read excludes a formula with `references`
+(`_has_references`, the predicate the formula-to-formula guard already uses). So every reader
+that comes through the registry is covered by the same walk: `categorical.condition_on`, fitted
+`statistical.condition_on`, `derived.expression`, `grouped_series.group_by` / `order_by`,
+`group_key.group_by`, a same-table `windowed_date.anchor` and `anchor_via`, and a single-table
+`derived_aggregate.column`. A formula's own `references` edges are post-fill edges, never judged
+against that set, so formula-to-formula reads keep the existing guard and its rules. No second
+check was added.
+
+Code: `plan.generate_column_forward_reference` ("Generate column reads a column that is not
+ready yet."), reused. It fits without changing its meaning: the late formula is not ready when
+the reader is drawn, and the formula-to-formula guard already uses this code for a read of the
+same placeholder. No new code; the message names the table, column and option only, with no
+cause or context. `docs/strategies.md` no longer says "of any type" for `condition_on` and names
+the exception; the formula section gains a paragraph on who may read a formula with
+`references`. The fragment gains one bullet.
+
+### Red first (`7c924b9b`, source as at `3f0c16f7`)
+
+`pytest -p no:xdist tests/unit/plan/checks/test_generate_columns.py
+tests/unit/generation/test_conditional_categorical.py tests/unit/execution/test_mem_estimate.py`
+(Python 3.10.20): 6 failed, 205 passed.
+
+| Cell | Red because |
+| --- | --- |
+| `test_a_conditional_categorical_reading_a_formula_filled_late_is_refused` | `DID NOT RAISE PlanCompileError` |
+| `test_a_fitted_condition_on_reading_a_formula_filled_late_is_refused` | `DID NOT RAISE PlanCompileError` |
+| `test_a_derived_column_reading_a_formula_filled_late_is_refused` | `DID NOT RAISE PlanCompileError` |
+| `test_a_formula_reading_a_formula_filled_late_is_unchanged` | its last cell (a `condition_on` on the second formula) did not raise |
+| `test_the_width_bound_covers_the_longest_entry_category` | bound 1, not 500 |
+| `TestGenerateColumnWidth::test_conditional_categorical_prices_from_its_widest_entry_category` | width 1.0, not 500.0 |
+
+Green on the base by design, each tied to a mutation below: the plain-column bound cells
+`test_a_plain_column_keeps_its_width_bound[...]` (B3), the plain width cells
+`test_plain_categorical_width_is_unchanged[...]` (B4 for the `[1, 2]` cell),
+`test_a_formula_drawn_in_the_loop_may_be_read_by_any_type` (F2), and the formula chain
+assertions of `test_a_formula_reading_a_formula_filled_late_is_unchanged` (F3).
+
+### Pre-existing tests whose fixture changed
+
+| Test | Before | After | Why |
+| --- | --- | --- | --- |
+| `tests/unit/generation/test_fr0_reproducibility.py::test_fresh_column_and_its_dependents_are_excluded` | `dep`: `formula` `f'{f}-x'` with `references: [f]`; `d2`: `derived` `dep + 1` | `dep`: `derived` `f + 1`; `d2` unchanged | The old `d2` read a formula filled after the column loop (all nulls), which V1 2 refuses. The chain fresh `f` to `dep` to `d2` to `agg` and the expected exclusion set are unchanged; the assertion was not edited, and `dep` and `d2` now hold values. Orchestrator ruling, option (a). |
+
+It was the only failure the refusal caused: on `c3a5e451`, `tests/parity`, `tests/unit/generation`,
+`tests/unit/config`, `tests/unit/plan`, `tests/unit/transforms`, `tests/unit/generators`,
+`tests/integration/golden` and `tests/acceptance` gave 1 failed (this cell), 12553 passed, and a
+scan of the YAML and JSON configs under `examples`, `testflight`, `tests`, `docs` and
+`custom_providers` (152 files) found no other non-formula reader of a formula with `references`.
+
+### Mutations (final source head `95e680e0`, detached worktree; 29 of 29 red)
+
+The 22 recorded E2 mutations and seven new ones, each applied once in a detached worktree at
+`/home/user/gi-e2-r1-mut` (`95e680e0`) importing its own `src` (the harness printed
+`decoy_engine.__file__` as `/home/user/gi-e2-r1-mut/src/decoy_engine/__init__.py`), named tests
+run (Python 3.10.20), file restored; every anchor matched exactly once, none was re-anchored.
+Statuses are read from the harness's results JSON: 29 entries, 29 `RED`. The worktree was
+clean at the end and is removed. No witness starts a child process, so no mutation was applied
+in the checkout.
+
+Red counts of M1 to M22 equal the first run's (3, 7, 10, 4, 1, 1, 4, 2, 10, 2, 1, 1, 5, 1, 2,
+1, 2, 1, 1, 6, 2, 1).
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| B1 | the width bound reads only the top-level categories | `generation/_bounds.py` | 1: `test_the_width_bound_covers_the_longest_entry_category` |
+| B2 | the memory estimate reads only the top-level categories | `execution/_mem_estimate_schema.py` | 1: `test_conditional_categorical_prices_from_its_widest_entry_category` |
+| B3 | the width bound reads `by` entries whatever `condition_on` says | `generation/_bounds.py` | 4: `test_a_plain_column_keeps_its_width_bound[...]` (the text, int, float/bool and empty cells) |
+| B4 | the memory estimate prices every category as text | `execution/_mem_estimate_schema.py` | 1: `test_plain_categorical_width_is_unchanged[categories2-None]` |
+| F1 | drop the refusal (every earlier column is readable) | `plan/checks/_generate_columns.py` | 4: the categorical, fitted and derived refusal cells and `test_a_formula_reading_a_formula_filled_late_is_unchanged` |
+| F2 | refuse a read of every formula, `references` or not | the same | 1: `test_a_formula_drawn_in_the_loop_may_be_read_by_any_type` |
+| F3 | judge a formula's own `references` edges by the earlier set | the same | 1: `test_a_formula_reading_a_formula_filled_late_is_unchanged` |
+
+B1 and B2 are the review's item 1 mutation at each site; F1 is item 2's. The forward merge made
+no adaptation, so it adds no mutation.
+
+### Gates (head `95e680e0`, the final source head)
+
+`GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
+ruff,format,mypy,sentry,layers,licenses,tests` over the 102 E2 T1 paths (listed above) plus
+`tests/unit/reasons`, `tests/unit/expressions`,
+`tests/native/test_draw_site_inventory_coverage.py`, `test_draw_sites_catalogue_pinned.py`, the
+bounds and memory-estimate tests and importers (`tests/unit/execution/test_mem_estimate.py`,
+`test_byte_estimate_routing.py`, `test_mem_estimate_arrow_types.py`,
+`test_mem_estimate_nullable_metadata.py`, `test_pipeline_routing_route_kills.py`,
+`tests/integration/test_byte_estimate_arrow_types_e2e.py`,
+`tests/unit/generation/test_fr0_budget.py`), the slice 1 to 4 test files the merge brought
+(`tests/unit/generation/relational/test_aggregate.py`, `tests/unit/config/test_generate_relational.py`,
+`tests/unit/expressions/test_column_refs.py`, `test_lark_if_lazy.py`,
+`tests/unit/transforms/test_derived.py`; the sentry files run in the `sentry` step), slice 3's
+importer set (`tests/unit/test_expressions.py`, `tests/unit/execution/test_derived_strategy.py`,
+`tests/unit/execution/derived_visibility`, `test_engine_transforms_routes.py`,
+`tests/unit/execution/test_runner.py`, `tests/native/test_draw_sites_assembly.py`,
+`test_c1b_i_metadata_inventory.py`, `test_c5b_i_metadata_inventory.py`) and the changed test
+files (`tests/unit/plan/checks/test_generate_columns.py`,
+`tests/unit/generation/test_conditional_categorical.py`,
+`tests/unit/generation/test_fr0_reproducibility.py`). 126 paths. Python 3.10.20, PyArrow 24.0.0,
+DuckDB 1.5.4; `origin/main` at `8c9c1162`.
+
+| Step | Run 1 (all steps, 126 paths) | Run 2 (`tests` only, 125 paths) |
+| --- | --- | --- |
+| ruff | pass | |
+| format | pass | |
+| mypy | pass | |
+| sentry | 5510 passed, 0 failed, 2 skipped | |
+| layers | 15 passed, 0 failed, 0 skipped | |
+| licenses | 63 passed, 0 failed, 0 skipped | |
+| tests | 12509 passed, 1 failed, 221 skipped | 12482 passed, 0 failed, 221 skipped |
+
+Run 1 failed one test, on the branch and on `origin/main` alike:
+`tests/unit/execution/test_byte_estimate_routing.py::TestEndToEndWiring::test_width_change_flips_route_at_a_fixed_budget_and_row_count`,
+`Timeout (>300.0s) from pytest-timeout` in both (failure sets: branch 1, baseline 1,
+branch-only 0; the baseline rerun of the same paths gave 11685 passed, 1 failed). That file is
+not in the T1 list; it was added here as an importer of `_mem_estimate_schema.py`. Run alone on
+`95e680e0` with the timeout lifted it passed in 607 s (it builds 200 000-row parquet sources
+and wrote about 28 MB of scratch at peak in that run). Run 2 reran the `tests` step on the same
+head with `--baseline` and the same paths less that file: 0 failed, failure sets branch 0,
+baseline 0, branch-only 0, so the script did not rerun `origin/main`. There is no branch
+failure. Draw-site results in run 2:
+`tests/native/test_draw_site_inventory_coverage.py` 12 of 12 passed
+(`test_static_scan_finds_no_uncatalogued_draw_site` passed) and
+`tests/native/test_draw_sites_catalogue_pinned.py` 5 of 5 passed.
+
+### Script checks
+
+On `95e680e0` (clean tree), each against `origin/main` (`8c9c1162`) and against `c86ca58d`
+(the main this branch holds through slice 4; main is not merged here).
+
+| Check | `origin/main` (`8c9c1162`) | `c86ca58d` |
+| --- | --- | --- |
+| `registry_renumber.py --check --main` | 2 (`main-not-merged`) | 0 (`registry consistent`) |
+| `ratchet_check.py --base` | 0 | 0 |
+| `check_fragment.py --base` | 0 | 0 |
+| `reason_release_pin.py --check` | 0 (`reason release pin current`) | (no base) |
+
+The exit 2 is the known main-not-merged effect: the branch does not hold `8c9c1162`.
+
+Line counts (at or above 550): `generation/synthesize.py` 597,
+`generation/statistical/_sample.py` 559, `config/_generate_relational.py` 562,
+`expressions/_lark_parser.py` 555 and `plan/_checks.py` 699 (slice 3's, unchanged here); tests:
+`tests/sentry/defects/test_generate_input_edges.py` 738 and
+`tests/unit/plan/checks/test_generate_columns.py` 934 (an existing file; this round adds 79
+lines). `plan/checks/_generate_columns.py` is 514, `generation/_bounds.py` 419,
+`execution/_mem_estimate_schema.py` 289. No digest, golden or snapshot moved, and no expected
+output value was edited. No census number, cap, baseline or allowlist rose.
+
+### Not run
+
+The full suite; `tests/physical` beyond the T1 paths; `tests/perf`; `testflight`; the gate steps
+under Python 3.11; a gate on the docs-only commit that adds these sections beyond `ruff`,
+`format`, `sentry` and the two draw-site files.
+
+### V2-LOG (accepted from review, not built)
+
+a. Selection matches the parent's value before any `output_type` cast
+   (`generation/_statistical_column.py`): a `decimal(10,2)` parent prints `1.00` but only the key
+   `"1"` matches. Say so in `docs/strategies.md` and the changelog.
+b. One more copy of the default category list (`generation/kinds/_categorical.py`,
+   `config/_generate_type_checks.py`) beside five existing ones; effectively dead because
+   `categories` is required. Fold into one constant later.
+c. `config/_generate_option_catalog.py`: the public option catalog drops `TypeOptions.together`,
+   so a consumer sees `condition_on` and `by` as independently optional and can build a
+   `by`-only config that validation refuses. Add `together` to `GenerateTypeOptions`.
+d. `execution/native/_draw_sites_gen.py`: the `gen.categorical` descriptor still describes one
+   whole-column `choices(..., k=n)` call at the old line; the conditional form makes one call
+   per row. Describe both shapes and re-pin the catalogue digest.
