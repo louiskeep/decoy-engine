@@ -131,3 +131,16 @@ def test_forced_out_of_core_refuses_a_derive_chain_with_the_coded_reason(tmp_pat
         )
     assert reason_from_exception(caught.value).code == "out_of_core_ineligible"
     assert "out_of_core_dynamic_output_type_unsupported" in str(caught.value)
+
+
+def test_ordering_keeps_known_reads_when_the_when_predicate_is_unreadable() -> None:
+    from decoy_engine.execution._column_access import scalar_creating_reads
+
+    entry = {
+        "name": "aa_tgt",
+        "strategy": "derived",
+        "provider_config": {"expression": "z_driver + 1"},
+        "when": "b'x'",  # a bytes literal: the predicate's names cannot be read
+    }
+    assert scalar_creating_reads(entry) == {"z_driver"}
+    assert _created([entry]) == frozenset()  # admission still refuses the unreadable entry
