@@ -18,18 +18,32 @@ hook catches that + writes a JobPostScanIntegrityReport with
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
+from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 
-from decoy_engine.profiling import passes_through
+from decoy_engine import fileaccess
+from decoy_engine.internal.memory_limit import parse_megabytes
+from decoy_engine.internal.pandas_missing import is_null_cell
+from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.verification.postmask._blocked import severity_counts
+from decoy_engine.verification.postmask._column_facts import ColumnFacts, column_facts
 from decoy_engine.verification.postmask._keys import KeyResult
+from decoy_engine.verification.postmask._stream_input import TableBatches, from_table
 from decoy_engine.verification.postmask.fk_preservation import fk_findings
-from decoy_engine.verification.postmask.policy_validation import check_policy_validation
-from decoy_engine.verification.postmask.residual_pii import check_residual_pii
+
+# The runner keeps its check names: callers and tests patch them here to fail one check.
+from decoy_engine.verification.postmask.policy_validation import (
+    policy_findings as check_policy_validation,
+)
+from decoy_engine.verification.postmask.residual_pii import (
+    residual_pii_findings as check_residual_pii,
+)
 from decoy_engine.verification.postmask.types import (
     SCHEMA_VERSION,
     FKPreservationFinding,
@@ -80,6 +94,133 @@ def run_post_mask(
     if not isinstance(config, dict):
         raise TypeError(f"run_post_mask: config must be a dict, got {type(config).__name__}")
 
+    with fileaccess.protected_scratch_dir(prefix="decoy-post-scan-columns-") as scratch:
+        return _assemble(
+            config,
+            lambda: _frame_tables(source_frames, output_frames),
+            lambda: fk_findings(config, source_frames, output_frames, keys),
+            scratch=scratch,
+            memory_limit=MEMORY_LIMIT,
+        )
+
+
+def run_post_mask_tables(
+    source_tables: Mapping[str, TableBatches],
+    output_tables: Mapping[str, TableBatches],
+    *,
+    config: Mapping[str, Any],
+    keys: Sequence[KeyResult],
+    scratch: Path,
+    memory_limit: str,
+) -> dict[str, Any]:
+    """`run_post_mask` over tables the run holds as batches. The caller counted the declared keys
+    (`check_keys`) and owns `scratch`; the column suite reads the tables in bounded batches."""
+    if _megabytes(memory_limit) > _megabytes(MEMORY_LIMIT):
+        raise ValueError("run_post_mask_tables: memory_limit is above the post-scan cap")
+    return _assemble(
+        dict(config),
+        lambda: (dict(source_tables), dict(output_tables), {}),
+        lambda: fk_findings(config, {}, {}, keys),
+        scratch=scratch,
+        memory_limit=memory_limit,
+    )
+
+
+def _megabytes(limit: str) -> int:
+    limit_mb = parse_megabytes(limit)
+    if limit_mb is None:
+        raise ValueError("run_post_mask_tables: memory_limit must look like '512MB'")
+    if limit_mb == 0:
+        raise ValueError("run_post_mask_tables: memory_limit must be above zero")
+    return limit_mb
+
+
+def _native(series: pd.Series) -> pa.Array | None:
+    try:
+        return pa.array(series, from_pandas=True)
+    except Exception as exc:
+        if passes_through(exc):
+            raise
+        return None
+
+
+def _text(series: pd.Series) -> pa.Array:
+    return pa.array(
+        [None if is_null_cell(v) else _key(v) for v in series.tolist()], type=pa.string()
+    )
+
+
+def _key(value: object) -> str:
+    """Text that is equal for equal numbers whatever their type, as pandas `==` treats them: a
+    float 10001.0 and an int 10001 must not read as two values, or a leaked source value looks
+    changed."""
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return str(int(value))
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else repr(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            return str(value)
+        if value == value.to_integral_value():
+            return str(int(value))
+        return format(value.normalize(), "f")
+    return str(value)
+
+
+def _frame_table(name: str, frame: pd.DataFrame, other: pd.DataFrame | None) -> TableBatches:
+    """`frame` as Arrow, column by column. A column Arrow will not take (mixed int and str,
+    Decimal with float, a set) is carried as the text of each value, which is all the detectors
+    read. The choice is made for the column on both sides at once: if either side needs the text,
+    both get it, so a source int and an output "1" still compare equal as they do in pandas."""
+    names = [str(c) for c in frame.columns]
+    other_at = (
+        {} if other is None else {str(c): n for n, c in reversed(list(enumerate(other.columns)))}
+    )
+    arrays = []
+    for n, series in enumerate(frame.iloc[:, i] for i in range(len(names))):
+        paired = names[n] in other_at and other is not None
+        native = _native(series)
+        if paired and other is not None:
+            native = native if _native(other.iloc[:, other_at[names[n]]]) is not None else None
+        arrays.append(native if native is not None else _text(series))
+    return from_table(name, pa.Table.from_arrays(arrays, names))
+
+
+def _frame_tables(
+    source_frames: dict[str, pd.DataFrame], output_frames: dict[str, pd.DataFrame]
+) -> tuple[dict[str, TableBatches], dict[str, TableBatches], dict[str, str]]:
+    """Both sides as tables. A name whose frame cannot be converted at all is left out of both
+    and recorded with the error's class name, so the other tables are still checked."""
+    src: dict[str, TableBatches] = {}
+    out: dict[str, TableBatches] = {}
+    failed: dict[str, str] = {}
+    for name, out_frame in output_frames.items():
+        try:
+            src_frame = source_frames.get(name)
+            out_table = _frame_table(name, out_frame, src_frame)
+            if src_frame is not None:
+                src[name] = _frame_table(name, src_frame, out_frame)
+            out[name] = out_table
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            src.pop(name, None)
+            failed[name] = type(exc).__name__
+    return src, out, failed
+
+
+def _assemble(
+    config: Mapping[str, Any],
+    get_tables: Callable[
+        [], tuple[dict[str, TableBatches], dict[str, TableBatches], dict[str, str]]
+    ],
+    get_fk: Callable[[], list[FKPreservationFinding]],
+    *,
+    scratch: Path,
+    memory_limit: str,
+) -> dict[str, Any]:
     residual_pii: list[ResidualPIIFinding] = []
     fk_preservation: list[FKPreservationFinding] = []
     policy_validation: list[PolicyValidationFinding] = []
@@ -97,8 +238,16 @@ def run_post_mask(
     # where the full exception text already lives at the catch site.
     # A coded engine error (a file-access or lazy-source refusal) is not a check failure: it
     # propagates unchanged through `passes_through`, the rule pre-scan applies too.
+    # One facts pass feeds both column checks. A table or column that fails is isolated: its
+    # error is recorded by class name and the other tables and columns are still checked.
+    source_tables, output_tables, failed = get_tables()
+    facts, suite_failed = _suite_facts(
+        source_tables, output_tables, scratch=scratch, memory_limit=memory_limit
+    )
+    failed = {**failed, **suite_failed}
+
     try:
-        residual_pii = check_residual_pii(output_frames, config, source_frames=source_frames)
+        residual_pii = check_residual_pii(facts, config, failed)
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -114,7 +263,7 @@ def run_post_mask(
         ]
 
     try:
-        fk_preservation = fk_findings(config, source_frames, output_frames, keys)
+        fk_preservation = get_fk()
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -133,7 +282,9 @@ def run_post_mask(
         ]
 
     try:
-        policy_validation = check_policy_validation(source_frames, output_frames, config)
+        policy_validation = check_policy_validation(
+            config, source_tables, output_tables, facts, failed
+        )
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -172,6 +323,33 @@ def run_post_mask(
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
     return _report_to_dict(report)
+
+
+def _suite_facts(
+    source_tables: Mapping[str, TableBatches],
+    output_tables: Mapping[str, TableBatches],
+    *,
+    scratch: Path,
+    memory_limit: str,
+) -> tuple[dict[str, dict[str, ColumnFacts]], dict[str, str]]:
+    """Facts for every output column, per output table, against its source when it has one, and
+    the class name of the error for each table whose facts could not be computed."""
+    facts: dict[str, dict[str, ColumnFacts]] = {}
+    failed: dict[str, str] = {}
+    for name, table in output_tables.items():
+        try:
+            facts[name] = column_facts(
+                source_tables.get(name),
+                table,
+                table.schema.names,
+                scratch=scratch,
+                memory_limit=memory_limit,
+            )
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            failed[name] = type(exc).__name__
+    return facts, failed
 
 
 def _report_to_dict(report: PostMaskReport) -> dict[str, Any]:

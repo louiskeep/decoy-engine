@@ -142,7 +142,7 @@ _FIXED = [
     ),
     ("decoy_engine.execution._chunked_fk_vocab", "_DECIMAL_PRECISION_SCALE_RE", "decimal(10, 2)"),
     ("decoy_engine.execution.native._requirements", "_TZ_DATETIME_LABEL", "datetime64[ns, UTC]"),
-    ("decoy_engine.execution.out_of_core._duckdb", "_MEMORY_LIMIT_MB_PATTERN", "512MB"),
+    ("decoy_engine.internal.memory_limit", "_PATTERN", "512MB"),
     ("decoy_engine.internal.pandas_compat", "_DATETIME_RES", "datetime64[ns]"),
     ("decoy_engine.profiling.sentinels", "_ISO_DATE_RE", "2024-01-31"),
     ("decoy_engine.secret_providers._types", "_VERSION_RE", "12"),
