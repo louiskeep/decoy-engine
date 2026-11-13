@@ -446,3 +446,32 @@ def test_6_positional_without_when_is_byte_identical(
     whole = _full_frame(make_config(columns), source, tmp_path)
     got = pa.concat_tables(native.out).combine_chunks()
     assert_values_match_full_frame(got, whole)
+
+
+# ---------------------------------------------------------------------------
+# DUP-DEFECTS A15: the guard admits `large_string` like `string` (parquet iter_batches keeps it).
+# ---------------------------------------------------------------------------
+
+
+def _guard(*names: str) -> Any:
+    from decoy_engine.execution._chunked_when_guard import (
+        PositionalWhenGuard,
+        _PositionalWhenColumn,
+    )
+
+    return PositionalWhenGuard((_PositionalWhenColumn("c", CAT_WHEN_CODE, names),))
+
+
+@pytest.mark.parametrize("typ", [pa.string(), pa.large_string()], ids=str)
+def test_e3_guard_accepts_large_string_targets_and_references(typ: pa.DataType) -> None:
+    schema = pa.schema([("c", typ), ("keep", typ)])
+    _guard("c", "keep").check_schema(schema, table=TABLE)
+
+
+def test_e3_guard_still_refuses_an_int64_reference_with_the_same_code_and_text() -> None:
+    schema = pa.schema([("c", pa.string()), ("keep", pa.int64())])
+    with pytest.raises(PlanCompileError) as info:
+        _guard("c", "keep").check_schema(schema, table=TABLE, chunk_index=2)
+    assert info.value.code == CAT_WHEN_CODE
+    assert "chunk 2 has 'keep' typed int64" in str(info.value)
+    assert "is a string; chunk" in str(info.value)
