@@ -40,3 +40,64 @@ The gate's DuckDB connection is a run connection: `execute_route` binds one reco
 - `test_a_cap_above_the_detected_cpus_is_clamped_to_them`: was `{threads} == {4}`; now every connection equals the formula with the cap 64 clamped to the 4 CPUs, and the largest is 4, so the cap is still clamped to the CPUs.
 - `test_applied_pairs_are_the_distinct_connection_settings`: unchanged. It now holds because `applied` includes the gate's connection.
 - `test_a_small_memory_limit_takes_threads_below_the_cap`: unchanged.
+
+
+## B1: whole-tree failures on head e3900485 (not migrated yet)
+
+Whole tree on a Linux VM, `-n 8`, `test_import_layers.py` deselected: 980 failed, 42149 passed, 5312 skipped. These ids pass on main. The table classifies each file by its first failing test (one message per file); no test was edited for B1.
+
+| File | Failing | Class |
+|---|---|---|
+| `tests/parity/test_ooc_temporal_ns_range.py` | 432 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/acceptance/test_f06_route_cells.py` | 147 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/acceptance/test_f06_parent_quarantine_matrix.py` | 80 | UNEXPLAINED: other (see message) |
+| `tests/parity/test_phase_f_f2_mixed_sweep.py` | 32 | UNEXPLAINED: key_type_mismatch on a generated or mixed parent |
+| `tests/unit/execution/derived_visibility/test_duplicate_field_names_matrix.py` | 25 | held: lazy or loader input now routes resident, then the FK full-frame size guard rejects |
+| `tests/unit/execution/test_r3_route_executors.py` | 19 | UNEXPLAINED: other (see message) |
+| `tests/unit/execution/test_r3_within_route_baseline.py` | 18 | UNEXPLAINED: other (see message) |
+| `tests/parity/test_out_of_core_fk_parity.py` | 18 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/integration/test_quarantine_commit_fate.py` | 16 | UNEXPLAINED: other (see message) |
+| `tests/unit/execution/test_r3_failure_publication_trace.py` | 13 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/integration/test_fk_sequential_row_error_leak.py` | 13 | UNEXPLAINED: other (see message) |
+| `tests/unit/execution/test_r3_ooc_reorder_reachability.py` | 11 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/acceptance/test_f06_route_parity.py` | 11 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/parity/test_phase_f_f2_mixed_admission.py` | 10 | UNEXPLAINED: check_error from the gate |
+| `tests/unit/execution/test_engine_transforms_admission.py` | 9 | held: lazy or loader input now routes resident, then the FK full-frame size guard rejects |
+| `tests/parity/test_phase_f_f2_mixed_publish.py` | 9 | UNEXPLAINED: other (see message) |
+| `tests/parity/test_phase_d_d3a_validators_ooc.py` | 9 | UNEXPLAINED: other (see message) |
+| `tests/parity/test_phase_f_f2_mixed_parity.py` | 7 | UNEXPLAINED: key_type_mismatch on a generated or mixed parent |
+| `tests/unit/execution/test_subset_run.py` | 6 | held: lazy or loader input now routes resident, then the FK full-frame size guard rejects |
+| `tests/unit/execution/test_probe_routing.py` | 6 | UNEXPLAINED: strategy collapses a declared key, now blocks (needs per-test decision) |
+| `tests/unit/execution/test_ooc_fk_seam_round2.py` | 6 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/parity/test_gap6_prefer_bounded_fk.py` | 6 | UNEXPLAINED: key_type_mismatch on a generated or mixed parent |
+| `tests/fileaccess/test_policy_routes.py` | 6 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/test_gap9_thread_wiring.py` | 5 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/integration/test_f29_failure_contract.py` | 5 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/test_post_validation_wiring.py` | 4 | UNEXPLAINED: strategy collapses a declared key, now blocks (needs per-test decision) |
+| `tests/unit/execution/test_out_of_core_multi_parent_shared_relation.py` | 4 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/run_stream/test_e1a_stream.py` | 4 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/integration/test_f29_publication_state.py` | 4 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/scripts/test_fk_scale_infra.py` | 3 | UNEXPLAINED: other (see message) |
+| `tests/unit/execution/test_pipeline_routing.py` | 3 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/test_out_of_core_spill_file_mode.py` | 3 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/test_ooc_residency_warning.py` | 3 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/test_lazy_path_route_admission.py` | 3 | held: lazy or loader input now routes resident, then the FK full-frame size guard rejects |
+| `tests/unit/execution/test_engine_transforms_routes.py` | 3 | held: lazy or loader input now routes resident, then the FK full-frame size guard rejects |
+| `tests/unit/run_result/test_collect.py` | 2 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/test_out_of_core_routing.py` | 2 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/unit/execution/test_byte_estimate_routing.py` | 2 | UNEXPLAINED: strategy collapses a declared key, now blocks (needs per-test decision) |
+| `tests/perf/test_d4a_reorder_reachability.py` | 2 | UNEXPLAINED: other (see message) |
+| `tests/parity/test_phase_f_fr0_mixed_stitch.py` | 2 | UNEXPLAINED: other (see message) |
+| `tests/fileaccess/test_char_route_corpus.py` | 2 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/acceptance/test_f06_parent_quarantine.py` | 2 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/acceptance/test_f06_fallback_reasons.py` | 2 | UNEXPLAINED: other (see message) |
+| `tests/acceptance/test_f06_cleanup_failure.py` | 2 | UNEXPLAINED: other (see message) |
+| `tests/unit/execution/test_subset_run_refused.py` | 1 | UNEXPLAINED: other (see message) |
+| `tests/unit/execution/test_r3_hypothesis_parity.py` | 1 | UNEXPLAINED: other (see message) |
+| `tests/unit/execution/test_isolated_worker_streaming.py` | 1 | UNEXPLAINED: other (see message) |
+| `tests/security/test_reason_boundary.py` | 1 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/security/test_f29_remediation.py` | 1 | stale kwarg: decide_execution_route(post_scan_integrity=) |
+| `tests/perf/test_reorder_parent_guard_demotion.py` | 1 | UNEXPLAINED: other (see message) |
+| `tests/parity/test_phase_f_f0_invariants.py` | 1 | UNEXPLAINED: strategy collapses a declared key, now blocks (needs per-test decision) |
+| `tests/parity/test_out_of_core_group_b_routing.py` | 1 | held: sink/loader/lazy/declared casting on a held route (route.post_scan_keys_resident) |
+| `tests/integration/test_f29_isolation.py` | 1 | UNEXPLAINED: other (see message) |
