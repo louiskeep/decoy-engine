@@ -102,9 +102,16 @@ def _kind(info: pytest.ExceptionInfo[ConnectorError]) -> str:
 # AT-C03 -----------------------------------------------------------------------------------
 
 
-def test_put_new_returns_the_etag_of_the_object_it_made(admin: Any) -> None:
-    version = _store().put_new(KEY, io.BytesIO(b"mine"))
-    assert version == _etag(admin) and _body(admin) == b"mine"
+SHAPES = pytest.mark.parametrize("size", [4, PART + 3], ids=["single_put", "multipart"])
+
+
+@SHAPES
+def test_put_new_returns_the_etag_of_the_object_it_made(admin: Any, size: int) -> None:
+    data = b"m" * size
+    version = _store().put_new(KEY, io.BytesIO(data))
+    assert version and version == _etag(admin) and _body(admin) == data
+    # A multipart ETag carries a part count; a single PUT's does not.
+    assert ("-" in version) == (size > PART)
 
 
 @pytest.mark.parametrize("size", [4, PART + 3], ids=["single_put", "multipart"])
@@ -266,9 +273,11 @@ def test_read_small_reads_through_short_reads(size: int, over: bool) -> None:
 # AT-C38 -----------------------------------------------------------------------------------
 
 
-def test_delete_created_removes_only_the_object_it_made(admin: Any) -> None:
+@SHAPES
+def test_delete_created_removes_only_the_object_it_made(admin: Any, size: int) -> None:
     store = _store()
-    version = store.put_new(KEY, io.BytesIO(b"mine"))
+    version = store.put_new(KEY, io.BytesIO(b"m" * size))
+    assert version == _etag(admin)
     store.delete_created(KEY, version)
     with pytest.raises(botocore_exc.ClientError):
         admin.head_object(Bucket=BUCKET, Key=KEY)
