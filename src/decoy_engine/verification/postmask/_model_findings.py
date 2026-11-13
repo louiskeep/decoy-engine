@@ -1,5 +1,6 @@
 """Model findings for the Post-scan residual-PII check: the classifier and NER passes, the model
-severity table, dismissals, the `ner_findings: fail` promotion and the block that withholds outputs.
+severity table, dismissals and the `ner_findings: fail` promotion. Whether a model row withholds
+the outputs is decided by the one verdict (`_blocked.post_scan_verdict`), not here.
 
 Pattern: a finding names the detector that produced it, its source and the model version that
 ran, with a rate or a band, never the value (Google Cloud DLP findings carry an info type, a
@@ -18,9 +19,10 @@ matching `warning` becomes `info` with `dismissed`), then, under `ner_findings: 
 `warning` still standing becomes `fail` with `promoted`. A dismissal never lowers a `fail`, an
 `error` or a source-identity finding.
 
-Each model pass runs in its own `try`: an exception adds one `error` row naming the source, the
-model and the exception class, and the regex rows stay. Rows, log lines and errors carry codes,
-counts, buckets and bands only.
+Each model pass runs in its own `try`: a coded engine error propagates unchanged
+(`passes_through`, the rule the regex checks and pre-scan apply), and any other exception adds one
+`error` row naming the source, the model and the exception class, and the regex rows stay. Rows,
+log lines and errors carry codes, counts, buckets and bands only.
 """
 
 from __future__ import annotations
@@ -32,13 +34,12 @@ from typing import Any
 
 import pandas as pd
 
-from decoy_engine import reasons
 from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.detection._model_status import log_detector_models, log_detector_run
 from decoy_engine.detection._ner_rate import ner_rates
 from decoy_engine.detection.ner import DEFAULT_NER_MODEL, pipeline_version
 from decoy_engine.detection.types import DetectorSource, ModelRef
-from decoy_engine.errors import DecoyError
+from decoy_engine.profiling import passes_through
 from decoy_engine.profiling.model_pack import DetectorSet, classify_frame, load_detectors
 from decoy_engine.verification.postmask.residual_pii import (
     _NO_OP_BY_DESIGN,
@@ -49,38 +50,23 @@ from decoy_engine.verification.postmask.residual_pii import (
 )
 from decoy_engine.verification.postmask.types import ResidualPIIFinding, Severity
 
-_REASON = reasons.post_scan.NER_BLOCKED
 # Strategies that keep the value or emit a realistic one by design: a model hit there is expected.
 _EXPECTED_HIT = _NO_OP_BY_DESIGN | _PRODUCES_PII_LIKE_VALUES | _REUSES_SOURCE_VALUES
 _NER_TEXT_STRATEGIES = frozenset({"text_redact", "text_mask"})
 _CLASSIFIER_BANDS = frozenset({"high", "review"})
 
 __all__ = [
-    "PostScanBlockedError",
     "model_findings",
+    "ner_findings_mode",
     "post_scan_detectors",
-    "raise_if_blocked",
     "review",
 ]
 
 
-class PostScanBlockedError(DecoyError):
-    """`ner_findings: fail` and an NER finding failed (or the NER pass raised): outputs withheld.
-
-    `str(error)` and `message` are the registry's fixed summary; `report` is the value-free
-    post-scan report dict, so a caller can write it for review.
-    """
-
-    code = _REASON
-
-    def __init__(self, report: Mapping[str, Any]) -> None:
-        self.report = dict(report)
-        self.reason = f"{_REASON.namespace}.{_REASON}"
-        self.message = reasons.get(_REASON.namespace, _REASON).summary
-        super().__init__(self.message)
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        return (type(self), (self.report,))
+def ner_findings_mode(config: Mapping[str, Any]) -> str:
+    """The run's `post_scan.ner_findings` mode, `warn` when unset."""
+    block = config.get("post_scan")
+    return str(block.get("ner_findings") or "warn") if isinstance(block, Mapping) else "warn"
 
 
 def post_scan_detectors(
@@ -217,6 +203,8 @@ def model_findings(
             elif ner is not None:
                 _ner_pass(run, output_frames, columns, ner)
         except Exception as exc:
+            if passes_through(exc):
+                raise
             failed = type(exc).__name__
         out.extend(run.findings)
         if failed is not None:
@@ -260,7 +248,7 @@ def review(
     block = config.get("post_scan")
     block = block if isinstance(block, Mapping) else {}
     dismissals = [d for d in block.get("dismissed") or () if isinstance(d, Mapping)]
-    promote = block.get("ner_findings") == "fail"
+    promote = ner_findings_mode(config) == "fail"
     used: set[int] = set()
     out: list[ResidualPIIFinding] = []
     for finding in findings:
@@ -284,8 +272,7 @@ def log_post_scan(
     stale: Counter[str],
 ) -> None:
     """The `post_scan.detectors` line, then one `post_scan.models` line per checked table."""
-    block = config.get("post_scan")
-    mode = block.get("ner_findings", "warn") if isinstance(block, Mapping) else "warn"
+    mode = ner_findings_mode(config)
     columns = sum(len(frame.columns) for frame in output_frames.values())
     counts: dict[str, int | str] = {
         "tables": len(output_frames),
@@ -308,24 +295,3 @@ def log_post_scan(
                 "dismissed_stale": stale.get(table, 0),
             },
         )
-
-
-def blocks(report: Mapping[str, Any], config: Mapping[str, Any]) -> bool:
-    """Under `ner_findings: fail`, any NER row at `fail` or `error` withholds the outputs."""
-    block = config.get("post_scan")
-    if not isinstance(block, Mapping) or block.get("ner_findings") != "fail":
-        return False
-    return any(
-        f.get("source") == "ner" and f.get("severity") in ("fail", "error")
-        for f in report.get("residual_pii", ())
-    )
-
-
-def raise_if_blocked(report: Mapping[str, Any], config: Mapping[str, Any]) -> None:
-    """Raise `PostScanBlockedError` with an empty exception chain when the report blocks."""
-    if not blocks(report, config):
-        return
-    # Lazy: the helper sits in the secret-provider package, which this module need not load.
-    from decoy_engine.secret_providers._errors import raise_bare
-
-    raise_bare(PostScanBlockedError(report))

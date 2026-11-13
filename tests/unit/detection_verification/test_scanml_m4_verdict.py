@@ -266,7 +266,13 @@ def test_a_run_blocked_only_by_ner_raises_mains_error_coded_ner_blocked(tmp_path
     from decoy_engine.execution import run_pipeline
     from decoy_engine.reason_adapter import reason_from_exception
 
-    frame = pd.DataFrame({"notes": s.notes_column(2, n=ROWS), "email": ["x"] * ROWS})
+    # An email in every fifth note gives `text_redact` something to change, so the policy check
+    # passes and the NER row is the only blocking finding.
+    notes = [
+        f"{cell} Reply to user{i}@example.com." if i % 5 == 0 else cell
+        for i, cell in enumerate(s.notes_column(2, n=ROWS))
+    ]
+    frame = pd.DataFrame({"notes": notes, "email": ["x"] * ROWS})
     table = pa.Table.from_pandas(frame, preserve_index=False)
     cfg = _run_cfg(tmp_path, table, {"detectors": ["regex", "ner"], "ner_findings": "fail"})
     caught: BaseException | None = None

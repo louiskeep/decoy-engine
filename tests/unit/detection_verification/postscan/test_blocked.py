@@ -93,8 +93,19 @@ def report(
     return out
 
 
+def ner_row() -> dict[str, Any]:
+    """An NER `fail` row: under `ner_findings: fail` it blocks through the NER predicate only."""
+    return {**residual("fail", detector="person_name"), "source": "ner"}
+
+
+def with_ner(rep: dict[str, Any]) -> dict[str, Any]:
+    return {**rep, "residual_pii": [*rep["residual_pii"], ner_row()]}
+
+
 def blocking(rep: dict[str, Any], *, ner: bool = False) -> list[str]:
-    return [c.code for c in post_scan_verdict(rep, ner_blocked=ner).codes]
+    if ner:
+        rep = with_ner(rep)
+    return [c.code for c in post_scan_verdict(rep, ner_findings="fail").codes]
 
 
 # ----- AT-13 --------------------------------------------------------------------------------
@@ -112,7 +123,7 @@ def test_the_reason_is_the_first_code_in_the_documented_order_and_all_codes_foll
         ],
         res=(residual("fail"),),
     )
-    verdict = post_scan_verdict(rep, ner_blocked=True)
+    verdict = post_scan_verdict(with_ner(rep), ner_findings="fail")
     assert verdict.blocking is True
     assert [c.code for c in verdict.codes] == ORDER
     assert verdict.codes[0].code == "check_error"
@@ -332,8 +343,8 @@ def test_a_verdict_blocked_only_by_a_key_code_names_no_findings_location() -> No
 
 
 def test_the_exception_is_a_decoy_error_with_a_picklable_value_free_report() -> None:
-    rep = report(keys=[key("checked", "measured", "foreign_key_orphans_introduced")])
-    error = PostScanBlockedError(rep, post_scan_verdict(rep, ner_blocked=True))
+    rep = with_ner(report(keys=[key("checked", "measured", "foreign_key_orphans_introduced")]))
+    error = PostScanBlockedError(rep, post_scan_verdict(rep, ner_findings="fail"))
     assert isinstance(error, DecoyError)
     assert error.report == rep
     assert error.reason == "post_scan.foreign_key_orphans_introduced"

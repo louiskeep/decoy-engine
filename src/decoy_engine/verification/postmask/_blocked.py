@@ -6,7 +6,10 @@ and codes are not a combination `_keys` can write is unreadable and blocks with 
 A residual or policy `fail` gives `finding_blocked`; an `error` finding or a set
 `pass_failed_with` gives `check_error`. An `fk_preservation` `fail` adds the orphans code (a set,
 so a key's own copy stays one); an `error` adds `check_error` only when no key blocks.
-Nothing here carries a data value.
+A model `residual_pii` row (`source` `ner` or `classifier`) skips that rule and blocks only
+through the NER predicate (SCAN-ML 4.5, AT-M4f): under `ner_findings: fail` an NER row at `fail`
+or `error` adds `ner_blocked`; a classifier row never blocks; a model row whose severity is
+outside the known set still adds `check_error`. Nothing here carries a data value.
 """
 
 from __future__ import annotations
@@ -27,12 +30,12 @@ __all__ = [
     "PostScanVerdict",
     "block_location",
     "post_scan_verdict",
+    "raise_if_ner_blocked",
     "severity_counts",
 ]
 
 _P = reasons.post_scan
-# Not registered here: the NER block belongs to the model-findings slice, which supplies the code.
-_NER_BLOCKED = ReasonRef("post_scan", "ner_blocked")
+_NER_BLOCKED = _P.NER_BLOCKED.spec.ref
 # Inability to check first, then structure, then data.
 _ORDER: tuple[ReasonRef, ...] = (
     *(
@@ -61,6 +64,8 @@ _MAX_SPOTS = 3
 _STATUSES = frozenset(get_args(_keys.Status))
 _BASELINES = frozenset(get_args(_keys.Baseline))
 _SEVERITIES = frozenset({"info", "warning", "fail", "error"})
+_MODEL_SOURCES = frozenset({"ner", "classifier"})
+_NER_MODES = ("warn", "fail")
 # A report that cannot be read is a check that could not run, so it blocks.
 _UNREADABLE = object()
 
@@ -200,8 +205,20 @@ def _key_refs(key: Mapping[str, Any]) -> Iterator[tuple[ReasonRef, bool]]:
             yield ref, True
 
 
-def post_scan_verdict(report: Mapping[str, Any], *, ner_blocked: bool = False) -> PostScanVerdict:
-    """Whether `report` blocks, and why. `ner_blocked` is the model-findings predicate."""
+def _ner_blocks(finding: Mapping[str, Any], ner_findings: str) -> bool:
+    """The NER predicate: under `fail`, an NER row at `fail` or `error` withholds the outputs."""
+    return (
+        ner_findings == "fail"
+        and finding.get("source") == "ner"
+        and finding.get("severity") in ("fail", "error")
+    )
+
+
+def post_scan_verdict(report: Mapping[str, Any], *, ner_findings: str = "warn") -> PostScanVerdict:
+    """Whether `report` blocks, and why. `ner_findings` is the run's `post_scan.ner_findings`
+    mode; the report does not carry it, and the default `warn` lets no model row block."""
+    if ner_findings not in _NER_MODES:
+        raise ValueError("ner_findings must be 'warn' or 'fail'")
     blocked: set[ReasonRef] = set()
     warned: set[ReasonRef] = set()
     for key in _rows(report, "keys"):
@@ -217,7 +234,15 @@ def post_scan_verdict(report: Mapping[str, Any], *, ner_blocked: bool = False) -
     for section in ("residual_pii", "policy_validation"):
         for finding in _rows(report, section):
             severity = finding.get("severity") if isinstance(finding, Mapping) else None
-            if severity == "fail":
+            if (
+                section == "residual_pii"
+                and isinstance(finding, Mapping)
+                and finding.get("source") in _MODEL_SOURCES
+                and severity in _SEVERITIES
+            ):
+                if _ner_blocks(finding, ner_findings):
+                    blocked.add(_NER_BLOCKED)
+            elif severity == "fail":
                 blocked.add(_FINDING_BLOCKED)
             elif severity not in _SEVERITIES or severity == "error":
                 blocked.add(_CHECK_ERROR)
@@ -231,8 +256,6 @@ def post_scan_verdict(report: Mapping[str, Any], *, ner_blocked: bool = False) -
             blocked.add(_CHECK_ERROR)
     if report.get("pass_failed_with"):
         blocked.add(_CHECK_ERROR)
-    if ner_blocked:
-        blocked.add(_NER_BLOCKED)
     rank = {ref: n for n, ref in enumerate(_ORDER)}
 
     def ordered(refs: set[ReasonRef]) -> tuple[ReasonRef, ...]:
@@ -244,11 +267,14 @@ def post_scan_verdict(report: Mapping[str, Any], *, ner_blocked: bool = False) -
 
 def block_location(report: Mapping[str, Any]) -> str:
     """Table, column and detector id of the first failing findings, and nothing else. A policy
-    finding has no detector, so it carries the fixed id `policy_validation`."""
+    finding has no detector, so it carries the fixed id `policy_validation`. A model row never
+    gives `finding_blocked`, so it is not named here."""
     spots = []
     for section, fixed in (("residual_pii", None), ("policy_validation", "policy_validation")):
         for f in _rows(report, section):
             if not (isinstance(f, Mapping) and f.get("severity") == "fail"):
+                continue
+            if section == "residual_pii" and f.get("source") in _MODEL_SOURCES:
                 continue
             table, column, detector = f.get("table"), f.get("column"), fixed or f.get("detector_id")
             if all(
@@ -283,3 +309,16 @@ class PostScanBlockedError(DecoyError):
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (type(self), (self.report, self.verdict))
+
+
+def raise_if_ner_blocked(report: Mapping[str, Any], *, ner_findings: str) -> None:
+    """The run's one enforcement (SCAN-ML Q1): raise `PostScanBlockedError`, with an empty
+    exception chain, when the NER predicate blocks. Any other blocking code rides along in
+    `codes` (and leads by `_ORDER`) but alone stays report-only on the run path."""
+    verdict = post_scan_verdict(report, ner_findings=ner_findings)
+    if _NER_BLOCKED not in verdict.codes:
+        return
+    # Lazy: the helper sits in the secret-provider package, which this module need not load.
+    from decoy_engine.secret_providers._errors import raise_bare
+
+    raise_bare(PostScanBlockedError(report, verdict))

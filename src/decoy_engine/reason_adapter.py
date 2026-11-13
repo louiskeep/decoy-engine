@@ -116,11 +116,6 @@ _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
         "PostScanRouteError",
         reasons.route.POST_SCAN_MODELS_UNSUPPORTED,
     ),
-    (
-        "decoy_engine.verification.postmask._model_findings",
-        "PostScanBlockedError",
-        reasons.post_scan.NER_BLOCKED,
-    ),
 )
 
 

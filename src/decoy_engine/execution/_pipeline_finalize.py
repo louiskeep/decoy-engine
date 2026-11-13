@@ -482,9 +482,9 @@ def compute_post_scan_integrity(
     spine honoured it, so a user who asked for the in-run check silently got
     none. Report-only, with one opt-in exception: under `post_scan.ner_findings: fail`
     an NER finding at `fail` or `error` raises `PostScanBlockedError` (carrying the
-    stamped report) before the run returns, so no caller receives the outputs. Regex
-    findings never fail the run (the CLI's `--post-validate-enforce` and `report
-    integrity` are the enforcing surfaces). `detectors` is the set `run_pipeline`
+    stamped report) before the run returns, so no caller receives the outputs. Other
+    findings alone never fail the run (the CLI's `--post-validate-enforce` and `report
+    integrity` are the enforcing surfaces); beside an NER block their code leads. `detectors` is the set `run_pipeline`
     loaded strictly at run start. Runs only on the full-frame finalize branch, which
     routing guarantees for an opted-in job (see `_sequential_eligible`), so the whole
     output is resident here.
@@ -492,7 +492,8 @@ def compute_post_scan_integrity(
     if not post_scan_integrity_requested(config):
         return
     from decoy_engine.verification import run_post_mask
-    from decoy_engine.verification.postmask._model_findings import raise_if_blocked
+    from decoy_engine.verification.postmask._blocked import raise_if_ner_blocked
+    from decoy_engine.verification.postmask._model_findings import ner_findings_mode
 
     table_kinds = execution_result.table_kinds or {}
     mask_tables = [
@@ -509,4 +510,4 @@ def compute_post_scan_integrity(
         detectors=detectors,
     )
     execution_result.quality_metrics["post_scan_integrity"] = report
-    raise_if_blocked(report, config)
+    raise_if_ner_blocked(report, ner_findings=ner_findings_mode(config))

@@ -37,7 +37,12 @@ def _summary() -> str:
 
 
 def _source(every: int = 2) -> pa.Table:
-    notes = s.notes_column(every, n=ROWS)
+    # An email in every fifth note gives `text_redact` something to change, so the policy check
+    # passes and an NER row is the only blocking finding.
+    notes = [
+        f"{cell} Reply to user{i}@example.com." if i % 5 == 0 else cell
+        for i, cell in enumerate(s.notes_column(every, n=ROWS))
+    ]
     frame = pd.DataFrame(
         {
             "notes": notes,
@@ -115,6 +120,7 @@ def _assert_safe(err: BaseException) -> None:
     assert getattr(err, "message", None) == _summary()
     assert err.__cause__ is None and err.__context__ is None
     assert getattr(err, "reason", None) == "post_scan.ner_blocked"
+    assert [c.code for c in err.verdict.codes] == ["ner_blocked"]
     clone = pickle.loads(pickle.dumps(err))  # noqa: S301 - our own bytes
     assert type(clone) is type(err) and str(clone) == str(err)
     assert clone.report == err.report
