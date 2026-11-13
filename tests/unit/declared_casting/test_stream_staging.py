@@ -227,11 +227,12 @@ class _ClosesThenFails:
         raise OSError(self._err, "no room")
 
 
-def _stage(tmp_path: Path, **extra: Any) -> Any:
+def _stage(tmp_path: Path, root: Any = None, **extra: Any) -> Any:
     from decoy_engine.declared_casting._stream import stage_typed_sources
 
-    root = tmp_path / "root"
-    root.mkdir(exist_ok=True)
+    if root is None:
+        root = tmp_path / "root"
+        root.mkdir(exist_ok=True)
     return stage_typed_sources(
         ["t"],
         {"t": _lazy(tmp_path)},
@@ -300,3 +301,33 @@ def test_a_source_read_enospc_is_not_a_scratch_capacity_failure(tmp_path: Path) 
         _stage(tmp_path, open_fn=failing_read)
     assert info.value.errno == errno.ENOSPC
     assert type(info.value) is OSError
+
+
+def _plain_writer_bytes(tmp_path: Path) -> bytes:
+    """What one plain `ParquetWriter` writes for the source's batches, in memory."""
+    sink = pa.BufferOutputStream()
+    writer: Any = None
+    for batch in _lazy(tmp_path).iter_batches(1000):
+        table = pa.Table.from_batches([batch])
+        writer = writer or pq.ParquetWriter(sink, table.schema)
+        writer.write_table(table)
+    writer.close()
+    return bytes(sink.getvalue().to_pybytes())
+
+
+@pytest.mark.parametrize("arm", ["path", "arena"])
+def test_each_root_arm_stages_the_same_bytes(tmp_path: Path, arm: str) -> None:
+    """The subset stage hands a path (until T18) and declared staging an arena; both stage the
+    bytes a plain writer gives, in a file under the root they were handed."""
+    from decoy_engine.fileaccess import ScratchArena
+
+    expected = _plain_writer_bytes(tmp_path)
+    if arm == "path":
+        staged = Path(_stage(tmp_path)["t"].path)
+        assert staged.parent == tmp_path / "root"
+        assert staged.read_bytes() == expected
+        return
+    with ScratchArena.open(under=tmp_path / "arena") as arena:
+        staged = Path(_stage(tmp_path, root=arena)["t"].path)
+        assert staged.parent == Path(arena.local_path())
+        assert staged.read_bytes() == expected
