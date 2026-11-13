@@ -32,6 +32,7 @@ from decoy_engine.config import (
 )
 from decoy_engine.execution._chunked_input import SourceFacts, capture_source_facts, check_opened
 from decoy_engine.execution._pipeline_sources import materialize_source
+from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
 from decoy_engine.profile import LazySource
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
@@ -264,10 +265,17 @@ def _resident(outputs: Mapping[str, pa.Table], table_kinds: Mapping[str, str]) -
 
 def _deferred(ctx: PipelineRunContext, route: str) -> bool:
     """Whether this run's inputs cannot be read back by the gate before the route runs: a loader
-    supplies tables nothing can re-read, and a bounded route casts declared columns per chunk.
-    Outputs that are not resident are found later, when the gate is asked to run."""
-    return ctx.source_loader is not None or (
-        route != "full_frame" and bool(lexeme_columns_by_table(ctx.config))
+    supplies tables nothing can re-read, a lazy table that declares transforms is transformed
+    inside the route, and a bounded route casts declared columns per chunk. Outputs that are not
+    resident are found later, when the gate is asked to run."""
+    lazy_transformed = any(
+        isinstance(ctx.caller_sources.get(name), LazySource)
+        for name in transform_bearing_mask_tables(ctx.config)
+    )
+    return (
+        ctx.source_loader is not None
+        or lazy_transformed
+        or (route != "full_frame" and bool(lexeme_columns_by_table(ctx.config)))
     )
 
 

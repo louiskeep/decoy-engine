@@ -216,7 +216,7 @@ def test_the_memory_limit_is_the_runs_budget_share_with_a_working_floor(
 def _ctx(loader: object | None = None) -> Any:
     from types import SimpleNamespace
 
-    return SimpleNamespace(source_loader=loader, config={})
+    return SimpleNamespace(source_loader=loader, config={}, caller_sources={})
 
 
 def test_a_loader_supplied_input_defers_on_every_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,3 +231,17 @@ def test_declared_casting_defers_on_a_bounded_route_only(monkeypatch: pytest.Mon
     assert _post_scan._deferred(_ctx(), "full_frame") is False
     assert _post_scan._deferred(_ctx(), "sequential") is True
     assert _post_scan._deferred(_ctx(), "out_of_core") is True
+
+
+def test_a_lazy_table_that_declares_transforms_defers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from decoy_engine.profile import LazySource
+
+    lazy = LazySource.__new__(LazySource)
+    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {})
+    monkeypatch.setattr(_post_scan, "transform_bearing_mask_tables", lambda config: {"t"})
+    held = SimpleNamespace(source_loader=None, config={}, caller_sources={"t": lazy})
+    resident = SimpleNamespace(source_loader=None, config={}, caller_sources={"t": pa.table({})})
+    assert _post_scan._deferred(held, "sequential") is True
+    assert _post_scan._deferred(resident, "sequential") is False
