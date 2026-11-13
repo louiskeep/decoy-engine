@@ -4,7 +4,7 @@ Module-size decomposition (tests/sentry/test_module_size.py ALLOWLIST):
 ``synthesize.py``'s own docstring has flagged the `statistical`/`derived`/
 `formula` per-type dispatch branches as the standing decomposition target
 since DPS Scope B (2026-07-22); this module carries the `statistical`
-branch out, mirroring the existing `transforms/derived_aggregate.py` split
+branch out (with the per-table fidelity warn-gate), mirroring the existing `transforms/derived_aggregate.py` split
 the same allowlist entry names as precedent.
 
 Behavior is unchanged: this is a pure code move, not a rewrite.
@@ -121,6 +121,40 @@ def arrow_table(
         else:
             arrays[name] = values
     return pa.table(arrays)
+
+
+def warn_on_table_fidelity(
+    config: dict[str, Any],
+    generate_columns: list[dict[str, Any]],
+    data: dict[str, list[Any]],
+    *,
+    table_name: str,
+    statistical_specs: dict[tuple[str, str], StatisticalSpec],
+    snapshot_index_for_column: dict[tuple[str, str], int],
+    snapshot_artifacts: list[dict[str, Any]],
+    on_warning: Callable[[QualityWarning], None] | None,
+) -> None:
+    """Generation-time fidelity warn-gate for one finished table (deferred follow-up 5,
+    2026-06-12): score statistical columns against their source snapshot and warn below
+    global_settings.fidelity_warn_threshold. Warn-only; output bytes are untouched. Lazy import
+    mirrors the `statistical` dispatch so non-statistical configs never pay it."""
+    if not any(c.get("type") == "statistical" for c in generate_columns):
+        return
+    from decoy_engine.generation._fidelity_gate import (
+        fidelity_warn_threshold,
+        warn_on_low_fidelity,
+    )
+
+    warn_on_low_fidelity(
+        generate_columns,
+        data,
+        table_name=table_name,
+        threshold=fidelity_warn_threshold(config),
+        statistical_specs=statistical_specs,
+        snapshot_index_for_column=snapshot_index_for_column,
+        snapshot_artifacts=snapshot_artifacts,
+        on_warning=on_warning,
+    )
 
 
 def warn_on_unseen_parents(

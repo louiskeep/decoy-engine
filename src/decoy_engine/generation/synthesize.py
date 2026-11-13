@@ -42,6 +42,7 @@ from decoy_engine.generation._numeric_typing import numeric_plan, restore_declar
 from decoy_engine.generation._statistical_column import (
     arrow_table,
     statistical_generate,
+    warn_on_table_fidelity,
     warn_on_unseen_parents,
 )
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
@@ -215,27 +216,16 @@ def _generate_tables_from_config(
 
             fill_referenced_formula_columns(gcols, data, seed, derive_key, table_name=name)
         tbl = arrow_table(data, table_name=name, statistical_specs=statistical_specs, columns=gcols)
-        # Generation-time fidelity warn-gate (deferred follow-up 5,
-        # 2026-06-12): score statistical columns against their source
-        # snapshot and warn below global_settings.fidelity_warn_threshold.
-        # Warn-only; output bytes are untouched. Lazy import mirrors the
-        # `statistical` dispatch so non-statistical configs never pay it.
-        if any(c.get("type") == "statistical" for c in gcols):
-            from decoy_engine.generation._fidelity_gate import (
-                fidelity_warn_threshold,
-                warn_on_low_fidelity,
-            )
-
-            warn_on_low_fidelity(
-                gcols,
-                data,
-                table_name=name,
-                threshold=fidelity_warn_threshold(config),
-                statistical_specs=statistical_specs,
-                snapshot_index_for_column=snapshot_index_for_column,
-                snapshot_artifacts=snapshot_artifacts,
-                on_warning=on_warning,
-            )
+        warn_on_table_fidelity(
+            config,
+            gcols,
+            data,
+            table_name=name,
+            statistical_specs=statistical_specs,
+            snapshot_index_for_column=snapshot_index_for_column,
+            snapshot_artifacts=snapshot_artifacts,
+            on_warning=on_warning,
+        )
         pools[name] = tbl
         out[name] = tbl
     return with_aggregates(config, out)
@@ -378,20 +368,11 @@ def _generate_column(
         # Parity tests wrap the scalar generator by this module's name for it.
         values = aggregate_values(generate_derived_aggregate_column, col, n, generated or {})
     elif kind in ("grouped_series", "windowed_date", "group_key"):
-        from decoy_engine.generation._grouped_windowed_generators import (
-            _group_key_generate,
-            _grouped_series_generate,
-            _windowed_date_generate,
-        )
+        from decoy_engine.generation._grouped_windowed_generators import grouped_windowed_values
 
-        if kind == "grouped_series":
-            values = _grouped_series_generate(col, n, seed, generated or {})
-        elif kind == "windowed_date":
-            values = _windowed_date_generate(
-                col, n, seed, generated or {}, pools, siblings, reference_date=reference_date
-            )
-        else:
-            values = _group_key_generate(col, n, seed, generated or {})
+        values = grouped_windowed_values(
+            col, n, seed, generated or {}, pools, siblings, reference_date=reference_date
+        )
     else:
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that
