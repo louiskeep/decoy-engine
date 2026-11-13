@@ -257,3 +257,11 @@ def test_a_coarse_key_past_the_nanosecond_range_is_still_compared(
     """Ten billion seconds does not fit int64 nanoseconds; the scan must still count the one
     child (2 ns) that matches no parent, not refuse the key."""
     assert _gate_orphans(tmp_path, parent, child) == 1
+
+
+@pytest.mark.parametrize("kind", [pa.float64(), pa.date32(), pa.bool_()])
+def test_a_typed_parent_beside_a_null_typed_child_is_checked(
+    tmp_path: Path, kind: pa.DataType
+) -> None:
+    """A zero-row run can type an empty child key as null; the parent's plain type is kept."""
+    assert _gate_orphans(tmp_path, pa.array([], kind), pa.array([], pa.null())) == 0

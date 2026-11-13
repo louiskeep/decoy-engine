@@ -54,12 +54,12 @@ def _common(family: str, typed: Sequence[pa.DataType]) -> str | pa.DataType:
         return "HUGEINT" if any(value_type(t) == pa.uint64() for t in typed) else "BIGINT"
     if family == "text":
         return pa.string()
+    if family == "other":  # one type, beside null-typed or dictionary ends
+        return first
     unit = max((value_type(t).unit for t in typed), key=_UNITS.index)
     if family == "tz_timestamp":
         return pa.timestamp(unit, tz=first.tz)
-    if family == "duration":
-        return pa.duration(unit)
-    return first
+    return pa.duration(unit)
 
 
 _COUNT: Final = pa.decimal128(38, 0)
