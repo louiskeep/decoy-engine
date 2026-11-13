@@ -365,3 +365,35 @@ def test_every_engine_path_rewrite_goes_through_the_one_helper() -> None:
     assert "config_relative" in inspect.getsource(context.with_quarantine_path)
     assert "config_relative" in inspect.getsource(capacity._resolved_config_copy)
     assert not hasattr(capacity, "_resolve_source_path")
+
+
+# DUP-DEFECTS E1 (A5): a snapshot with a byte that is not UTF-8 is the same refusal as a truncated one
+
+
+def _bad_snapshot_config(tmp_path: Path, content: bytes) -> dict[str, Any]:
+    (tmp_path / "snap.json").write_bytes(content)
+    config = stat_config()
+    config["tables"][0]["generate_columns"][0]["snapshot_file"] = str(tmp_path / "snap.json")
+    return config
+
+
+def test_at_e1_2_compile_wraps_a_non_utf8_snapshot_like_a_truncated_one(tmp_path: Path) -> None:
+    code, text = _error(_bad_snapshot_config(tmp_path, b'{"a": "\xff"}'))
+    assert code == UNREADABLE
+    assert "snap.json" in text
+    assert not [leak for leak in ("\xff", "0xff", "\u00ff", "position", "codec") if leak in text]
+
+
+def test_at_e1_5_compile_truncated_snapshot_unchanged(tmp_path: Path) -> None:
+    code, text = _error(_bad_snapshot_config(tmp_path, b'{"a": '))
+    assert code == UNREADABLE
+    assert "could not be read: Expecting value" in text
+
+
+def test_at_e1_6_load_snapshot_second_site_raises_the_same_code(tmp_path: Path) -> None:
+    config = _bad_snapshot_config(tmp_path, b'{"a": "\xff"}')
+    with pytest.raises(_spec.StatisticalSpecError) as caught:
+        _spec._load_snapshot(config["tables"][0]["generate_columns"][0]["snapshot_file"])
+    assert caught.value.code == UNREADABLE
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
