@@ -133,7 +133,7 @@ def test_forced_out_of_core_refuses_a_derive_chain_with_the_coded_reason(tmp_pat
     assert "out_of_core_dynamic_output_type_unsupported" in str(caught.value)
 
 
-def test_ordering_keeps_known_reads_when_the_when_predicate_is_unreadable() -> None:
+def test_ordering_keeps_value_reads_when_the_when_predicate_is_unreadable() -> None:
     from decoy_engine.execution._column_access import scalar_creating_reads
 
     entry = {
@@ -144,3 +144,25 @@ def test_ordering_keeps_known_reads_when_the_when_predicate_is_unreadable() -> N
     }
     assert scalar_creating_reads(entry) == {"z_driver"}
     assert _created([entry]) == frozenset()  # admission still refuses the unreadable entry
+
+
+def test_a_when_predicate_adds_no_ordering_edge() -> None:
+    from decoy_engine.execution._column_access import scalar_creating_reads
+
+    entry = {**_derived("aa_tgt", "z_driver + 1"), "when": "b_gate > 0"}
+    assert scalar_creating_reads(entry) == {"z_driver"}
+
+
+def test_a_when_predicate_naming_a_dependent_does_not_form_a_cycle(tmp_path: Any) -> None:
+    # `a` is gated on `g` while `g` is derived from `a`. The gate reads `g` as it stands when
+    # `a` runs (its source value), so ordering adds only g-after-a and the run succeeds.
+    config = _config(tmp_path, "derived")
+    config["tables"][0]["columns"] = [
+        {"name": "d", "strategy": "passthrough"},
+        {"name": "b", "strategy": "passthrough"},
+        {**_derived("a", "a + 10"), "when": "g == 'x'"},
+        _derived("g", "a"),
+    ]
+    config = PipelineConfig.model_validate(config).model_dump()
+    out = run_pipeline(config, {"t": SRC}, **KW).outputs["t"]
+    assert out.column("a").to_pylist() == [11, 12, 3, 4]

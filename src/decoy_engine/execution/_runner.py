@@ -339,7 +339,6 @@ def _masked_driver_columns(node: WorkNode) -> frozenset[str]:
         "strategy": plan_slice.strategy,
         "provider_config": provider_config_to_dict(plan_slice.provider_config),
         "coherent_with": list(plan_slice.coherent_with),
-        "when": plan_slice.when,
     }
     return scalar_creating_reads(entry)
 

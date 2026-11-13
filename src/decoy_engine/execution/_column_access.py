@@ -388,16 +388,17 @@ def _with_when(access: ColumnAccess, entry: Mapping[str, Any]) -> ColumnAccess:
 def scalar_creating_reads(entry: Mapping[str, Any]) -> frozenset[str]:
     """The sibling columns a scalar entry that creates its own target reads, else empty.
 
-    The one read set both admission (`created_columns`) and execution ordering use, so a
-    column accepted as created is always ordered after the columns it reads. An entry that
-    does not create its target orders after nothing. Reads that cannot be named (`reads_unknown`)
-    never drop the ones that can: admission refuses such an entry, but ordering must keep every
-    known edge so a dependent never reads a driver before it is masked.
+    Execution orders the entry after these, from the same declaration `created_columns`
+    admits by, so a created column runs after every column its value reads. An entry that does
+    not create its target orders after nothing. Reads that cannot be named (`reads_unknown`)
+    never drop the ones that can, so a dependent never reads a driver before it is masked.
+    A `when:` predicate adds no edge: the gate reads the frame as it stands when the entry
+    runs, and ordering on it would change which rows match and could form a new cycle.
     """
     declare = SURFACE_DECLARATIONS.get(f"scalar:{entry.get('strategy')}")
     if declare is None:
         return frozenset()
-    access = _with_when(declare(entry), entry)
+    access = declare(entry)
     if access.own_target != OWN_TARGET_CREATES:
         return frozenset()
     return access.reads - {entry.get("name")}
