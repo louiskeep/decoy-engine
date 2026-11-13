@@ -393,7 +393,7 @@ class VaultWriter:
 
 def _publish(out: OutputDir, data: bytes) -> None:
     """Publish via a 0600 stage: fsync, exclusive `link(2)` (compare-and-set), directory fsync
-    (commit point). Fixed failure text, raised after the handlers; only the stage is removed."""
+    (commit point). Fixed failure text, raised after the handlers; only the stage is removed (attempted; a failed removal leaves the encrypted 0600 stage)."""
     failure = ""
     with out.begin("file", "exclusive", label="vault") as txn:
         fd = txn.create_file("vault")  # step 1: its errors keep the policy's shape

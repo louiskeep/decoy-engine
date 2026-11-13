@@ -214,3 +214,34 @@ def test_run_pipeline_refuses_a_scopeless_writer_before_reading_a_source(tmp_pat
     assert exc.value.code == "token_vault_derivation_unsupported"
     assert vault.lookups == [] and vault.puts == []
     assert list(tmp_path.iterdir()) == []
+
+
+class _EchoingVault(FakeVault):
+    """A vault whose failure carries the plaintext, like a raw driver error would."""
+
+    def __init__(self, fail_on: str) -> None:
+        super().__init__(scope=SCOPE_A)
+        self._fail_on = fail_on
+
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        if self._fail_on == "lookup":
+            raise RuntimeError(f"lookup failed for {plaintext}")
+        return super().lookup_existing(namespace, plaintext)
+
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        if self._fail_on == "write":
+            raise RuntimeError(f"put failed for {plaintext} -> {token}")
+        return super().put(namespace, plaintext, token)
+
+
+@pytest.mark.parametrize("fail_on", ["lookup", "write"])
+def test_a_vault_failure_leaves_no_cause_and_no_context(fail_on: str) -> None:
+    """The raw vault error echoes the value; neither `from None` nor an in-handler raise may keep
+    it reachable, so the coded error is raised after the handler has left."""
+    secret = "4111111111111111"
+    with pytest.raises(ExecutionError) as exc:
+        _run(pd.DataFrame({"pan": [secret]}), vault=_EchoingVault(fail_on))
+    assert exc.value.code == "tokenize_vault_error"
+    assert exc.value.__cause__ is None
+    assert exc.value.__context__ is None
+    assert secret not in str(exc.value)

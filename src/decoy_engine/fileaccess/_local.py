@@ -26,6 +26,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import BinaryIO, Literal, TextIO
 
+from decoy_engine.fileaccess._component import validate_component
 from decoy_engine.fileaccess._errors import deny
 from decoy_engine.fileaccess._output import (
     CREATES_PARENTS,
@@ -337,6 +338,9 @@ class LocalOutputTxn(_LocalStageDir):
         """Open the parent, then create the stage beside the leaf through the private-file
         choke point (mode exactly 0600). A failure here leaves nothing and keeps the ambient
         error shape: the class and the target's path."""
+        # Before any syscall: the shared publish validates the leaf too, but only after the
+        # stage exists, and a refusal there would leave it.
+        validate_component(self._target.name, "fileaccess.stage")
         name = f"{STAGE_PREFIX[self._label]}{secrets.token_hex(6)}"
         failed: OSError | None = None
         try:

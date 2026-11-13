@@ -83,6 +83,7 @@ SENTRIES = (
     "tests/sentry/test_table_kind_classifier.py",
     "tests/sentry/test_unified_backend_map.py",
     "tests/sentry/test_validate_no_mutation.py",
+    "tests/sentry/test_vault_writer_routes.py",
     "tests/sentry/test_wave_b_no_registry_version_literal.py",
     "tests/sentry/ci_scan/test_identity.py",
     "tests/sentry/layout/test_import_layers.py",

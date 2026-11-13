@@ -351,6 +351,16 @@ def test_a_link_failure_is_fatal_even_with_an_unsupported_style_errno(
     assert not route.leaf.exists() and _stages(route.directory) == []
 
 
+def test_an_invalid_leaf_is_refused_before_a_stage_exists(tmp_path: Path) -> None:
+    """The leaf is validated before the stage is created, so a refusal leaves nothing behind
+    (a 256-byte name is not a valid component)."""
+    writer = _Route("ambient", tmp_path).writer()
+    with pytest.raises(Exception) as exc:
+        writer.write(str(tmp_path / ("x" * 256)))
+    assert not isinstance(exc.value, VaultError) or exc.value.code != "vault_exists"
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_parent_that_cannot_be_opened_keeps_the_ambient_error_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

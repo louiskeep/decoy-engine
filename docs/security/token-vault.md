@@ -110,7 +110,8 @@ the failure would surface as an opaque `vault_key_mismatch`.
    stage is `fchmod`ed back to exactly `0600` before the first byte; the
    published vault is a hard link of the stage and has the same mode), writes and `fsync`s it,
    `link(2)`s it to the vault name, `fsync`s the directory (the commit
-   point) and removes the stage name. A crash at any step leaves either no
+   point) and attempts to remove the stage name (a failed removal leaves only the
+   encrypted `0600` stage; the vault is kept). A crash at any step leaves either no
    vault or a complete one, never a partial one. A directory `fsync` that
    fails with `EINVAL`, `EBADF` or `ENOTSUP` means the filesystem cannot sync a
    directory, and the publish goes on (as PostgreSQL's `fsync_fname_ext`

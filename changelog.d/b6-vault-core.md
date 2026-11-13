@@ -28,7 +28,8 @@ Breaking: a vault writer is refused with a sink or a chunked entry, a `TokenVaul
 - Breaking, pre-GA: the file vault is published privately, durably and exclusively.
   `VaultWriter.write` (a path string under the ambient policy, or a policy `OutputDir`) creates a
   stage beside the vault through the private-file creator (mode `0600` whatever the umask), writes
-  and fsyncs it, links it to the vault name, fsyncs the directory and removes the stage. An
+  and fsyncs it, links it to the vault name, fsyncs the directory and attempts to remove the stage (a failed removal leaves only the
+  encrypted 0600 stage). An
   existing vault is refused with `runtime/vault_exists` (the ambient policy used to overwrite it
   in place, writing through hard links). A write, fsync or link failure is
   `runtime/vault_commit_failed`. Both texts are fixed and name no path. No failure path removes a

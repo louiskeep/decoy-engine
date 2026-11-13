@@ -212,18 +212,27 @@ class TokenizeStrategyHandler:
             # The vault's plaintext key and the derive input are the SAME string, so
             # lookup/reversal and the token stay consistent with each other.
             plaintext = unicodedata.normalize("NFC", str(value))
+            # The coded error is raised after the handler has left, so neither `__cause__` nor
+            # `__context__` can hold the vault's own (value-bearing) exception.
+            existing = None
+            failed = False
             try:
                 existing = vault.lookup_existing(namespace, plaintext)
             except Exception:
-                raise _vault_error("lookup") from None
+                failed = True
+            if failed:
+                raise _vault_error("lookup")
             if existing is not None:
                 out.append(existing)  # the vault is authoritative for identity
                 continue
             token = token_from(keyed, namespace, plaintext)
+            stored = None
             try:
                 stored = vault.put(namespace, plaintext, token)
             except Exception:
-                raise _vault_error("write") from None
+                failed = True
+            if failed:
+                raise _vault_error("write")
             # The vault's committed token wins a race; a writer that returns
             # nothing (the pre-0.16 Protocol) must not publish a null/unmapped token.
             if not isinstance(stored, str) or not stored:

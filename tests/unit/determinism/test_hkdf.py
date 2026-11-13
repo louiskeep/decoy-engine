@@ -159,7 +159,7 @@ class TestEngineVectorCorpus:
     The corpus was captured from the pre-swap function: the engine salts (determinism,
     keyprovider, the 32-zero-byte salt of `context._hkdf_sha256` and `provenance.py`), short,
     32-byte and empty IKMs, empty and long info, and lengths across one, two and many blocks up
-    to the RFC 5869 maximum.
+    to the RFC 5869 maximum, and the zero length (expand and one-shot).
     """
 
     def test_engine_vectors_are_unchanged_by_the_pyca_swap(self) -> None:

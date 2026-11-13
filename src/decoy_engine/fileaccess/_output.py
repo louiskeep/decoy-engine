@@ -247,8 +247,9 @@ def publish_exclusive_durable(parent_fd: int, stage_name: str, leaf: str) -> Non
     compare-and-set), fsync the directory (the commit point), then drop the stage name.
 
     Raises `FileExistsError` for an existing leaf and an errno-only `OSError` for any other
-    failure. The stage is removed on every path; a leaf that was linked is never removed, so a
-    directory fsync failure reports an error with the vault kept."""
+    failure. Removal of the stage is attempted on every path (a failed removal is swallowed and leaves
+    only the encrypted 0600 stage); a leaf that was linked is never removed, so a directory
+    fsync failure reports an error with the vault kept."""
     validate_component(stage_name, _CREATOR_KEY)
     validate_component(leaf, _CREATOR_KEY)
     code = 0
