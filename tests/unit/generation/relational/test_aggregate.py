@@ -333,6 +333,8 @@ def _grandparent_reader(target: str) -> tuple[dict[str, Any], tuple[int, int]]:
     """`customers.spend` aggregates the `orders` column `target` of each customer's orders."""
     config = per_parent()
     config["tables"][0]["generate_columns"].insert(1, ref("cust", "customers"))
+    # An aggregate's input must hold numbers, so the parent's counter declares an int type.
+    config["tables"][0]["generate_columns"][2] = {**ORDER_AMOUNT, "output_type": "int"}
     spend = {"name": "spend", "type": "derived_aggregate", "op": "sum", "column": target}
     spend.update(from_table="orders", via="cust")
     customers = table("customers", 4, [{"name": "id", "type": "sequence", "start": 1}, spend])

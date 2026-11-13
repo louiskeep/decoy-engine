@@ -42,6 +42,11 @@ as an earlier column. The run fills the column only after every table exists, so
 that resolves to one (a same-table reader, a child's anchor, another aggregate, a reference) is
 refused with `config.generate_aggregate_read_before_fill`: it would read the placeholder, not
 the value. `null_probability` on it is refused because the fill would overwrite the nulls.
+The child column must hold numbers as numeric typing types it for an aggregate, a reader that
+keeps it text: its declared `output_type`, else the type its generator makes as text
+(`_generate_type_checks.numeric_as_text_read`, after `reference_root`). Any other column is
+refused with `config.generate_aggregate_input_not_numeric` before any data is read, so a
+validated config never sums text.
 
 A problem carries its reason code only: a bound, weight or key never reaches a message.
 """
@@ -54,6 +59,7 @@ from typing import Any
 
 from decoy_engine import _capacity, reasons
 from decoy_engine.config._generate_options import GENERATE_OPTIONS, OptionSpec
+from decoy_engine.config._generate_type_checks import numeric_as_text_read
 from decoy_engine.config._tables import generate_columns_of
 from decoy_engine.expressions import compile_expr
 
@@ -66,10 +72,13 @@ __all__ = [
     "parent_key_problem",
     "parent_lookup_problems",
     "per_parent_problems",
+    "reference_root",
     "self_reference_problems",
 ]
 
 Problem = tuple[tuple[str | int, ...], str]
+# A problem whose message adds value-free names to the code's summary.
+NamedProblem = tuple[tuple[str | int, ...], str, str]
 
 _BOUNDS_CONFLICT = str(reasons.config.GENERATE_PER_PARENT_BOUNDS_CONFLICT)
 _FITTED_CONFLICT = str(reasons.config.GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT)
@@ -82,6 +91,7 @@ _LOOKUP_SELF = str(reasons.config.GENERATE_PARENT_LOOKUP_SELF_REFERENCE)
 _RANGE = str(reasons.config.GENERATE_OPTION_RANGE)
 _UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
 _READ_BEFORE_FILL = str(reasons.config.GENERATE_AGGREGATE_READ_BEFORE_FILL)
+_NOT_NUMERIC = str(reasons.config.GENERATE_AGGREGATE_INPUT_NOT_NUMERIC)
 
 
 def _positive(value: Any) -> int:
@@ -280,17 +290,68 @@ def _aggregate_problem(
     child = by_name.get(col.get("from_table"))
     columns = generate_columns_of(child) if child is not None else []
     via = next((c for c in columns if isinstance(c, Mapping) and c.get("name") == col["via"]), None)
-    if via is None:
-        return None
-    if is_self_reference(child.get("name") if child else None, via):
-        return ("via", _LOOKUP_SELF)
-    if via.get("type") != "reference" or via.get("reference_table") != table_name:
-        return ("via", _LOOKUP_KEY)
-    # The key is the parent table's own column, finished before the post-pass, but the rule is
-    # the one every parent lookup follows: an earlier non-null `sequence`.
-    if parent_key_problem(earlier, via.get("reference_column"), _LOOKUP_KEY):
-        return ("via", _LOOKUP_KEY)
+    if via is not None:
+        if is_self_reference(child.get("name") if child else None, via):
+            return ("via", _LOOKUP_SELF)
+        if via.get("type") != "reference" or via.get("reference_table") != table_name:
+            return ("via", _LOOKUP_KEY)
+        # The key is the parent table's own column, finished before the post-pass, but the rule
+        # is the one every parent lookup follows: an earlier non-null `sequence`.
+        if parent_key_problem(earlier, via.get("reference_column"), _LOOKUP_KEY):
+            return ("via", _LOOKUP_KEY)
+    if not _input_numeric(by_name, col.get("from_table"), col.get("column")):
+        return ("column", _NOT_NUMERIC)
     return None
+
+
+def _column_of(table: Mapping[str, Any] | None, name: Any) -> Mapping[str, Any] | None:
+    columns = generate_columns_of(table) if table is not None else []
+    return next((c for c in columns if isinstance(c, Mapping) and c.get("name") == name), None)
+
+
+def reference_root(
+    tables: Mapping[Any, Mapping[str, Any]], key: tuple[str, str]
+) -> tuple[str, str]:
+    """Follow `reference` columns from `key` to the column that decides the values.
+
+    `tables` maps a table name to its config; a cycle stops where it loops.
+    """
+    seen: set[tuple[str, str]] = set()
+    while key not in seen:
+        seen.add(key)
+        col = _column_of(tables.get(key[0]), key[1])
+        if col is None or col.get("type") != "reference":
+            return key
+        key = (str(col.get("reference_table")), str(col.get("reference_column")))
+    return key
+
+
+def _input_numeric(by_name: Mapping[Any, Mapping[str, Any]], child: Any, column: Any) -> bool:
+    """Whether the child column a per-parent aggregate reads holds numbers when it is read.
+
+    A missing child column is the plan check's refusal, and another per-parent aggregate is
+    `generate_aggregate_read_before_fill`'s, not this one.
+    """
+    if not isinstance(child, str) or not isinstance(column, str):
+        return True
+    if _column_of(by_name.get(child), column) is None:
+        return True
+    root = reference_root(by_name, (child, column))
+    source = _column_of(by_name.get(root[0]), root[1])
+    if source is not None and is_per_parent_aggregate(source):
+        return True
+    return source is not None and numeric_as_text_read(source)
+
+
+def _named(
+    where: tuple[str | int, ...], col: Mapping[str, Any], found: tuple[str, str]
+) -> Problem | NamedProblem:
+    """The problem for `found`, with the child table, column and aggregate named for the input."""
+    if found[1] != _NOT_NUMERIC:
+        return ((*where, found[0]), found[1])
+    names = (str(col.get("from_table")), str(col.get("column")), str(col.get("name")))
+    detail = "Table {!r}, column {!r}, aggregate {!r}.".format(*names)
+    return ((*where, found[0]), found[1], detail)
 
 
 def _reads_aggregate(
@@ -307,12 +368,13 @@ def _reads_aggregate(
     return None
 
 
-def aggregate_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
+def aggregate_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem | NamedProblem]:
     """Per-parent aggregate problems of every generate column of `tables`.
 
     `tables` are the config's tables as mappings with `name` and `generate_columns`. Each
-    `derived_aggregate` is checked for its companion keys, nulls and lookup key; every other
-    column, in any table, is checked for an input that resolves to a per-parent aggregate.
+    `derived_aggregate` is checked for its companion keys, nulls, lookup key and numeric input;
+    every other column, in any table, is checked for an input that resolves to a per-parent
+    aggregate. A non-numeric input's problem also names the child table, column and aggregate.
     """
     by_name = {t.get("name"): t for t in tables}
     filled_late = {
@@ -321,7 +383,7 @@ def aggregate_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
         for c in generate_columns_of(t)
         if isinstance(c, Mapping) and is_per_parent_aggregate(c)
     }
-    problems: list[Problem] = []
+    problems: list[Problem | NamedProblem] = []
     for t_idx, table in enumerate(tables):
         columns = generate_columns_of(table)
         for c_idx, col in enumerate(columns):
@@ -333,7 +395,7 @@ def aggregate_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
                 found = _aggregate_problem(col, table.get("name"), columns[:c_idx], by_name)
             option = _reads_aggregate(table, col, filled_late) if filled_late else None
             if found is not None:
-                problems.append(((*where, found[0]), found[1]))
+                problems.append(_named(where, col, found))
             elif option is not None:
                 problems.append(((*where, option), _READ_BEFORE_FILL))
     return problems

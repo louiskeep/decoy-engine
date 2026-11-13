@@ -16,6 +16,13 @@ A generated `derived_aggregate` column can now aggregate each parent row's own c
   self-reference is refused (`config/generate_parent_lookup_self_reference`). `via` without
   `from_table` is an unknown option, and `from_table` without `via` is missing.
   `null_probability` on the aggregate is refused (`config/generate_per_parent_null_conflict`).
+- The child column must hold numbers as numeric typing types it for an aggregate: a declared
+  numeric `output_type` (`int` or `decimal(n)`), else a `distribution`, or a `categorical` or
+  `constant` of numbers, or a `reference` copying one. Any other child column is refused at
+  validate, before any data is read (`config/generate_aggregate_input_not_numeric`), including
+  a `sequence` or `faker` integer column, which an aggregate reads as text, and a column whose
+  values the config does not type (`derived`, `formula`, `lookup`) without a numeric
+  `output_type`. The message names the child table, the column and the aggregate.
 - Any column input, child `anchor` or `reference` that names a per-parent aggregate is refused
   at validate (`config/generate_aggregate_read_before_fill`): it would read the column before it
   is filled.

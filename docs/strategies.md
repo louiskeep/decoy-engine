@@ -1589,9 +1589,13 @@ customer's order count.
 - The column is filled after every table has been generated, and the returned parent table holds
   the filled values. No other column can read it: a same-table reader, a child's `anchor`, a
   reference, a formula or another aggregate that names it is refused at validate.
-- The child's values are read as the child table holds them. A `sequence` or `faker` child
-  column read by an aggregate stays text, as for the same-table form, so aggregate a numeric
-  column such as `distribution`, `categorical` or `constant`.
+- The child column must hold numbers when the aggregate reads it. Numeric typing keeps a
+  `sequence` or `faker` column text while an aggregate reads it, so such a column is refused at
+  validate, before any data is read, as is a text `categorical` or `constant` and a column whose
+  values the config does not type (`derived`, `formula`, `lookup`, ...). Aggregate a
+  `distribution`, a `categorical` or `constant` of numbers, a `reference` copying one, or give
+  the child column a numeric `output_type` (`int` or `decimal(n)`). The refusal names the child
+  table, the column and the aggregate. The same-table form is unchanged.
 - Without `from_table`, `column` is an earlier column of the same table, as before.
 
 | When | Refused | Code |
@@ -1602,6 +1606,7 @@ customer's order count.
 | Validate | `from_table` without `via` | `missing` |
 | Validate | `null_probability` on the aggregate | `config.generate_per_parent_null_conflict` |
 | Validate | any column input or reference that names the aggregate | `config.generate_aggregate_read_before_fill` |
+| Validate | the child `column` does not hold numbers (see above) | `config.generate_aggregate_input_not_numeric` |
 | Plan compile | `from_table` names no table, or `column` or `via` is not a column of it | `plan.generate_column_forward_reference` |
 | Pinned compile | any per-parent aggregate | `plan.pinned_relational_option_unsupported` |
 | Pinned execute | a per-parent aggregate in a plan that did not come from pinned compile | `runtime.pinned_relational_option_unsupported` (a `GenerationError`) |

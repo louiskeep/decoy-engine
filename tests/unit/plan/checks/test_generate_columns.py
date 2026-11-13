@@ -224,14 +224,14 @@ def test_every_list_admission_accepts_is_accepted() -> None:
     from hypothesis import given, settings
     from hypothesis import strategies as st
 
-    from decoy_engine.generation._admission import _categorical_type
+    from decoy_engine.config import categorical_arrow_type
 
     atoms = st.one_of(st.text(max_size=3), st.integers(-5, 5), st.floats(-5, 5), st.booleans())
 
     @settings(max_examples=60, deadline=None)
     @given(st.lists(atoms, min_size=1, max_size=5))
     def prop(categories: list[Any]) -> None:
-        if _categorical_type(cat(categories))[0] is not None:
+        if categorical_arrow_type(cat(categories))[0] is not None:
             run_config_only_checks(cfg([cat(categories)]))
 
     prop()

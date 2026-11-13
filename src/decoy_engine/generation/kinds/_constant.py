@@ -9,24 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
-import pyarrow as pa
+from decoy_engine.config import constant_arrow_type
+
+__all__ = [
+    "ConstantStream",
+    "constant_arrow_type",
+    "constant_payload_bound",
+    "constant_values",
+]
 
 _UTF8_MAX_BYTES_PER_CHAR = 4
-
-
-def constant_arrow_type(col: dict[str, Any]) -> pa.DataType:
-    """Arrow type of one homogeneous value, by the rule `_categorical_type` uses for categories.
-
-    A bool is tested before an int because `bool` is an `int` subclass.
-    """
-    value = col.get("value")
-    if isinstance(value, bool):
-        return pa.bool_()
-    if isinstance(value, int):
-        return pa.int64()
-    if isinstance(value, float):
-        return pa.float64()
-    return pa.string()
 
 
 def constant_payload_bound(col: dict[str, Any]) -> int:

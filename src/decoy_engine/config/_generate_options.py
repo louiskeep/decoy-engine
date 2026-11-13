@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import ast
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -531,13 +531,23 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
     return found
 
 
-def problem_details(problems: list[tuple[tuple[str | int, ...], str]]) -> list[InitErrorDetails]:
-    """Pydantic line errors for ``problems``: fixed text per code, no input kept."""
+_Loc = tuple[str | int, ...]
+
+
+def problem_details(
+    problems: Sequence[tuple[_Loc, str] | tuple[_Loc, str, str]],
+) -> list[InitErrorDetails]:
+    """Pydantic line errors for ``problems``: fixed text per code, no input kept.
+
+    A third item is value-free text (table and column names) added after the summary.
+    """
     details: list[InitErrorDetails] = []
-    for loc, code in problems:
+    for problem in problems:
+        loc, code = problem[0], problem[1]
         kind: Any = "missing"
         if code != "missing":
-            kind = PydanticCustomError(code, reasons.lookup(code)[0].summary)
+            text = " ".join((reasons.lookup(code)[0].summary, *problem[2:]))
+            kind = PydanticCustomError(code, text)
         details.append({"type": kind, "loc": loc, "input": None})
     return details
 

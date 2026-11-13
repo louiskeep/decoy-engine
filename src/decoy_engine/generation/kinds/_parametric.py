@@ -25,9 +25,16 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
-import pyarrow as pa
 
+from decoy_engine.config import parametric_arrow_type
 from decoy_engine.generators.derivation import GenDeriveContext
+
+__all__ = [
+    "ParametricStream",
+    "parametric_arrow_type",
+    "parametric_payload_bound",
+    "parametric_values",
+]
 
 _Draw = Callable[[np.random.Generator, int], "np.ndarray[Any, Any]"]
 
@@ -44,10 +51,6 @@ def _uniform(col: dict[str, Any]) -> _Draw:
 _FAMILIES: dict[str, Callable[[dict[str, Any]], _Draw]] = {
     "uniform": _uniform,
 }
-
-
-def parametric_arrow_type(col: dict[str, Any]) -> pa.DataType:
-    return pa.float64()
 
 
 def parametric_payload_bound() -> int:

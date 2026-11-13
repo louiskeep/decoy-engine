@@ -5,6 +5,11 @@ column's flat options (plus its `type`) and returns ``(relative location, reason
 Nothing here quotes a submitted value. The family a `distribution` column chose is read from the
 options; the table of which keys a family takes lives in
 `_generate_options.CONDITIONAL_REQUIRED`.
+
+The declared value type of a `categorical`, `constant` or `distribution` column, and the text
+type of a `sequence` or `faker` column a reader keeps as text, live here too: numeric typing
+(`generation/_numeric_typing`) and admission build on them, and validation reads the same
+answer for a per-parent aggregate's input before any data exists.
 """
 
 from __future__ import annotations
@@ -14,16 +19,23 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import pyarrow as pa
+
 from decoy_engine import reasons
 from decoy_engine.errors import PipelineValidationError
 
 __all__ = [
     "OUTPUT_TYPE_MAX_SCALE",
+    "categorical_arrow_type",
     "clip_bound",
+    "constant_arrow_type",
     "constant_value",
     "finite",
+    "generated_arrow_type",
     "high_bound",
+    "numeric_as_text_read",
     "output_type_value",
+    "parametric_arrow_type",
     "parse_output_type",
     "refuse_fixed_width_output_types",
 ]
@@ -164,6 +176,82 @@ def output_type_value(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
     if extras.get("type") == "sequence" and any(k in extras for k in _SEQUENCE_TEXT_KEYS):
         return [((), _UNSUPPORTED)]
     return _OK
+
+
+# -- the declared value type numeric typing starts from -------------------------------------------
+
+
+def categorical_arrow_type(col: Mapping[str, Any]) -> tuple[pa.DataType | None, str]:
+    """The Arrow type of homogeneous scalar categories, or None and why not."""
+    cats = col.get("categories", ["Category A", "Category B"])
+    if not isinstance(cats, list) or not cats:
+        return None, "categories_not_a_nonempty_list"
+    weights = col.get("weights")
+    if weights is not None and (not isinstance(weights, list) or len(weights) != len(cats)):
+        return None, "weights_do_not_match_categories"
+    kinds = {type(c) for c in cats}
+    if kinds == {str}:
+        return pa.string(), "eligible"
+    if kinds == {bool}:
+        return pa.bool_(), "eligible"
+    if kinds == {int}:
+        if all(_INT64_MIN <= c <= _INT64_MAX for c in cats):
+            return pa.int64(), "eligible"
+        return None, "int_category_outside_int64"
+    if kinds == {float}:
+        return pa.float64(), "eligible"
+    return None, "mixed_or_unsupported_category_types"
+
+
+def constant_arrow_type(col: Mapping[str, Any]) -> pa.DataType:
+    """Arrow type of one homogeneous value, by the rule `categorical_arrow_type` uses.
+
+    A bool is tested before an int because `bool` is an `int` subclass.
+    """
+    value = col.get("value")
+    if isinstance(value, bool):
+        return pa.bool_()
+    if isinstance(value, int):
+        return pa.int64()
+    if isinstance(value, float):
+        return pa.float64()
+    return pa.string()
+
+
+def parametric_arrow_type(col: Mapping[str, Any]) -> pa.DataType:
+    return pa.float64()
+
+
+def generated_arrow_type(col: Mapping[str, Any]) -> pa.DataType | None:
+    """The type of the values a generator makes for a column numeric typing keeps as text.
+
+    `sequence` and `faker` render text; numeric typing types them as numbers only while every
+    reader is numeric-safe. None for a type whose values the config does not fix.
+    """
+    kind = col.get("type")
+    if kind in ("sequence", "faker"):
+        return pa.string()
+    if kind == "categorical":
+        return categorical_arrow_type(col)[0]
+    if kind == "constant":
+        return constant_arrow_type(col)
+    if kind == "distribution":
+        return parametric_arrow_type(col)
+    return None
+
+
+def numeric_as_text_read(col: Mapping[str, Any]) -> bool:
+    """Whether a column read by a numeric-unsafe reader still holds numbers.
+
+    Such a reader keeps the column off numeric typing's candidates, so its emitted type is the
+    declared `output_type` (a number kind is ``int`` or ``decimal(n)``), else
+    `generated_arrow_type`.
+    """
+    parsed = parse_output_type(col.get("output_type"))
+    if parsed is not None:
+        return parsed[0] in _NUMBER
+    dtype = generated_arrow_type(col)
+    return dtype is not None and (pa.types.is_integer(dtype) or pa.types.is_floating(dtype))
 
 
 # Layout types the fixed-width writer prints; a decimal, a date or a bool cell it refuses.
