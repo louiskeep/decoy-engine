@@ -172,3 +172,28 @@ def test_the_verdict_matches_the_type_numeric_typing_gives_an_aggregate_input(
     except ValidationError:
         accepted = False
     assert accepted is numeric
+
+
+KIND = {"name": "kind", "type": "categorical", "categories": ["x", "y"]}
+
+
+def _conditional_amount(entry: list[Any]) -> dict[str, Any]:
+    return {
+        "name": "amount",
+        "type": "categorical",
+        "categories": [2, 3],
+        "condition_on": "kind",
+        "by": {"x": {"categories": entry}},
+    }
+
+
+def test_a_conditional_categorical_child_is_judged_by_every_category_it_draws(
+    tmp_path: Path,
+) -> None:
+    numbers = per_parent(line_cols=[LINE_ID, ref("oid", "orders"), KIND, _conditional_amount([7])])
+    PipelineConfig.model_validate(copy.deepcopy(numbers))
+    out = run_route("resident", numbers, tmp_path)
+    assert set(out["lines"].column("amount").to_pylist()) <= {2, 3, 7}
+    assert all(_is_number(v) for v in out["orders"].column("total").to_pylist())
+    text = per_parent(line_cols=[LINE_ID, ref("oid", "orders"), KIND, _conditional_amount(["a"])])
+    assert _errors(text) == [(NOT_NUMERIC, _at_column(3))]
