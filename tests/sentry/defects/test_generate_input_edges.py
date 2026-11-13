@@ -603,8 +603,7 @@ def test_the_via_resolver_is_defined_once_and_called_by_the_inventoried_function
 
 SIBLING_REREADS = {
     "a generator re-reads the key from the siblings": (
-        "def cells(col, siblings, pools):\n"
-        "    via = col['anchor_via']\n"
+        "def cells(via, siblings, pools):\n"
         "    key = next(s.get('reference_column') for s in siblings if s.get('name') == via)\n"
         "    return lookup_parent_values(pools, key_column=key)\n"
     ),
