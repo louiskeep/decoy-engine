@@ -161,6 +161,7 @@ class TestLifecycle:
         assert result.memory_evidence is not None
         assert result.memory_evidence.suspected_memory_pressure is False
 
+    @pytest.mark.serial
     def test_self_reported_crash_at_the_cap_carries_the_pressure_flag(self, tmp_path, monkeypatch):
         # Native code that hits the cap can surface exhaustion as an unrelated exception type
         # (an Arrow cancellation arrives in Python as KeyboardInterrupt). The worker reports it
