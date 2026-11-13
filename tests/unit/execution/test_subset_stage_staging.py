@@ -22,7 +22,7 @@ def _lazy(tmp_path: Path, rows: int = 30) -> LazySource:
 
 def _stage(tmp_path: Path, src: Any, **kw: Any) -> dict[str, Any]:
     root = tmp_path / "root"
-    root.mkdir(exist_ok=True)
+    root.mkdir(mode=0o700, exist_ok=True)
     args: dict[str, Any] = {
         "batch_fn": lambda t, b, off: pa.Table.from_batches([b]),
         "empty_fn": lambda t, s: s.schema.empty_table(),

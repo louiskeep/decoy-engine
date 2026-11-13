@@ -232,7 +232,7 @@ def _stage(tmp_path: Path, root: Any = None, **extra: Any) -> Any:
 
     if root is None:
         root = tmp_path / "root"
-        root.mkdir(exist_ok=True)
+        root.mkdir(mode=0o700, exist_ok=True)
     return stage_typed_sources(
         ["t"],
         {"t": _lazy(tmp_path)},
