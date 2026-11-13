@@ -377,3 +377,40 @@ def test_a_pinned_date_anchored_on_a_conditional_column_checks_every_entry() -> 
     with pytest.raises(PinnedModeError) as exc:
         compile_pinned_plan(_config(10, REGION, dates, window), REF)
     assert exc.value.code == reasons.plan.PINNED_WINDOWED_ANCHOR_NOT_ABSOLUTE
+
+
+WIDE = "w" * 500
+
+
+def _wide(**entry: Any) -> dict[str, Any]:
+    return {
+        "name": "tier",
+        "type": "categorical",
+        "categories": ["a", "b"],
+        "condition_on": "region",
+        "by": {"north": entry or {"categories": [WIDE]}},
+    }
+
+
+def test_the_width_bound_covers_the_longest_entry_category() -> None:
+    from decoy_engine.generation._bounds import categorical_payload_bound, compute_payload_bounds
+
+    assert categorical_payload_bound(_wide()) == len(WIDE)
+    assert compute_payload_bounds(_config(10, REGION, _wide()))[("t", "tier")] == len(WIDE)
+    numbers = {**_wide(categories=[1, 2]), "categories": [3, 4]}
+    assert categorical_payload_bound(numbers) == 8
+    mixed = {**_wide(categories=[WIDE]), "categories": [3, 4]}
+    assert categorical_payload_bound(mixed) is None
+
+
+@pytest.mark.parametrize(
+    ("categories", "want"),
+    [(["a", "bcd"], 3), ([1, 2], 8), ([1.5, True], 8), (["a", 1], None), ([], None)],
+)
+def test_a_plain_column_keeps_its_width_bound(categories: list[Any], want: int | None) -> None:
+    from decoy_engine.generation._bounds import categorical_payload_bound
+
+    plain = {"name": "c", "type": "categorical", "categories": categories}
+    assert categorical_payload_bound(plain) == want
+    # A `by` without `condition_on` is not the conditional form; only the top-level list counts.
+    assert categorical_payload_bound({**plain, "by": {"x": {"categories": [WIDE]}}}) == want

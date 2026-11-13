@@ -248,6 +248,28 @@ class TestGenerateColumnWidth:
         col = GenerateColumnConfig(name="cat", type="categorical", categories=["a", "bb", "ccc"])
         assert generate_column_width_bytes(col) == pytest.approx(3.0)
 
+    def test_conditional_categorical_prices_from_its_widest_entry_category(self) -> None:
+        wide = "w" * 500
+        col = GenerateColumnConfig(
+            name="tier",
+            type="categorical",
+            categories=["a", "b"],
+            condition_on="region",
+            by={"north": {"categories": [wide]}, "south": {"weights": [1, 2]}},
+        )
+        assert generate_column_width_bytes(col) == pytest.approx(500.0)
+        table = TableConfig(name="t", row_count=10, generate_columns=[col])
+        assert table_size_spec_from_generate_table(table).columns[0].string_width_bytes == 500
+
+    @pytest.mark.parametrize(
+        ("categories", "want"), [(["a", "bb", "ccc"], 3.0), (["é", 1], 2.0), ([1, 2], None)]
+    )
+    def test_plain_categorical_width_is_unchanged(
+        self, categories: list[object], want: float | None
+    ) -> None:
+        col = GenerateColumnConfig(name="c", type="categorical", categories=categories)
+        assert generate_column_width_bytes(col) == want
+
     def test_formula_type_is_unpriceable_no_guess(self) -> None:
         col = GenerateColumnConfig(name="f", type="formula", formula="1+1")
         assert generate_column_width_bytes(col) is None
