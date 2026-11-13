@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from decoy_engine._memory_limit import parse_megabytes
+from decoy_engine.internal.memory_limit import parse_megabytes
 
 
 @pytest.mark.parametrize(
@@ -29,7 +29,7 @@ def test_parse_megabytes(limit: str | None, expected: int | None) -> None:
 
 
 def test_require_megabytes_refuses_a_malformed_limit() -> None:
-    from decoy_engine._memory_limit import require_megabytes
+    from decoy_engine.internal.memory_limit import require_megabytes
 
     assert require_megabytes("512MB") == 512
     with pytest.raises(ValueError):

@@ -16,13 +16,13 @@ from typing import Any, Final
 import pyarrow as pa
 
 from decoy_engine import fileaccess
-from decoy_engine._memory_limit import require_megabytes
 from decoy_engine.config import (
     parse_relationship_config,
     post_scan_gate_applies,
     post_scan_integrity_requested,
 )
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
+from decoy_engine.internal.memory_limit import require_megabytes
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.progress import safe_error_class
 from decoy_engine.verification.postmask import (

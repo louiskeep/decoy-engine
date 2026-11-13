@@ -1,4 +1,4 @@
-"""Sentry: the `"NNMB"` memory-limit string has one parser, `decoy_engine._memory_limit`.
+"""Sentry: the `"NNMB"` memory-limit string has one parser, `decoy_engine.internal.memory_limit`.
 
 Three copies of the grammar (post-scan runner, post-scan gate, DuckDB helper) had drifted in
 what they accept. A new `(\\d+)MB` pattern or `removesuffix("MB")` anywhere else in src fails here.
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "decoy_engine"
-CHOKE_POINT = SRC / "_memory_limit.py"
+CHOKE_POINT = SRC / "internal" / "memory_limit.py"
 STRAY = (
     re.compile(r"\(\\d\+\)\s*MB"),
     re.compile(r"""removesuffix\(\s*["']MB["']\s*\)"""),

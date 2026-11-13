@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from decoy_engine import reasons
-from decoy_engine._memory_limit import parse_megabytes
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._scratch import private_dir
 from decoy_engine.execution.pipeline import detect_usable_cpus
+from decoy_engine.internal.memory_limit import parse_megabytes
 
 # `_budget.py` (`resolve_budget` / `resolve_ooc_memory_limit`) is the only
 # producer of the `memory_limit` string this module consumes, and it always

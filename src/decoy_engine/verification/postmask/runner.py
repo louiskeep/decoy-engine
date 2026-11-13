@@ -28,7 +28,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine import fileaccess
-from decoy_engine._memory_limit import parse_megabytes
+from decoy_engine.internal.memory_limit import parse_megabytes
 from decoy_engine.internal.pandas_missing import is_null_cell
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.verification.postmask._blocked import severity_counts
