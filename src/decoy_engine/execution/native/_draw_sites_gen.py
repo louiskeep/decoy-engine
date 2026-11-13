@@ -137,12 +137,17 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
             "generators/columns.py:507. The fitted fan-out "
             "allocator (generation/statistical/_fanout.py:305) takes the same Random, seeded "
             "with the pinned snapshot digest (FanoutSpec.seed_digest), and shuffles degrees "
-            "to parents, then the child row order."
+            "to parents, then the child row order. A self-reference "
+            "(generation/relational/_self_reference.py:86) draws its tree from the column's "
+            "own Random in place of the per-row choice: rng.randrange(row) per non-root row, "
+            "or rng.randrange(len(open_rows)) under max_per_parent; root rows hold null and "
+            "draw nothing, and the pool is the table's own key column."
         ),
         mirror_call_sites=(
             "generators/columns.py:507",
             "generation/relational/_cardinality.py:198",
             "generation/statistical/_fanout.py:305",
+            "generation/relational/_self_reference.py:86",
         ),
     ),
     # -- Generation: per-row reseeded formula / faker scope ------------------

@@ -56,7 +56,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned for GEN-TYPES E3: gen.lookup appended after gen.distribution.
 # Re-pinned for B-6: mask.tokenize derives under the vault-scoped subkey (call site moved).
 # Re-pinned for GEN-REL E1: gen.reference names the relational repair and its randrange fill.
-_CATALOGUE_DIGEST = "49e1c1382250722f23267d28c7bcbc3c0553c01f0e79e8b6da5cb6fb27204ed4"
+# Re-pinned for GEN-REL E2: gen.reference names the self-reference tree draw on its stream.
+_CATALOGUE_DIGEST = "cf4f3f18a346d0ad4c6af2baddac955be80f1aa3501c3e80a627680a291ea240"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -123,7 +124,8 @@ _ENTRY_DIGESTS = [
     # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
     # gen.reference re-pinned for FK-FANOUT E2b: call site moved, fitted seeds from the pinned snapshot digest.
     # gen.reference re-pinned for GEN-REL E1: the repair mirror moved to generation/relational.
-    "a53519d78f34d90aa675fdd8e3c8fe74b2deffc4b78474a9c9a2080dc4007e03",
+    # gen.reference re-pinned for GEN-REL E2: the self-reference tree draw is a mirror call site.
+    "43afe9de3ce00612a433759bb040bccdd178207cd330437f34ea595f9c3c5009",
     "e4b331d3617ea390a2a489148f3524dcb9438ecb6516fe6bd1b53131d90dbd04",
     # gen.statistical_per_row re-pinned for GEN-NUM-SHAPE: the call shape names the grid and exact draws.
     "fa0bc05758594e2412aad9fb148660c9fd4a7c596911516db1b9537e5302866f",
