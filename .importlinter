@@ -16,7 +16,7 @@ containers = decoy_engine
 exhaustive = true
 layers =
     unmask : subset : delivery : walks : identifiers : providers : records : support
-    execution : kernel : quarantine : validation : verification : vault
+    execution : kernel : quarantine : publication : validation : verification : vault
     plan : generation : generators : transforms : declared_casting : secret_providers : keyprovider : relationships : providers_v2 : reference_tables : quality
     profile : profiling : detection : internal : progress : context : config : determinism : contracts : connectors : expressions : validators : sdk : run_result
     io : data_discovery : disguises : phase : telemetry : safe_output : fileaccess

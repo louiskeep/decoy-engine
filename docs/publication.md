@@ -3,8 +3,9 @@
 How the engine creates, stages and binds an output directory, and what it promises about the
 result. This page grows with the F22 publication work (plan
 `docs/plans/2026-10-30-f22-publication-replan.md`); each section says what is in place today.
-Later parts add the `decoy-publication/v1` descriptor, the `already_committed` and
-`operation_conflict` outcomes, and vault-before-output ordering. Until those sections exist here,
+Later parts add the `already_committed` and `operation_conflict` outcomes and
+vault-before-output ordering; the `decoy-publication/v1` descriptor format is defined below, but
+no publish writes it yet. Until those sections exist here,
 the engine does not claim them.
 
 Platforms: Linux and macOS, on both the ambient policy (`LocalFileAccess`, the CLI default) and
@@ -106,6 +107,58 @@ symlink on the way to the leaf is refused, never followed out of the root. Windo
 publish there keeps the plain rename until the Windows arm is built.
 
 All errors these paths raise carry an errno name and no path, file name or operating-system text.
+
+## The `decoy-publication/v1` descriptor
+
+Package `decoy_engine.publication` (`_descriptor.py`) defines the descriptor a published unit
+will carry as `_decoy_publication.json` at its root. No publish writes it yet (slice a3 does);
+this section is the format.
+
+The bytes are canonical JSON: keys sorted, separators `,` and `:` with no whitespace, ASCII only
+(other characters as `\u` escapes), no NaN or infinity. Equal content therefore has equal bytes,
+and `descriptor_digest` is the SHA-256 of the bytes.
+
+| Field | Type |
+|---|---|
+| `schema` | exactly `"decoy-publication/v1"` |
+| `unit` | `"immutable_directory/v1"` |
+| `operation_id` | the caller's id, `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}` |
+| `result_id` | 64 lowercase hex digits |
+| `artifacts` | array sorted by `path`, paths unique; each `{path, role, rows, sha256, size}` |
+| `vault` | `null`, or `{sha256, size, entry_count}` |
+| `engine_version` | the writing engine's version |
+
+An artifact `path` is relative to the unit root, `/`-separated; no component is empty, `.` or
+`..` or holds NUL, and the path is never the descriptor's own name. `role` is `"table"`. `rows`,
+`size` and `entry_count` are JSON integers from 0 to 2^63 - 1. Digests are 64 lowercase hex
+digits.
+
+`result_id` is the SHA-256 of `decoy-publication-result/v1`, a NUL byte, and the canonical JSON
+of the sorted artifact array. It names the output content only: it leaves out `operation_id` and
+the vault, so two attempts that produced the same files have the same `result_id`, and a vault is
+judged by its rows, not by a digest stored here.
+
+`operation_id` contract: one `operation_id` names one intended result for one destination.
+Reusing it for a different result is an `operation_conflict`, and a matching `operation_id` is
+never taken as evidence of an equal result; only an equal `result_id` is.
+
+One field declaration drives the writer and the reader, so the engine cannot write a descriptor
+it would refuse to read. The reader refuses a stored descriptor when any of these holds: over
+1 MiB; not UTF-8 JSON; a duplicate key; a non-finite number; not an object; `schema` missing or
+not exactly `decoy-publication/v1`; a field missing or unknown, at any level; a value of the wrong
+JSON type (a `true` is never a count, `"640"` is never a number); a count out of range; a token
+outside its closed set; a digest, `operation_id` or version that does not match its shape in full
+(a trailing newline included); an unsafe path; artifacts out of order or repeated; a `result_id`
+that does not recompute; bytes that are not the canonical encoding. The refusal is a `ValueError`
+whose text is `descriptor_refused:<check>`, a closed token, with nothing from the bytes. A later
+slice turns any refusal into `publication_target_occupied`, so a malformed record never drives a
+judge or an adoption.
+
+The request and receipt types (`_types.py`) are checked when built: `PublicationRequest`
+(`operation_id`, `unit`, `overwrite` = `"refuse_different"`, `vault`, `lock_timeout_s`, default
+30 seconds), and `CommitReceipt` (`outcome`, `operation_id`, `reason_code`, `result_id`,
+`descriptor_digest`, `vault_digest`, `artifacts`, `visible`, `durable`, `os_error`), whose
+`ArtifactSummary` entries hold `role`, `size`, `rows` and `sha256`, never a name or a path.
 
 ## Named limits
 

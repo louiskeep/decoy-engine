@@ -12,6 +12,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `execution/` | `run_pipeline` spine, routes (full-frame oracle, unified slice, chunked dispatcher, sequential and out-of-core FK), strategy handlers, native companion bridge, transactional sink, capacity |
 | `progress.py`, `_progress_events.py` | Progress contract: `ProgressSink`, the channel, value-free versioned events (`_progress_events.py` holds the event types and serializers), `use_progress` |
 | `reasons/` | The versioned reason-code registry (`ReasonSpec`, `ReasonRecord`, one catalog module per namespace) |
+| `publication/` | F22 output publication: the `decoy-publication/v1` descriptor codec and `result_id` (`_descriptor.py`), request and receipt types (`_types.py`); judge and bind, vault ordering and sink state arrive in later slices |
 | `run_result/` | The `decoy-run-result/v1` run record: write and read models, value-free types, `derive_outcome`, `_project.py` (`project_tables`, the per-table projection) |
 | `records/` | The local record library's engine side: `decoy-record/v1` envelope, `build`/`encode`/`decode`, the kind registry, canonical form and ids, the `decoy-library-export/v1` codec, the `decoy-job-log/v1` header and reader (no filesystem access) |
 | `reason_adapter.py` | `reason_from_exception`, `reasons_from_report`, the per-run failure scope |
