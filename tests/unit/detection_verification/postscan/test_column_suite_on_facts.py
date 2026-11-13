@@ -504,3 +504,21 @@ def test_a_failed_output_count_does_not_make_a_constant_source_escalate(
     assert calls["n"] >= 2
     assert finding["source_compared"] is True
     assert finding["severity"] != "fail"
+
+
+def test_a_float_source_with_nan_and_an_int_output_with_a_null_are_byte_identical():
+    zips = [10000 + i for i in range(60)]
+    src = pd.DataFrame({"zip": pd.Series([*map(float, zips), float("nan")])})
+    out = pd.DataFrame({"zip": pd.Series([*zips, None], dtype=object)})
+    report = _parity({"t": src}, {"t": out}, _cfg(("zip", "faker")))
+    (finding,) = report["policy_validation"]
+    assert finding["severity"] == "fail" and finding["bytes_identical"] is True
+
+
+def test_a_float_source_and_an_int_output_with_one_different_number_are_not_identical():
+    zips = [10000 + i for i in range(60)]
+    src = pd.DataFrame({"zip": pd.Series([*map(float, zips), float("nan")])})
+    out = pd.DataFrame({"zip": pd.Series([*zips[:-1], 99999, None], dtype=object)})
+    report = _parity({"t": src}, {"t": out}, _cfg(("zip", "faker")))
+    (finding,) = report["policy_validation"]
+    assert finding["bytes_identical"] is False

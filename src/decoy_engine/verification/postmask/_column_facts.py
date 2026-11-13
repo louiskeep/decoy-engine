@@ -109,7 +109,12 @@ def _add_identity(tally: _Tally, src: pd.Series, out: pd.Series) -> None:
     present = src_o.notna() & out_o.notna()
     tally.comparable += int(present.sum())
     tally.identical += int((src_o[present] == out_o[present]).sum())
-    tally.same_bytes = tally.same_bytes and bool(src_o.equals(out_o))
+    # A null is NaN in a float column and pd.NA in an Arrow-typed integer one; `equals` treats
+    # NaN and None as one null but not NaN and pd.NA, so a float source against an int output of
+    # the same numbers would read as different.
+    tally.same_bytes = tally.same_bytes and bool(
+        src_o.where(src_o.notna(), None).equals(out_o.where(out_o.notna(), None))
+    )
 
 
 def _add_detectors(tally: _Tally, out: pd.Series, column: str) -> None:
