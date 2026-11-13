@@ -20,6 +20,8 @@ table's rows (`generation/relational/_self_reference`). `is_self_reference` is t
 that shape, and `self_reference_problems` holds its rules, so `per_parent_problems` leaves such
 a column alone. A tree needs a key that is distinct and never null before the column is drawn,
 so the key must be an earlier `sequence` column of the same table with no `null_probability`.
+The tree copies the key's drawn values and a reference cannot declare `output_type`, so a key
+that declares one is refused: its cast values would match no copied foreign key.
 The draw is uniform over earlier rows with an optional `max_per_parent`; any other distribution,
 a minimum, nulls or uniqueness would be dropped without a word, so each is refused. `root_count`
 must lie between 1 and the table's `row_count`, and is ignored for a table with no rows.
@@ -117,11 +119,13 @@ def is_self_reference(table_name: Any, col: Mapping[str, Any]) -> bool:
 
 
 def _key_is_valid(columns: Sequence[Any], c_idx: int, key_name: Any) -> bool:
-    """Whether `key_name` is a `sequence` column declared before `c_idx` that injects no nulls."""
+    """Whether `key_name` is an uncast `sequence` column declared before `c_idx` with no nulls."""
     for earlier in columns[:c_idx]:
         if isinstance(earlier, Mapping) and earlier.get("name") == key_name:
-            return earlier.get("type") == "sequence" and not _nulls_on(
-                earlier.get("null_probability")
+            return (
+                earlier.get("type") == "sequence"
+                and not _nulls_on(earlier.get("null_probability"))
+                and "output_type" not in earlier
             )
     return False
 

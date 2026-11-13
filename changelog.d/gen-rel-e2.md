@@ -8,7 +8,8 @@ category trees can be generated.
   so there is no cycle. An optional `max_per_parent` caps the children of each key. The same
   seed gives the same tree.
 - The key must be an earlier `sequence` column of the same table with no `null_probability`
-  (`config/generate_self_reference_key_invalid`). Only `distribution: random` and
+  and no `output_type` (`config/generate_self_reference_key_invalid`): the tree copies the
+  key's drawn values, so a cast key would match none of them. Only `distribution: random` and
   `max_per_parent` are accepted: `sequential`, `weighted`, `fitted`, a positive
   `min_per_parent`, `null_probability`, `unique` and `unique_together` membership are refused
   (`config/generate_self_reference_option_unsupported`). `root_count` outside 1 to the table's
