@@ -94,6 +94,8 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.quality.snapshot", "DistributionSnapshotError", "quality"),
     ("decoy_engine.connectors.postgres_snapshot", "PostgresSnapshotError", "connector"),
     ("decoy_engine.execution.physical._shadow_diff_codes", "ShadowDifference", "physical"),
+    ("decoy_engine.publication._types", "PublicationRefused", "decoy"),
+    ("decoy_engine.publication._types", "PublicationFailed", "decoy"),
 )
 # Engine exceptions that carry no code but have one fixed meaning: (module, class, reason).
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
