@@ -36,7 +36,7 @@ from contextlib import AbstractContextManager
 from typing import Any, Literal, TypeVar
 
 from decoy_engine.fileaccess import _openat2
-from decoy_engine.fileaccess._component import validate_component
+from decoy_engine.fileaccess._component import validate_component, validate_publication_leaf
 from decoy_engine.fileaccess._errors import deny
 from decoy_engine.fileaccess._types import FileAccessUnavailable, FileRequest, StageLabel
 
@@ -379,16 +379,17 @@ class RootedOutputTxn(_StageDir):
         self._leaf = leaf
         self._publish_mode = mode
         name = f"{STAGE_PREFIX[label]}{secrets.token_hex(6)}{STAGE_SUFFIX.get(label, '')}"
-        state = _State(os.dup(parent_fd), name, kind)
-        state.chain_fds = [_dup(fd) for fd in chain]
-        self._state = state
+        self._state = state = _State(os.dup(parent_fd), name, kind)
+        try:  # no finalizer yet: a failure closes every descriptor this call opened
+            for fd in chain:
+                state.chain_fds.append(_dup(fd))
+            if kind == "dir":
+                state.stage_fd = make_stage_dir_at(state.parent_fd, name)
+        except BaseException:
+            _close_all([*state.chain_fds, state.parent_fd])
+            raise
         self._private = label in PRIVATE_LABELS
-        mode_bits = 0o600 if self._private else 0o666
-        stage_fd = -1
-        if kind == "dir":
-            stage_fd = make_stage_dir_at(state.parent_fd, name)
-            state.stage_fd = stage_fd
-        super().__init__(stage_fd, display, state, mode_bits)
+        super().__init__(state.stage_fd, display, state, 0o600 if self._private else 0o666)
         self._finalizer = weakref.finalize(self, _discard, state)
 
     def create_file(self, component: str) -> int:
@@ -505,6 +506,8 @@ class RootedOutputDir:
         *,
         label: StageLabel,
     ) -> RootedOutputTxn:
+        if label in DURABLE_LABELS:
+            validate_publication_leaf(self._leaf, self._field_key)
         failed = False
         parent = -1
         chain: list[int] = []
@@ -541,6 +544,7 @@ class RootedOutputDir:
     def lock(self, timeout_s: float) -> AbstractContextManager[None]:
         from decoy_engine.fileaccess import _durable
 
+        validate_publication_leaf(self._leaf, self._field_key)
         return _durable._held_lock(self._parent_reader, self._leaf, timeout_s)
 
     def read_member(self, component: str, *, limit: int) -> bytes | None:
