@@ -737,6 +737,14 @@ def test_e3_large_string_when_runs_chunked_and_equals_the_string_source(
     got, want = go(pa.large_string()), go(pa.string())
     assert column_values(got, "c") == column_values(want, "c")
     assert column_values(got, "keep") == column_values(want, "keep")
-    assert {o.schema.field("c").type for o in got} == {pa.string()}
     whole = _full_frame(cfg, pa.concat_tables(split(_src(pa.string()), 2)), tmp_path)
-    assert pa.concat_tables(got).column("c").to_pylist() == whole.column("c").to_pylist()
+    merged = pa.concat_tables(got)
+    # Pre-existing: run_mask_chunked passes `keep` through as large_string, while the pipeline
+    # entry and the whole-frame route write string. Only `c` is this slice's concern.
+    assert {o.schema.field("c").type for o in got} == {pa.string()}
+    assert {o.schema.field("keep").type for o in got} == {
+        pa.large_string() if entry == "run_mask_chunked" else pa.string()
+    }
+    assert whole.schema.field("c").type == whole.schema.field("keep").type == pa.string()
+    for name in ("c", "keep"):
+        assert merged.column(name).to_pylist() == whole.column(name).to_pylist()
