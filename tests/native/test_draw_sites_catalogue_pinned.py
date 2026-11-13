@@ -54,7 +54,10 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
 # Re-pinned for GEN-TYPES E1: gen.distribution appended at the end of the catalogue.
 # Re-pinned for GEN-TYPES E3: gen.lookup appended after gen.distribution.
-_CATALOGUE_DIGEST = "972cd0b53c89c2267493cd5263575b90360bb927a562f8c286d90a1c77907210"
+# Re-pinned for B-6: mask.tokenize derives under the vault-scoped subkey (call site moved).
+# Re-pinned for GEN-REL E1: gen.reference names the relational repair and its randrange fill.
+# Re-pinned for GEN-REL E2: gen.reference names the self-reference tree draw on its stream.
+_CATALOGUE_DIGEST = "cf4f3f18a346d0ad4c6af2baddac955be80f1aa3501c3e80a627680a291ea240"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -120,7 +123,9 @@ _ENTRY_DIGESTS = [
     "3f6ffacf2df718610ae2090ecb26bf1d130dcb6efbccaa875de6b7ecd1afb8ae",
     # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
     # gen.reference re-pinned for FK-FANOUT E2b: call site moved, fitted seeds from the pinned snapshot digest.
-    "7d9bce3693d567778b4149b7bc631a4aef99431cd732f5ecf190fb5c47fee918",
+    # gen.reference re-pinned for GEN-REL E1: the repair mirror moved to generation/relational.
+    # gen.reference re-pinned for GEN-REL E2: the self-reference tree draw is a mirror call site.
+    "43afe9de3ce00612a433759bb040bccdd178207cd330437f34ea595f9c3c5009",
     "e4b331d3617ea390a2a489148f3524dcb9438ecb6516fe6bd1b53131d90dbd04",
     # gen.statistical_per_row re-pinned for GEN-NUM-SHAPE: the call shape names the grid and exact draws.
     "fa0bc05758594e2412aad9fb148660c9fd4a7c596911516db1b9537e5302866f",
@@ -143,7 +148,7 @@ _ENTRY_DIGESTS = [
     "d4a795b3273175d0c76a88f69cd8e3d97326497538694faa60b0886b0868bb02",
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
-    "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
+    "a3a39749058c9e86e9ff2b063fb57c1e4ab4c41bc2d8cb74ce0aedf6c87e696d",
     "abcb0cebb1fd2d748a5eb67d3ee5e473fbe222e0cda0e6bd177a343f3a3f8a70",
     "59cfabe8b717938031643576d025e71097d0e7ad1e82d53657c30105c323f5bc",
 ]

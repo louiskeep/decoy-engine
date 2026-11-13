@@ -3,7 +3,7 @@ name = "decoy-engine-native"
 version = "0.1.0"
 edition = "2021"
 description = "Compiled Rust companion for decoy-engine's native masking hot path. Ships the KeyedDerivationKernel (HKDF-SHA256 then HMAC-SHA256 over the Arrow C Data Interface), the one security-sensitive native masking kernel."
-license = "Apache-2.0"
+license = "FSL-1.1-ALv2"
 publish = false
 
 [lib]

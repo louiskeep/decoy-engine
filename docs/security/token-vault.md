@@ -22,8 +22,16 @@ serialized blob before encryption (F13 privacy fix, 2026-06-26).
 The key derives from the keyed-mask IKM (`mask_key`): `derive(mask_key,
 "vault", b"vault-key/v1")` (`src/decoy_engine/vault.py`, `_fernet`). Under
 a configured secret, `mask_key` is the 32-byte `SecretKeyProvider` HKDF
-mask root; with no secret it falls back to the 8-byte `job_seed`
-(byte-identical to pre-DE-02). This is the same HMAC-SHA256 envelope every
+mask root. There is no no-secret fallback: every key that writes, opens or
+is matched against a vault must be exactly that 32-byte mask root,
+checked when a `VaultWriter` is built and again at every write, load and
+key-match (`weak_mask_secret` otherwise, before any file is created, changed
+or read), and `vault_writer_for_config` raises `keyed_strategy_requires_secret`
+when no secret is admitted, for every config. An 8-byte public seed gives a
+KDF nothing to amplify. A vault an older engine wrote under the 8-byte
+`job_seed` no longer opens under any key; it is regenerated, together with
+its masked output, by re-running the mask job under a secret (pre-GA hard
+delete; no migration and no recovery path). This is the same HMAC-SHA256 envelope every
 other engine derivation uses, with its own label -- and the same `mask_key`
 that FPE, hash, and the other keyed strategies draw from (see
 [key derivation](key-derivation.md)), so a vault is bound to the run's
@@ -61,11 +69,9 @@ the failure would surface as an opaque `vault_key_mismatch`.
 
 - **Vault + mask secret = re-identification.** The run's `mask_key`
   derives the decryption key: the secret behind
-  `global_settings.mask_secret_ref` (or a programmatic `key_provider`)
-  when one is configured, or the `job_seed` in the no-secret fallback.
-  Anyone holding the vault file AND that mask secret (or, in the
-  no-secret case, the config's seed) recovers every vaulted source
-  value. This extends the key-as-unlock property `decoy unmask`
+  `global_settings.mask_secret_ref` (or a programmatic `key_provider`).
+  Anyone holding the vault file AND that mask secret recovers every
+  vaulted source value. A vault is never keyed on the config's seed. This extends the key-as-unlock property `decoy unmask`
   introduced for fpe columns: with a vault in play, the mask key now
   unlocks one-way columns too.
 - **The vault grows with the data.** Unlike the seed (a constant-size
@@ -97,6 +103,38 @@ the failure would surface as an opaque `vault_key_mismatch`.
    keys are dropped at write time (`ambiguous_dropped` in the unencrypted
    header and the unmask report). Exact round trips are guaranteed only
    for collision-free maskings such as `hash` under a namespace.
+5. **Publication (B-6 D1).** `VaultWriter.write` never writes the vault in
+   place. It opens the target's parent directory, creates a stage
+   `_decoy_vault_stage_<hex>` beside the vault with creation mode `0600`
+   (the umask can narrow the `open(2)` mode, for example under `0477`, so the
+   stage is `fchmod`ed back to exactly `0600` before the first byte; the
+   published vault is a hard link of the stage and has the same mode), writes and `fsync`s it,
+   `link(2)`s it to the vault name, `fsync`s the directory (the commit
+   point) and attempts to remove the stage name (a failed removal leaves only the
+   encrypted `0600` stage; the vault is kept). A crash at any step leaves either no
+   vault or a complete one, never a partial one. A directory `fsync` that
+   fails with `EINVAL`, `EBADF` or `ENOTSUP` means the filesystem cannot sync a
+   directory, and the publish goes on (as PostgreSQL's `fsync_fname_ext`
+   does); any other directory `fsync` error is `vault_commit_failed` and the
+   vault is kept. Limit: a filesystem without hard links (`link` fails with
+   `EPERM`, `ENOTSUP` or `EXDEV`, as on FAT and exFAT) cannot hold a vault,
+   because the exclusive publish is a `link(2)`.
+6. **Exclusive.** An existing vault is never overwritten: `write` raises
+   `vault_exists` and leaves it untouched (two concurrent writers to one
+   path: one publishes, the other gets `vault_exists`). Choose a new path,
+   or remove the old vault together with the outputs it reverses.
+7. **Vault before output, and never deleted.** A caller publishes no output
+   until `write` has returned. The engine refuses a vault writer where it
+   would publish output itself (`vault_requires_resident_output`: a `sink`,
+   or a chunked entry). Once published, no engine failure path removes,
+   truncates or replaces a vault; only an unpublished stage is cleaned. A
+   vault left by a failed job is kept: it is the recovery key for any
+   output that may already exist, and a vault without output is harmless.
+8. **Operator rule.** Delete a vault only together with its outputs. A
+   `_decoy_vault_stage_*` file beside a vault with no job running may be
+   deleted: it is never the vault (a crash after the link leaves it as a
+   second name of the published vault, or before it as an unpublished
+   stage).
 
 ## Error codes
 
@@ -107,9 +145,12 @@ attribute is machine-readable.
 |---|---|
 | `vault_crypto_not_installed` | The `cryptography` package is absent from a broken or partial install. `cryptography` is a base dependency (Task 5.2); a normal `pip install decoy-engine` always has it, and in practice `decoy_engine` fails to import at all before this code path is reached. |
 | `vault_unreadable` | The file is missing, has a bad magic header, or is truncated. |
+| `vault_exists` | `write` found an existing vault at the target. Nothing was written and the existing vault is unchanged. |
+| `vault_commit_failed` | `write` could not write, `fsync` or link the stage, or `fsync` the directory after the link. Before the link no vault exists; after it the vault is kept (it may not survive a power loss). The text names no path and no errno. Publish no output it would reverse. |
 | `vault_format_unsupported` | The `format` field in the header names a version this engine does not consume. |
 | `vault_protocol_version_mismatch` | The header's `seed_protocol_version` differs from the running `SEED_PROTOCOL_VERSION`. Cross-version unmask is not supported; re-mask under the correct engine version. |
-| `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written under a different `mask_key` (a different mask secret, or the no-secret `job_seed` when the current run supplies a secret). |
+| `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written under a different `mask_key` (a different mask secret, or an older engine's `job_seed`). |
+| `weak_mask_secret` | The key handed to `VaultWriter`, `load_vault` or the run-entry key-match guard is not 32 bytes, as bytes (for example the 8-byte `job_seed`, or a longer key the key derivation cannot take). Raised before any file is created, changed or read. |
 
 Note: `vault_protocol_version_mismatch` is checked before any decryption
 attempt. A cross-version vault also fails decryption (the protocol version

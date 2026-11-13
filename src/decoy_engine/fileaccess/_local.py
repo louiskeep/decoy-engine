@@ -26,16 +26,21 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import BinaryIO, Literal, TextIO
 
+from decoy_engine.fileaccess._component import validate_component
 from decoy_engine.fileaccess._errors import deny
 from decoy_engine.fileaccess._output import (
     CREATES_PARENTS,
+    DURABLE_LABELS,
     PRIVATE_LABELS,
     STAGE_PREFIX,
     STAGE_SUFFIX,
     _call,
     _close,
+    create_private_at,
+    discard_stage_at,
     make_parent_dir_at,
     make_stage_dir_at,
+    publish_exclusive_durable,
 )
 from decoy_engine.fileaccess._types import (
     FileAccessUnavailable,
@@ -46,7 +51,6 @@ from decoy_engine.fileaccess._types import (
 _logger = logging.getLogger("decoy_engine.quarantine")
 
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-_CREATE_IN_PLACE = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC
 
 
 class LocalHandle:
@@ -279,6 +283,9 @@ class LocalOutputTxn(_LocalStageDir):
         self._label = label
         self._staged_file: Path | None = None
         self._direct = False
+        # A durable stage is created and published through its parent's descriptor, opened
+        # before the stage exists, so no step after the link can fail for want of one.
+        self._parent_fd = -1
         stage: Path | None = None
         if kind == "dir":
             if sys.platform == "win32":
@@ -297,13 +304,8 @@ class LocalOutputTxn(_LocalStageDir):
             self._check(component)
             if self._staged_file is not None:
                 raise FileAccessUnavailable("a file stage holds exactly one file")
-            if self._label == "vault_direct":
-                # The ambient vault write truncates and rewrites the named file in place,
-                # as `Path.write_bytes` always did (hardlinks, a read-only directory and a
-                # missing parent behave as before). Only this policy issues the label.
-                self._direct = True
-                self._staged_file = self._target
-                return os.open(self._target, _CREATE_IN_PLACE, 0o666)
+            if self._label in DURABLE_LABELS:
+                return self._create_durable_stage()
             if self._label in CREATES_PARENTS:
                 if sys.platform == "win32":
                     self._target.parent.mkdir(parents=True, exist_ok=True)
@@ -331,6 +333,51 @@ class LocalOutputTxn(_LocalStageDir):
             self._staged_file = stage
             return os.open(stage, _CREATE, 0o666)
         return super().create_file(component)
+
+    def _create_durable_stage(self) -> int:
+        """Open the parent, then create the stage beside the leaf through the private-file
+        choke point (mode exactly 0600). A failure here leaves nothing and keeps the ambient
+        error shape: the class and the target's path."""
+        # Before any syscall: the shared publish validates the leaf too, but only after the
+        # stage exists, and a refusal there would leave it.
+        validate_component(self._target.name, "fileaccess.stage")
+        name = f"{STAGE_PREFIX[self._label]}{secrets.token_hex(6)}"
+        failed: OSError | None = None
+        try:
+            self._parent_fd = _open_dir(self._target.parent)
+            fd = create_private_at(self._parent_fd, name)
+        except OSError as exc:
+            failed = exc
+        if failed is not None:
+            code, cls = failed.errno, type(failed)
+            del failed
+            self._close_parent()
+            raise cls(code, os.strerror(code or errno.EIO), str(self._target))
+        self._staged_file = self._target.parent / name
+        return fd
+
+    def _close_parent(self) -> None:
+        if self._parent_fd >= 0:
+            fd, self._parent_fd = self._parent_fd, -1
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _unlink_stage(self) -> None:
+        if self._staged_file is not None and self._parent_fd >= 0:
+            discard_stage_at(self._parent_fd, self._staged_file.name)
+
+    def _publish_durable(self) -> None:
+        """Publish through the shared durable helper; only the path-shaped step 1 is ambient."""
+        staged = self._staged_file
+        if staged is None:  # pragma: no cover - checked by publish
+            raise FileAccessUnavailable("nothing was staged")
+        self._finished = True
+        try:
+            publish_exclusive_durable(self._parent_fd, staged.name, self._target.name)
+        finally:
+            self._close_parent()
 
     def _writes_through(self) -> bool:
         """An existing special file (`/dev/null`) or symlink is written in place, as the
@@ -360,6 +407,9 @@ class LocalOutputTxn(_LocalStageDir):
         staged = self._staged_file
         if staged is None:
             raise FileAccessUnavailable("nothing was staged")
+        if self._label in DURABLE_LABELS:
+            self._publish_durable()
+            return
         if self._direct:
             self._finished = True
             return
@@ -397,6 +447,10 @@ class LocalOutputTxn(_LocalStageDir):
         if self._stage is not None:
             shutil.rmtree(self._stage, ignore_errors=True)
             self._stage = None
+        if self._label in DURABLE_LABELS:
+            self._unlink_stage()
+            self._close_parent()
+            return
         if self._staged_file is not None and not self._direct:
             try:
                 self._staged_file.unlink(missing_ok=True)

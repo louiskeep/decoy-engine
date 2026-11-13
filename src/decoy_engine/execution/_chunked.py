@@ -165,12 +165,13 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._eligibility import declared_route_guard
-from decoy_engine.execution._guards import prepare_declared_execution_sources
+from decoy_engine.execution._guards import (  # re-exported: the core's declaration-gate seam
+    prepare_declared_execution_sources as prepare_declared_execution_sources,
+)
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.profile import DeclarationRequest
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
 from . import _chunked_categorical as categorical_gate
@@ -187,6 +188,7 @@ from ._chunked_fk import (
     gate_fk_child_edges,
 )
 from ._column_access import composite_provider_offenders
+from ._errors import vault_requires_resident_output
 from ._transforms_gate import reject_per_table_transforms
 from .native import _faker_positional_admission as faker_gate
 
@@ -416,9 +418,12 @@ def run_mask_pipeline_chunked(
     `adapter` selects the execution substrate; None keeps the pandas adapter (the byte-stable
     default). It is kept for a future non-pandas substrate.
 
-    `vault_writer` (a `decoy_engine.vault.VaultWriter`) collects each
-    chunk's source->masked pairs for `vault: true` columns as the chunk
-    masks; the caller writes the artifact after the stream drains.
+    `vault_writer` must be `None`: any writer is refused with
+    `ExecutionError(code="vault_requires_resident_output")` before a chunk is
+    read (B-6 boundary rule B0). The caller publishes each yielded chunk, so
+    a vault written after the stream drains would follow output it reverses.
+    A vault job runs through `run_pipeline` without a sink, whose auto-chunk
+    lane still bounds masking memory and returns resident output.
 
     `chunk_result_sink` (optional list) receives each chunk's full
     `ExecutionResult` as it is produced, so callers that need the
@@ -432,43 +437,28 @@ def run_mask_pipeline_chunked(
     value-keyed strategy. See `_chunked_dgrn.py` for the domain contract.
 
     Validation and plan compile happen EAGERLY at call time; only the per-chunk masking is lazy.
+    This route runs no post-scan, so a model post-scan config is refused first
+    (`PostScanRouteError`).
     """
+    if vault_writer is not None:
+        raise vault_requires_resident_output()
+    # Lazy: `_chunked_oracle` imports this module at load time.
     from . import _chunked_oracle
 
-    refuse_unapplied_subset(config)
-    declared = prepare_declared_execution_sources(
-        DeclarationRequest.for_chunks(config, table, source_schema),
-        file_access=file_access,
-        registry=registry,
-    )
-    state = _chunked_oracle._oracle_preflight(
+    refuse_unchecked_route(config, "chunked")
+    return _chunked_oracle._mask_pipeline_chunked(
         config,
         chunks,
         table=table,
         engine_version=engine_version,
-        declared=declared,
+        source_schema=source_schema,
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
         key_provider=key_provider,
         base_row_offset=base_row_offset,
-        pool_cache=None,
-    )
-    if state.first is None:
-        # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
-        state.close_secret()
-        return iter(())
-    return _chunked_oracle.release_when_done(
-        _chunked_oracle._oracle_masked(
-            state,
-            config=config,
-            table=table,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            base_row_offset=base_row_offset,
-            on_chunk=None,
-        ),
-        state,
+        file_access=file_access,
     )
 
 

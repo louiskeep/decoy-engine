@@ -73,6 +73,7 @@ def run_seq_with(shape: Shape, registry: Any) -> Any:
     return PandasExecutionAdapter().run_sequential(
         shape.plan,
         lambda t: srcs[t],
+        config={},
         registry=registry,
         relationship_graph=shape.graph,
         namespace_registry=NAMESPACES,

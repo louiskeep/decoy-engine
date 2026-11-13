@@ -62,7 +62,7 @@ S3_BUILDERS = frozenset(
     }
 )
 # First-inventory size of the collision walk; lower it together with the baseline.
-WALK_FLOOR = 150
+WALK_FLOOR = 149
 
 
 def gcs_name_set() -> frozenset[str]:
@@ -404,6 +404,7 @@ def test_seeded_case(case: str, seeded: dict[str, set[tuple[str, str]]]) -> None
 LITERAL_FILES = (
     "decoy_engine/connectors/_clients.py",
     "decoy_engine/connectors/gcs.py",
+    "decoy_engine/connectors/object_store.py",
     "decoy_engine/connectors/s3.py",
     "decoy_engine/profile/_cloud_readers.py",
 )

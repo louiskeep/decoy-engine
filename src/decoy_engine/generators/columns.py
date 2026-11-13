@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from faker import Faker
 
+from decoy_engine.config import per_parent_bounds
 from decoy_engine.generators._distribution import _DistributionMixin
 from decoy_engine.generators._formula import _FormulaMixin
 from decoy_engine.generators.derivation import GenDeriveContext, with_table
@@ -438,8 +439,7 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
         # max_per_parent: no parent value can appear more than this
         # many times. 0 means "no bound" (matches the YAML helper which
         # omits zero values to keep entries minimal).
-        min_per_parent = int(column_config.get("min_per_parent") or 0)
-        max_per_parent = int(column_config.get("max_per_parent") or 0)
+        min_per_parent, max_per_parent = per_parent_bounds(column_config)
         # Note: null_probability is now handled at the column level, not here
 
         self.logger.debug(

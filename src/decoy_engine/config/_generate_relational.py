@@ -25,21 +25,29 @@ table's rows (`generation/relational/_self_reference`). `is_self_reference` is t
 that shape, and `self_reference_problems` holds its rules, so `per_parent_problems` leaves such
 a column alone. A tree needs a key that is distinct and never null before the column is drawn,
 so the key must be an earlier `sequence` column of the same table with no `null_probability`.
+The tree copies the key's drawn values and a reference cannot declare `output_type`, so a key
+that declares one is refused: its cast values would match no copied foreign key.
 The draw is uniform over earlier rows with an optional `max_per_parent`; any other distribution,
 a minimum, nulls or uniqueness would be dropped without a word, so each is refused. `root_count`
 must lie between 1 and the table's `row_count`, and is ignored for a table with no rows.
 
 A column that reads its parent's row (a `windowed_date` with `anchor_via`) needs a foreign key
-that reaches exactly one parent row. `parent_key_problem` is the one rule for such a key, a
-`sequence` column with no `null_probability`; the tree's key goes through it too. The lookup
-column must be a `reference` to another table: the rows of the table being drawn are not
-finished, so a lookup through a self-reference is refused.
+that reaches exactly one parent row. `parent_key_problem` is the one rule for such a key, built
+on `is_exact_sequence_key`. The lookup column must be a `reference` to another table: the rows
+of the table being drawn are not finished, so a lookup through a self-reference is refused.
+
+`is_exact_sequence_key` is the one test for a key column whose every row is a distinct value:
+a `sequence` with no positive `null_probability`. The self-reference key check, the capacity
+probe's bounds and the plan's weights-length check all read it. It fails closed: a rate that is
+not absent, None or a real number (bool excluded) reads as "may have nulls", the safe answer for
+every caller. A NaN rate is not above 0, so it counts as no nulls, as the earlier copies read it.
 
 A problem carries its reason code only: a bound, weight or key never reaches a message.
 """
 
 from __future__ import annotations
 
+import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -51,10 +59,12 @@ from decoy_engine.expressions import compile_expr
 
 __all__ = [
     "GenerateInputRef",
+    "is_exact_sequence_key",
     "is_self_reference",
     "iter_generate_input_refs",
     "parent_key_problem",
     "parent_lookup_problems",
+    "per_parent_bounds",
     "per_parent_problems",
     "self_reference_problems",
 ]
@@ -74,8 +84,18 @@ _UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
 
 
 def _positive(value: Any) -> int:
-    """A bound as a positive int, or 0 for absent, zero, or anything the registry refuses."""
     return value if type(value) is int and value > 0 else 0
+
+
+def per_parent_bounds(col: Mapping[str, Any]) -> tuple[int, int]:
+    """`(min_per_parent, max_per_parent)` of a generate column, 0 meaning unset.
+
+    The one reader of the bounds: validate, the capacity probe, admission and both reference
+    draws all ask here. A bound is an int above zero; absent, None and 0 are unset. A value the
+    registry refuses (a negative, bool, float or string) also reads as unset, so a raw dict that
+    skipped validation can never turn one into a bound by coercion.
+    """
+    return _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
 
 
 def _row_count(table: Mapping[str, Any] | None) -> int | None:
@@ -91,7 +111,7 @@ def _column_problem(
     col: Mapping[str, Any], rows: int | None, parent_rows: int | None
 ) -> tuple[str, str] | None:
     """The first `(option, code)` problem of one reference column, or None."""
-    lo, hi = _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
+    lo, hi = per_parent_bounds(col)
     if not lo and not hi:
         return None
     if lo > hi > 0:
@@ -140,19 +160,42 @@ def is_self_reference(table_name: Any, col: Mapping[str, Any]) -> bool:
     )
 
 
+def is_exact_sequence_key(column: Mapping[str, Any]) -> bool:
+    """Whether `column` is a `sequence` that injects no nulls, so every row is a distinct key."""
+    if column.get("type") != "sequence":
+        return False
+    rate = column.get("null_probability")
+    if rate is None:
+        return True
+    if not isinstance(rate, numbers.Real) or isinstance(rate, bool):
+        return False
+    return _not_above_zero(rate)
+
+
+def _not_above_zero(rate: Any) -> bool:
+    # Typed `Any`: `numbers.Real` declares no ordering against an int literal.
+    return not rate > 0
+
+
 def parent_key_problem(columns: Sequence[Any], key_name: Any, code: str) -> str | None:
-    """`code` unless `key_name` is a `sequence` column of `columns` that injects no nulls.
+    """`code` unless `key_name` is a column of `columns` that `is_exact_sequence_key` accepts.
 
     The one rule for a key that reaches exactly one row: distinct by construction and never
     null. Each caller passes the columns the key may come from and its own reason code.
     """
     for candidate in columns:
         if isinstance(candidate, Mapping) and candidate.get("name") == key_name:
-            unique = candidate.get("type") == "sequence" and not _nulls_on(
-                candidate.get("null_probability")
-            )
-            return None if unique else code
+            return None if is_exact_sequence_key(candidate) else code
     return code
+
+
+def _key_is_valid(columns: Sequence[Any], c_idx: int, key_name: Any) -> bool:
+    """Whether `key_name` is an uncast `sequence` column declared before `c_idx` with no nulls."""
+    earlier = columns[:c_idx]
+    if parent_key_problem(earlier, key_name, _KEY_INVALID):
+        return False
+    key = next(c for c in earlier if isinstance(c, Mapping) and c.get("name") == key_name)
+    return "output_type" not in key
 
 
 def _tree_problem(
@@ -160,11 +203,11 @@ def _tree_problem(
 ) -> tuple[str, str] | None:
     """The first `(option, code)` problem of one self-reference column, or None."""
     # A tree's key is read while the table is drawn, so only an earlier column can be one.
-    if parent_key_problem(columns[:c_idx], col.get("reference_column"), _KEY_INVALID):
+    if not _key_is_valid(columns, c_idx, col.get("reference_column")):
         return ("reference_column", _KEY_INVALID)
     if col.get("distribution") not in (None, "random"):
         return ("distribution", _OPTION_UNSUPPORTED)
-    if _positive(col.get("min_per_parent")):
+    if per_parent_bounds(col)[0]:
         return ("min_per_parent", _OPTION_UNSUPPORTED)
     if _nulls_on(col.get("null_probability")):
         return ("null_probability", _OPTION_UNSUPPORTED)

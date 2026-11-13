@@ -56,3 +56,9 @@ def get_reason(namespace: str, code: str) -> ReasonSpec:
 
 def require_known(ref: ReasonRef) -> ReasonSpec:
     return get_reason(ref.namespace, ref.code)
+
+
+def reason_ref_payload(ref: ReasonRef) -> dict[str, str]:
+    """The one wire mapping of a reason identity. It names the identity only and does not
+    resolve it; a caller that must reject an unknown identity checks `require_known` first."""
+    return {"namespace": ref.namespace, "code": ref.code}

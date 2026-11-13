@@ -359,6 +359,16 @@ class Links(_Model):
     baseline: BaselineLink | None
 
 
+class SampleMarker(_Model):
+    """A run made with `--sample`: the head rows asked for, the seed tables, the rows read from
+    each edgeless table and the scratch folder (relative to the project) the outputs went to."""
+
+    rows: Count
+    roots: Annotated[tuple[SafeName, ...], MaxLen(256)]
+    head_tables: dict[SafeName, Count]
+    scratch: RelPath
+
+
 class RunResult(_Model):
     # ``schema`` would shadow ``BaseModel.schema``, so the field has another name and the wire key.
     schema_tag: SchemaTag = Field(default=RUN_RESULT_SCHEMA, alias="schema")
@@ -377,6 +387,9 @@ class RunResult(_Model):
     failure: Failure | None
     timings: Timings
     links: Links
+    # Optional under /v1 (compatibility contract section 3.1): a record that never set it keeps
+    # its old wire form, so the key is left out of every dump until a sample sets it.
+    sample: SampleMarker | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 # --- read model, derived -----------------------------------------------------------------------

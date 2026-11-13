@@ -248,6 +248,8 @@ nitpick_ignore = [
     ("py:class", "StrategyDefault"),
     ("py:class", "ExpectedField"),
     ("py:class", "ReleasePhase"),
+    ("py:class", "Version"),
+    ("py:class", "PutResult"),
     ("py:class", "ProgressEvent"),
     ("py:class", "decoy_engine.progress.ProgressEvent"),
     ("py:obj", "DecoyError"),

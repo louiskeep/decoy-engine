@@ -8,12 +8,14 @@ version = "0.1.0"
 description = "Compiled Rust companion for decoy-engine's native masking hot path (optional accelerator; the core engine installs and runs without it)."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-license = "Apache-2.0"
+license = "FSL-1.1-ALv2"
+# A copy of the repo-root LICENSE: PEP 639 paths cannot leave this directory.
+license-files = ["LICENSE"]
 authors = [{ name = "louiskeep" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: Other/Proprietary License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: MacOS",

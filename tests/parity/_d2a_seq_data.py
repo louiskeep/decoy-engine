@@ -134,6 +134,7 @@ def run_seq(
     return (adapter or PandasExecutionAdapter()).run_sequential(
         chain_plan(seeds),
         lambda t: srcs[t],
+        config={},
         registry=REGISTRY,
         relationship_graph=chain_graph(policy),
         namespace_registry=NAMESPACES,
@@ -173,6 +174,7 @@ def run_plain() -> Any:
     return PandasExecutionAdapter().run_sequential(
         plan,
         lambda _name: src,
+        config={},
         registry=REGISTRY,
         relationship_graph=RelationshipGraph(edges=(), ordering=()),
         namespace_registry=NAMESPACES,

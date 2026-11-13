@@ -412,6 +412,7 @@ def _run_sequential(
         relationship_graph=make_graph(policy),
         namespace_registry=NamespaceRegistry(bindings=()),
         sink=sink,
+        config={},
     )
     mask_s = time.perf_counter() - mask_t0
     _, tm_peak = tracemalloc.get_traced_memory()
@@ -598,10 +599,8 @@ def _run_out_of_core(
         tracemalloc.start()
         mask_t0 = time.perf_counter()
         try:
-            # source_dir schema is not guaranteed to carry payload_NN columns
-            # (a real/shared corpus), so the strategy knob applies only to the
-            # in-probe-generated chain -- matches `_run_full`/`_run_sequential`
-            # and is enforced up front in `main()`.
+            # A real source_dir need not carry payload_NN columns, so the strategy knob
+            # applies only to the generated chain, as in `main()` and the other modes.
             plan = (
                 make_plan(width=width, strategy=strategy)
                 if (source_dir is None and strategy is not None)
@@ -617,6 +616,7 @@ def _run_out_of_core(
                 memory_limit=memory_limit,
                 batch_rows=batch_rows,
                 key_provider=_PROBE_KEY,
+                config={},
             )
         finally:
             mask_s = time.perf_counter() - mask_t0

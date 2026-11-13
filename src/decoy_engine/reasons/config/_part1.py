@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, RetryClass, Severity
+from decoy_engine.reasons._types import Kind, Outcome, RetryClass, Severity
 
 __all__ = [
     "CLOUD_IO_UNSUPPORTED_FORMAT",
@@ -148,7 +148,7 @@ SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
 SOURCE_FILE_DECLARED_COLUMN_MISSING = _d(
     "source_file.declared_column_missing",
     "Source file declared column missing.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 SOURCE_FILE_UNDECLARED_COLUMN = _d(
     "source_file.undeclared_column",

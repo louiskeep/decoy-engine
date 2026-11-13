@@ -119,3 +119,34 @@ def test_the_frozen_table_covers_every_parameter_once() -> None:
 def test_the_public_names_are_the_same_function() -> None:
     assert decoy_engine.run_pipeline is run_pipeline
     assert execution_run_pipeline is run_pipeline
+
+
+# (name, default repr, shown in repr, compared by ==): the public fields of `ExecutionResult`.
+FROZEN_RESULT_FIELDS: tuple[tuple[str, str, bool, bool], ...] = (
+    ("outputs", "<required>", True, True),
+    ("timings", "()", True, True),
+    ("boundary_conversion_ms", "0.0", True, True),
+    ("warnings", "()", True, True),
+    ("quality_metrics", "<factory>", True, True),
+    ("table_kinds", "<factory>", True, True),
+    ("row_errors", "()", True, True),
+    ("quarantine_access", "None", False, True),
+    ("sample_source_rows", "None", False, False),
+)
+
+
+def test_execution_result_fields_are_frozen() -> None:
+    import dataclasses
+
+    from decoy_engine.execution._adapter import ExecutionResult
+
+    observed = []
+    for f in dataclasses.fields(ExecutionResult):
+        if f.default is not dataclasses.MISSING:
+            default = repr(f.default)
+        elif f.default_factory is not dataclasses.MISSING:
+            default = "<factory>"
+        else:
+            default = "<required>"
+        observed.append((f.name, default, f.repr, f.compare))
+    assert tuple(observed) == FROZEN_RESULT_FIELDS

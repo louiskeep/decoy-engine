@@ -6,10 +6,10 @@
       "tag": "decoy-vault/v2",
       "kind": "vault",
       "synthetic": true,
-      "produced_by_engine_version": "0.1.0",
+      "produced_by_engine_version": "0.17.0",
       "seed_protocol_version": 7,
       "path": "decoy-vault-v2__synthetic.vault",
-      "job_seed_hex": "c0ffee0badc0de01",
+      "mask_key_hex": "c0ffee0badc0de01c0ffee0badc0de02c0ffee0badc0de03c0ffee0badc0de04",
       "entries_written": 5,
       "expected_mapping": {
         "person_identity\u001fJordan Avery": "Maria Gonzalez",

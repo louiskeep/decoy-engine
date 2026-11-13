@@ -197,7 +197,7 @@ def test_reorder_insufficient_disk_fails_closed() -> None:
     budgets = resolve_reorder_budgets(512 * 1024 * 1024, remaining_disk_bytes=1_000)
     with pytest.raises(ExecutionError) as excinfo:
         require_disk(budgets, mandatory_staging_bytes=0, estimated_output_bytes=10**9)
-    assert excinfo.value.code == "out_of_core_reorder_budget_too_small"
+    assert excinfo.value.code == "out_of_core_reorder_disk_budget_too_small"
 
 
 # ---------------------------------------------------------------------------

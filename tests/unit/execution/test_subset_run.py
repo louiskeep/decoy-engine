@@ -192,6 +192,7 @@ class _MemVault:
 
     def __init__(self) -> None:
         self._m: dict[tuple[str, str], str] = {}
+        self.derivation_scope = bytes(range(16))
 
     def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
         return self._m.get((namespace, plaintext))

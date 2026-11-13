@@ -48,10 +48,6 @@ from decoy_engine.sdk import (
 __all__ = ["S3Config", "S3FileSink", "S3FileSource"]
 
 
-# S3 multipart minimum part size. AWS rejects parts smaller than 5 MiB
-# except for the final part of a multipart upload.
-_MULTIPART_MIN_PART_BYTES = 5 * 1024 * 1024
-
 # Default streaming read chunk size for `open()`. ~1 MiB amortizes per-chunk
 # overhead without blowing past the platform's smallest worker RSS budget.
 _DEFAULT_READ_CHUNK_BYTES = 1 * 1024 * 1024
@@ -86,7 +82,7 @@ class S3Config(ConnectorConfig):
     )
 
 
-def _build_s3_client(config: S3Config):
+def _build_s3_client(config: S3Config, *, single_request: bool = False):
     """Build the client through the one factory (``_clients.s3_client``)."""
     return _clients.s3_client(
         region=config.region,
@@ -95,7 +91,7 @@ def _build_s3_client(config: S3Config):
         secret_access_key=(
             config.secret_access_key.get_secret_value() if config.secret_access_key else None
         ),
-        single_request=False,
+        single_request=single_request,
     )
 
 
@@ -136,8 +132,8 @@ class S3FileSource(FileSource[S3Config]):
 
     def check(self) -> CheckResult:
         """Verify the bucket exists and the configured credentials reach it."""
-        client = self._client_or_build()
         try:
+            client = self._client_or_build()
             client.head_bucket(Bucket=self.config.bucket)
         except Exception as exc:
             return CheckResult(ok=False, detail=str(_clients.s3_error(exc)))
@@ -191,16 +187,21 @@ class S3FileSource(FileSource[S3Config]):
         This matches what `list()` returned: callers iterate list, pick
         a key, pass it to open. Re-joining would double-prefix.
         """
-        client = self._client_or_build()
-        response = _clients.s3_call(client.get_object, Bucket=self.config.bucket, Key=path)
+        yield from _stream_object(self._client_or_build(), self.config.bucket, path)
 
-        body = response["Body"]
-        try:
-            for chunk in body.iter_chunks(chunk_size=_DEFAULT_READ_CHUNK_BYTES):
-                if chunk:
-                    yield chunk
-        finally:
-            body.close()
+
+def _stream_object(client, bucket: str, key: str) -> Iterator[bytes]:
+    """The one S3 object read loop, shared by the source and the object store."""
+    response = _clients.s3_call(client.get_object, Bucket=bucket, Key=key)
+    body = response["Body"]
+    try:
+        # Each `next` reads from the network, so it needs translating like any call.
+        chunks, done = body.iter_chunks(chunk_size=_DEFAULT_READ_CHUNK_BYTES), object()
+        while (chunk := _clients.s3_call(next, chunks, done)) is not done:
+            if chunk:
+                yield chunk
+    finally:
+        body.close()
 
 
 class S3FileSink(FileSink[S3Config]):
@@ -229,8 +230,8 @@ class S3FileSink(FileSink[S3Config]):
         return self._client
 
     def check(self) -> CheckResult:
-        client = self._client_or_build()
         try:
+            client = self._client_or_build()
             client.head_bucket(Bucket=self.config.bucket)
         except Exception as exc:
             return CheckResult(ok=False, detail=str(_clients.s3_error(exc)))
@@ -239,9 +240,9 @@ class S3FileSink(FileSink[S3Config]):
     def write(self, path: str, chunks: Iterator[bytes]) -> WriteResult:
         """Write `chunks` to `<config.prefix>/<path>` in the bucket.
 
-        Strategy:
+        `_clients.s3_put` is the one put path. Strategy:
 
-        1. Buffer incoming chunks up to `_MULTIPART_MIN_PART_BYTES` (5 MiB).
+        1. Buffer incoming chunks up to the 5 MiB multipart minimum part size.
         2. If the iterator is exhausted before the buffer fills, do a
            single `put_object`. This is the cheap path for small files.
         3. Otherwise initiate a multipart upload, push the filled buffer
@@ -254,105 +255,5 @@ class S3FileSink(FileSink[S3Config]):
         """
         client = self._client_or_build()
         key = _join_key(self.config.prefix, path)
-
-        buffer = bytearray()
-        upload_id: str | None = None
-        parts: list[dict] = []
-        part_number = 0
-        total_bytes = 0
-
-        try:
-            for chunk in chunks:
-                if not chunk:
-                    continue
-                buffer.extend(chunk)
-                while len(buffer) >= _MULTIPART_MIN_PART_BYTES:
-                    if upload_id is None:
-                        upload_id = self._initiate_multipart(client, key)
-                    # Take exactly the minimum part size from the head of
-                    # the buffer; bytes beyond stay queued for the next part
-                    # (or the final flush below).
-                    payload = bytes(buffer[:_MULTIPART_MIN_PART_BYTES])
-                    del buffer[:_MULTIPART_MIN_PART_BYTES]
-                    part_number += 1
-                    etag = self._upload_part(client, key, upload_id, part_number, payload)
-                    parts.append({"PartNumber": part_number, "ETag": etag})
-                    total_bytes += len(payload)
-
-            # Iterator exhausted. Flush the tail.
-            if upload_id is None:
-                # Whole body fits under the multipart threshold: single PUT.
-                payload = bytes(buffer)
-                _clients.s3_call(
-                    client.put_object, Bucket=self.config.bucket, Key=key, Body=payload
-                )
-                total_bytes += len(payload)
-            else:
-                # Multipart in flight; upload remaining buffer as the
-                # final part (S3 allows the last part to be < 5 MiB) and
-                # complete. If buffer is empty here, the upload is
-                # exactly N*5MiB and we just complete with the parts
-                # we already have.
-                if buffer:
-                    payload = bytes(buffer)
-                    part_number += 1
-                    etag = self._upload_part(client, key, upload_id, part_number, payload)
-                    parts.append({"PartNumber": part_number, "ETag": etag})
-                    total_bytes += len(payload)
-                self._complete_multipart(client, key, upload_id, parts)
-        except Exception:
-            # Abort to free the S3-side multipart state. Best-effort: an
-            # abort failure shouldn't mask the original write failure.
-            if upload_id is not None:
-                try:
-                    client.abort_multipart_upload(
-                        Bucket=self.config.bucket,
-                        Key=key,
-                        UploadId=upload_id,
-                    )
-                except Exception:
-                    pass
-            raise
-
-        return WriteResult(path=key, bytes_written=total_bytes)
-
-    # ----- multipart helpers ---------------------------------------------
-
-    def _initiate_multipart(self, client, key: str) -> str:
-        response = _clients.s3_call(
-            client.create_multipart_upload, Bucket=self.config.bucket, Key=key
-        )
-        return response["UploadId"]
-
-    def _upload_part(
-        self,
-        client,
-        key: str,
-        upload_id: str,
-        part_number: int,
-        body: bytes,
-    ) -> str:
-        response = _clients.s3_call(
-            client.upload_part,
-            Bucket=self.config.bucket,
-            Key=key,
-            UploadId=upload_id,
-            PartNumber=part_number,
-            Body=body,
-        )
-        return response["ETag"]
-
-    def _complete_multipart(
-        self,
-        client,
-        key: str,
-        upload_id: str,
-        parts: list[dict],
-    ) -> None:
-        _clients.s3_call(
-            client.complete_multipart_upload,
-            Bucket=self.config.bucket,
-            Key=key,
-            UploadId=upload_id,
-            MultipartUpload={"Parts": parts},
-        )
+        total = _clients.s3_put(client, self.config.bucket, key, chunks, {})
+        return WriteResult(path=key, bytes_written=total)

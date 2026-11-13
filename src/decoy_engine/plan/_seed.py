@@ -2,9 +2,10 @@
 
 The pipeline profile path (`execution/_pipeline.py`), the plan compiler
 (`plan/_compile.py`), generation (`generation/synthesize.py`), unmask, and
-the vault all route their config-side `seed` value through these two
-functions so a `bool`/`float` seed is rejected identically everywhere
-instead of one path coercing `seed: true` to `1` while another raises.
+the vault (which validates the seed but never keys on it) all route their
+config-side `seed` value through these two functions so a `bool`/`float`
+seed is rejected identically everywhere instead of one path coercing `seed:
+true` to `1` while another raises.
 
 Lives in its own module rather than inside `_compile.py` so the validator
 has a single import home and `_compile.py` stays within its size budget.
@@ -112,10 +113,10 @@ def _normalize_job_seed(config: dict[str, Any]) -> bytes:
 def job_seed_for_config(config: dict[str, Any]) -> bytes:
     """The 8-byte job seed ``config`` resolves to (public).
 
-    The same value `VaultWriter` and `unmask_pipeline` key on, exposed so an
-    external caller (e.g. a CLI vault inspector) can run
-    ``load_vault(path, job_seed_for_config(config))`` without reaching into the
-    private normalizer. A `bool`/`float`/out-of-range seed is rejected here
-    exactly as it is on the run path.
+    The seed the plan's non-keyed derivations use. It is public and never a
+    vault key: `load_vault` and `VaultWriter` refuse it (`weak_mask_secret`); a
+    vault opens only under the mask root of the run's secret. A
+    `bool`/`float`/out-of-range seed is rejected here exactly as it is on the
+    run path.
     """
     return _normalize_job_seed(config)

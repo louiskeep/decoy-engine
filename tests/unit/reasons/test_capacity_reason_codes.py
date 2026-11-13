@@ -66,3 +66,14 @@ def test_full_frame_oom_risk_refusals_stay_excluded() -> None:
     ):
         assert code in errors.CAPACITY_EXCLUSIONS
         assert code not in errors.CAPACITY_REASON_CODES
+
+
+def test_reorder_disk_shortfall_is_disk_not_capacity() -> None:
+    code = "out_of_core_reorder_disk_budget_too_small"
+    assert reasons.is_registered(code)
+    assert code not in errors.CAPACITY_REASON_CODES
+    assert (
+        errors.CAPACITY_EXCLUSIONS[code]
+        == errors.CAPACITY_EXCLUSIONS[reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED]
+    )
+    assert "out_of_core_reorder_budget_too_small" in errors.CAPACITY_REASON_CODES

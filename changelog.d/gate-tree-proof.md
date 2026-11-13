@@ -1,3 +1,0 @@
-### Changed (gate tree proof: skip a main gate already run on the same tree, CI, 2026-11-11)
-
-`gate-selfhosted.yml` takes a `mode` input on manual dispatch: `baseline` (the default, impact-selected tests) or `full` (the whole suite, as a main push runs it). Gate jobs are named `gate <shard>/2 <mode>`. A new hosted `tree-proof` job runs on each push to main and skips the main gate only when the pushed tree hash equals the head tree of a recent green owner dispatch of the gate in `full` mode with both shards passed. Any other case, or a failed lookup, runs the main gate as before. The rule lives in `scripts/dev/gate_tree_proof.py`.

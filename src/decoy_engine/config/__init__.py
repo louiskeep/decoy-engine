@@ -45,10 +45,12 @@ from decoy_engine.config._generate_option_catalog import (
 from decoy_engine.config._generate_options import refuse_unlisted_generate_families
 from decoy_engine.config._generate_relational import (
     GenerateInputRef,
+    is_exact_sequence_key,
     is_self_reference,
     iter_generate_input_refs,
     parent_key_problem,
     parent_lookup_problems,
+    per_parent_bounds,
     per_parent_problems,
     self_reference_problems,
 )
@@ -74,6 +76,7 @@ from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._post_scan import (
     Dismissal,
     PostScanConfig,
+    post_scan_gate_applies,
     post_scan_integrity_requested,
 )
 from decoy_engine.config._pre_scan import PreScanConfig
@@ -166,6 +169,7 @@ __all__ = [
     "distinct_categories",
     "generate_columns_of",
     "generate_option_catalog",
+    "is_exact_sequence_key",
     "is_self_reference",
     "iter_generate_input_refs",
     "override_sources",
@@ -175,7 +179,9 @@ __all__ = [
     "parse_output_type",
     "parse_pipeline_config",
     "parse_relationship_config",
+    "per_parent_bounds",
     "per_parent_problems",
+    "post_scan_gate_applies",
     "post_scan_integrity_requested",
     "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",

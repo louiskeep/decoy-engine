@@ -17,12 +17,16 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _chunked_dgrn
 from decoy_engine.execution._chunked import check_chunked_compatibility
+from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter, collect_vault_entries
 from tests._declared_schema import declared_schema
 from tests.native._b8_support import (
+    _mask_pipeline_chunked_below_gate,
+    _run_mask_chunked_below_gate,
     run_mask_chunked_below_gate,
     run_mask_pipeline_chunked_below_gate,
 )
@@ -62,6 +66,8 @@ def _entry(config: dict[str, Any], chunks: Any, *, below_gate: bool = False, **k
     entry = run_mask_chunked_below_gate if below_gate else run_mask_chunked
     kw.setdefault("key_provider", key_provider())
     sink = kw.setdefault("route_evidence_sink", [])
+    if kw.get("vault_writer") is not None:  # the public entry refuses a vault writer (B-6 B0)
+        entry = _run_mask_chunked_below_gate if below_gate else _run_mask_chunked
     out = entry(config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw)
     for column in _forced_columns(config):
         assert len(sink) == 1, sink
@@ -73,6 +79,8 @@ def _entry(config: dict[str, Any], chunks: Any, *, below_gate: bool = False, **k
 def _oracle(config: dict[str, Any], chunks: Any, *, below_gate: bool = False, **kw: Any) -> Any:
     entry = run_mask_pipeline_chunked_below_gate if below_gate else run_mask_pipeline_chunked
     kw.setdefault("key_provider", key_provider())
+    if kw.get("vault_writer") is not None:  # the public entry refuses a vault writer (B-6 B0)
+        entry = _mask_pipeline_chunked_below_gate if below_gate else _mask_pipeline_chunked
     table = kw.pop("table", TABLE)
     kw.setdefault("source_schema", declared_schema(config, table))
     return entry(config, chunks, table=table, engine_version=ENGINE_VERSION, **kw)

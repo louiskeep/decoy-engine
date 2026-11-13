@@ -419,50 +419,27 @@ def _vault_job(tmp_path: Path) -> tuple[dict[str, Any], pa.Table]:
     return cfg, src
 
 
-@pytest.mark.parametrize("route", ROUTES)
-def test_streamed_vault_entries_and_file_equal_the_resident_run(
-    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pytest.importorskip("cryptography")
-    from decoy_engine.vault import load_vault, vault_writer_for_config
-    from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
-
-    if route == "oracle":
-        support.remove_companion(monkeypatch)
-    cfg, src = _vault_job(tmp_path)
-    streamed_writer, resident_writer = vault_writer_for_config(cfg), vault_writer_for_config(cfg)
-    sink = b6a.RecordingSink()
-    b6a.run_streamed(cfg, src, sink, vault_writer=streamed_writer)
-    assert sink.count("commit") == 1
-    b6a.run_streamed(cfg, src, None, vault_writer=resident_writer, **b6a.resident_kw())
-    assert streamed_writer._entries == resident_writer._entries
-    assert len(streamed_writer._entries) == 2 * support.ROWS
-    maps = {}
-    for label, writer in (("streamed", streamed_writer), ("resident", resident_writer)):
-        path = tmp_path / f"{label}.vault"
-        writer.write(path)
-        maps[label], _ambiguous = load_vault(path, THROWAWAY_KEY_PROVIDER.mask_key())
-    assert maps["streamed"] == maps["resident"]
-
-
 def test_a_vault_writer_keyed_differently_is_rejected_before_anything_is_staged(
     tmp_path: Path,
 ) -> None:
     from decoy_engine.keyprovider import SecretKeyProvider
     from decoy_engine.vault import VaultError, VaultWriter
 
+    # No sink: a sink with a vault writer is refused before keying (B-6 B0,
+    # tests/unit/execution/test_vault_boundary.py), so this pins the keying refusal alone.
     cfg, src = _vault_job(tmp_path)
-    sink, target = b6a.real_sink(tmp_path)
-    with pytest.raises((VaultError, ExecutionError)):
+    before = sorted(p.name for p in tmp_path.iterdir())
+    # A floor-valid key that is not the run's mask root, so the route's key-match guard refuses it.
+    with pytest.raises(VaultError) as exc:
         b6a.run_streamed(
             cfg,
             src,
-            sink,
-            vault_writer=VaultWriter((42).to_bytes(8, "big")),
+            None,
+            vault_writer=VaultWriter(b"\x42" * 32),
             key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
         )
-    assert sink.calls == []
-    _assert_clean(tmp_path, target)
+    assert exc.value.code == "vault_key_mismatch"
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
 
 
 def test_an_open_session_left_uncommitted_on_a_normal_exit_aborts_and_raises() -> None:
