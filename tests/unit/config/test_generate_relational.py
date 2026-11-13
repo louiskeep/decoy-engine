@@ -273,8 +273,10 @@ def test_at7_a_self_edge_does_not_hide_a_cycle_through_the_same_table() -> None:
         {"name": "id", "type": "categorical", "categories": ["a", "b", "c"]},
         {"name": "id", "type": "sequence", "start": 1, "null_probability": 0.2},
         {"name": "id", "type": "faker", "faker_type": "uuid4"},
+        {"name": "id", "type": "sequence", "start": 1, "output_type": "decimal(2)"},
+        {"name": "id", "type": "sequence", "start": 1, "output_type": "int"},
     ],
-    ids=["categorical", "nullable-sequence", "faker"],
+    ids=["categorical", "nullable-sequence", "faker", "decimal-output-type", "int-output-type"],
 )
 def test_at9_a_key_that_is_not_a_non_null_sequence_is_refused(key: dict[str, Any]) -> None:
     codes, locs = _refused(_tree(key=key))
@@ -293,6 +295,13 @@ def test_at9_a_key_declared_after_the_reference_is_refused() -> None:
 
 def test_at9_a_sequence_key_with_an_explicit_zero_null_probability_validates() -> None:
     assert validate(_tree(key={**ID, "null_probability": 0}))
+
+
+def test_at9_output_type_is_refused_on_the_key_only() -> None:
+    # The tree copies raw key values and a reference cannot declare `output_type`, so a cast
+    # key would leave every foreign key unmatched; another column may still declare one.
+    cost = {"name": "cost", "type": "sequence", "start": 1, "output_type": "decimal(2)"}
+    assert validate([table("employees", 10, [ID, cost, ref("manager_id", "employees")])])
 
 
 @pytest.mark.parametrize(
