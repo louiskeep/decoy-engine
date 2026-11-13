@@ -9,8 +9,7 @@ from pathlib import Path
 
 import yaml
 from scripts.dev import gate_tree_proof
-
-from tests.sentry.tooling._ci_lanes import workflow_events
+from scripts.dev.required_checks import workflow_events
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -53,7 +52,7 @@ def selfhosted_violations(wf: dict) -> list[str]:
     """Self-hosted jobs run only on push and dispatch and must carry the owner-only guard.
 
     A PR or a schedule must never start one: gate-vm-watch starts a VM for any queued self-hosted
-    job. Events are decoded in one place, tests.sentry.tooling._ci_lanes.workflow_events."""
+    job. Events are decoded in one place, scripts.dev.required_checks.workflow_events."""
     triggers = workflow_events(wf)
     out = []
     for name, job in wf["jobs"].items():

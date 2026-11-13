@@ -282,6 +282,9 @@ def _declare(record_file: Path, roots: list[Path]) -> list[str]:
         path = Path(file)
         if not path.is_file() or not any(r == path or r in path.parents for r in roots):
             continue
+        if kind == "missing":  # a declaration the source lacks is never deleted, only reported
+            rows.append(f"hand {rec['nodes'][0]} {rec['table']}")
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         finder = _list_matches if kind == "column" else _tables_matches
         hits = [(path, m) for m in finder(tree, rec)]

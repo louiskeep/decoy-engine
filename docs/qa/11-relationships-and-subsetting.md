@@ -51,9 +51,10 @@ block), orphan handling, composite and self-referencing keys, `from_parent`, and
 - `preserve` leaves the orphan's real key in the masked output. That is a real source
   value published by a masking run. Confirm V1 warns about it, since only `warn` emits
   a warning.
-- A pipeline run refuses a config that sets a `subset:` block
-  (`config.subset_run_unsupported`). Subsetting is a separate step before masking. Check
-  the CLI makes that order obvious.
+- A pipeline run applies a `subset:` block and masks only the closed subset rows. Check a
+  run with `subset_request="skip"` says `{"applied": false}`, that a lazy source rewritten
+  mid-run is refused with `runtime.lazy_source_changed`, and that the chunked entries still
+  refuse with `config.subset_run_unsupported`.
 - The documented when-gate limitation: a child can carry a raw key when a `when:` gate
   left a duplicate parent row unmasked. Confirm a reviewer of the output can tell this
   happened.

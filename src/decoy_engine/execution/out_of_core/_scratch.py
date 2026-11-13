@@ -1,15 +1,24 @@
-"""Private scratch helpers the out-of-core runner uses beneath its scratch arena."""
+"""Private scratch helpers the out-of-core runner uses beneath its scratch arena, and the subset
+stage's per-run root (`engine_scratch_root`) until that stage moves onto the arena."""
 
 from __future__ import annotations
 
 import os
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
-from decoy_engine.fileaccess import ScratchArena, open_protected_dir
+from decoy_engine.fileaccess import ScratchArena, open_protected_dir, protected_scratch_dir
 
 if TYPE_CHECKING:
     from decoy_engine.fileaccess._scratch import ScratchAccess
+
+
+def engine_scratch_root(parent: Path | None) -> AbstractContextManager[Path]:
+    """A private per-run root the engine creates, removed on every exit.
+
+    Under a caller-named `parent` (ambient policy only) or the system temp directory."""
+    return protected_scratch_dir(parent, prefix="decoy-ooc-run-")
 
 
 def open_private(path: Path) -> BinaryIO:

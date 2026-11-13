@@ -134,31 +134,20 @@ def test_both_fraction_and_count_rejected(tmp_path) -> None:
         PipelineConfig.model_validate(config)
 
 
-def test_non_parquet_source_rejected_when_subset_configured(tmp_path) -> None:
+def test_csv_source_is_accepted_when_subset_configured(tmp_path) -> None:
+    """A run applies a subset to any reader, so a CSV seed source validates."""
     config = _base_config(tmp_path)
     config["sources"]["customers"]["format"] = "csv"
     config["sources"]["customers"]["has_header"] = True
-    config = _with_subset(config)
-    with pytest.raises(Exception) as excinfo:
-        PipelineConfig.model_validate(config)
-    assert "convert to Parquet for subsetting" in str(excinfo.value)
+    assert PipelineConfig.model_validate(_with_subset(config)).subset is not None
 
 
-def test_relationship_only_child_table_requires_parquet(tmp_path) -> None:
-    """LOW-2 (dennis review): `orders` is a relationship CHILD but not itself
-    a subset seed table. `tables_needing_parquet` in `_pipeline.py` unions
-    every relationship parent/child, not just seeded tables, so a rel-only
-    child left on csv must still be rejected. Only `customers` (both seed
-    and relationship member) was previously exercised; this pins the child
-    that is a relationship member alone.
-    """
+def test_relationship_only_child_table_may_be_csv(tmp_path) -> None:
+    """A relationship child that is not a seed table may be CSV as well."""
     config = _base_config(tmp_path)
     config["sources"]["orders"]["format"] = "csv"
     config["sources"]["orders"]["has_header"] = True
-    config = _with_subset(config)
-    with pytest.raises(Exception) as excinfo:
-        PipelineConfig.model_validate(config)
-    assert "convert to Parquet for subsetting" in str(excinfo.value)
+    assert PipelineConfig.model_validate(_with_subset(config)).subset is not None
 
 
 def test_no_subset_block_is_unaffected(tmp_path) -> None:

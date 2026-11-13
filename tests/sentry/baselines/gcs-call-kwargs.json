@@ -8,9 +8,6 @@
     "decoy_engine/_opaque.py::validate_after_init.init::open::1": {
       "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
     },
-    "decoy_engine/config/_pipeline.py::PipelineConfig._subset_stage_constraints::update::0": {
-      "reason": "set.update on a local set of names"
-    },
     "decoy_engine/connectors/sftp.py::SFTPFileSink.write::open::0": {
       "reason": "paramiko SFTPClient.open, not a GCS Blob"
     },

@@ -22,7 +22,7 @@ import pytest
 
 from decoy_engine import fileaccess
 from decoy_engine.execution.out_of_core import _runner, run_fk_out_of_core
-from decoy_engine.fileaccess import ProtectedDirUnsafe, ScratchArena
+from decoy_engine.fileaccess import ScratchArena
 from decoy_engine.fileaccess._scratch import ARENA_PREFIX
 from decoy_engine.plan._types import TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -78,7 +78,7 @@ def _assert_arena_child(walks: list[dict[str, Any]], caller: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "cell", ["mode_untouched", "missing_created", "symlink_refused", "strict_refused"]
+    "cell", ["mode_untouched", "missing_created", "symlink_followed", "strict_refused"]
 )
 def test_caller_temp_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cell: str) -> None:
     caller = tmp_path / "caller"
@@ -92,12 +92,18 @@ def test_caller_temp_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cell: 
         _assert_arena_child(_run(monkeypatch, temp_dir=caller), caller)
         assert caller.is_dir() and _mode(caller) == 0o700
         assert list(caller.iterdir()) == []
-    elif cell == "symlink_refused":
+    elif cell == "symlink_followed":
+        # A symlinked caller `temp_dir` is followed, as S1a's `_open_base` does.
         target = tmp_path / "target"
         target.mkdir(mode=0o700)
         caller.symlink_to(target)
-        with pytest.raises((OSError, ProtectedDirUnsafe)):
-            _run(monkeypatch, temp_dir=caller)
+        walks = _run(monkeypatch, temp_dir=caller)
+        roots = {w["root"] for w in walks}
+        assert len(roots) == 1, roots
+        (root,) = roots
+        assert root.name.startswith(ARENA_PREFIX), root
+        assert os.path.realpath(root.parent) == os.path.realpath(target), root
+        assert {w["mode"] for w in walks} == {0o700}, walks
         assert caller.is_symlink()
         assert not [p for p in target.iterdir() if p.name.startswith(ARENA_PREFIX)]
     else:

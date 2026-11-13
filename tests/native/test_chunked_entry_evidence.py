@@ -17,7 +17,7 @@ import pytest
 
 import decoy_engine
 from decoy_engine import run_mask_chunked
-from decoy_engine.errors import DecoyError
+from decoy_engine.errors import DecoyError, PipelineValidationError
 from decoy_engine.execution import _errors as _execution_errors
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native import _crypto_ext
@@ -279,6 +279,12 @@ def test_vetoed_tables_report_planned_native_and_executed_oracle(
     case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config, names, kwargs, reason, planned = _veto_case(case, monkeypatch)
+    if case == "schema_veto":  # a configured column the source lacks is refused, not rerouted
+        with pytest.raises(PipelineValidationError) as caught:
+            _run(config, names, **kwargs)
+        assert caught.value.code == "source_file.declared_column_missing"
+        assert "column q" in str(caught.value)
+        return
     _, sink, evidence = _run(config, names, **kwargs)
     agg = aggregate_chunked_route_evidence(sink)
     assert evidence.native_admitted is False
@@ -468,6 +474,12 @@ def test_schema_drift_is_an_execution_error_and_a_decoy_error(kind: str, detail:
             )
         )
 
+    if kind == "missing":  # a declared column a later chunk drops is a coded config refusal
+        with pytest.raises(PipelineValidationError) as refused:
+            go()
+        assert refused.value.code == "source_file.declared_column_missing"
+        assert "column p" in str(refused.value)
+        return
     caught: list[BaseException] = []
     try:
         go()
