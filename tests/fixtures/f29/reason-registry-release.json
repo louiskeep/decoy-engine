@@ -11684,6 +11684,23 @@
     },
     {
       "namespace": "route",
+      "code": "post_scan_models_unsupported",
+      "fields": {
+        "code": "68ab4e07c70a007513ee622f8cf33c6f1245e83714fe52901c4817ac83d9b13b",
+        "context": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "deprecated_in": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "kind": "3045b5c998d76c75f480b2e91388b6adef07205004129c0b8dffee745b4aa77e",
+        "namespace": "e050efd0a0e23d85c6a1f4dc256aaf88bc6179d0a5a69a50fe274c3e414ddda7",
+        "owner": "9df9c37ad8fa27c61338b5206bb7b2cff19efba3dd9183a5671ed298cc14636a",
+        "replaced_by": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "rules": "0724a762d9e94014770db5ef3db5927ecebbc7448c88a858cf81089bc09db53f",
+        "since": "c7583516500cf755ced2393413f7ca1d7f25e7eb3eeae5aeb72bdcc1fb56b402",
+        "summary": "b9872fd6036e65a082d320ae6b56feb6a6e7ebaaeef405c54e532b88a2a4c53d",
+        "symbol": "1430cf6282d07a60643afa4afac307292e9f7da6501cd1a215df39c1ef74a03a"
+      }
+    },
+    {
+      "namespace": "route",
       "code": "post_validation",
       "fields": {
         "code": "cdce4264f83eda5ed1ec1a6d271809b806a9d3d4660a8a7b5d8559bd0dbb2c26",
@@ -18764,6 +18781,6 @@
     "1.22.0": 6,
     "1.23.0": 3,
     "1.24.0": 2,
-    "1.25.0": 24
+    "1.25.0": 25
   }
 }

@@ -731,6 +731,32 @@
       "symbol": "PRIMARY_KEY_NULLS_INTRODUCED"
     },
     {
+      "code": "post_scan_models_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "route",
+      "owner": "PostScanRouteError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "This route runs no post-scan, so it refuses model post-scan detectors and ner_findings: fail.",
+      "symbol": "POST_SCAN_MODELS_UNSUPPORTED"
+    },
+    {
       "code": "out_of_core_reorder_disk_budget_too_small",
       "context": [],
       "deprecated_in": null,
