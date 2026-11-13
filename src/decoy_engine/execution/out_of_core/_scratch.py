@@ -4,22 +4,14 @@ stage's per-run root (`engine_scratch_root`) until that stage moves onto the are
 from __future__ import annotations
 
 import os
-import weakref
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
-from decoy_engine.fileaccess import (
-    FileRequest,
-    FileRole,
-    Root,
-    RootedFileAccess,
-    open_protected_dir,
-    protected_scratch_dir,
-)
-from decoy_engine.fileaccess._rooted import lexical_ok
+from decoy_engine.fileaccess import ScratchArena, open_protected_dir, protected_scratch_dir
 
-_ISSUER = object()
+if TYPE_CHECKING:
+    from decoy_engine.fileaccess._scratch import ScratchAccess
 
 
 def engine_scratch_root(parent: Path | None) -> AbstractContextManager[Path]:
@@ -71,35 +63,10 @@ def private_dir(path: Path) -> Path:
     return open_protected_dir(path, create=True, parents=True)
 
 
-class ScratchAccess(RootedFileAccess):
-    """Read-only access to files beneath ONE engine-created scratch directory.
-
-    Built only by `scratch_access_for` (the issuer token), over a descriptor the engine opened
-    on a directory it made itself, so a source over a staged file never reaches the file
-    system through an ambient path and cannot name anything outside that directory."""
-
-    def __init__(self, directory: Path, *, issuer: object) -> None:
-        if issuer is not _ISSUER:
-            raise TypeError("ScratchAccess is issued by scratch_access_for")
-        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        self._finalizer = weakref.finalize(self, os.close, fd)
-        self._prefix = os.path.abspath(directory).rstrip("/") + "/"
-        super().__init__(
-            [Root("scratch", fd, frozenset({FileRole.SOURCE}), frozenset({"read", "stat"}))],
-            allow_portable_fallback=True,
-        )
-
-    def select(self, req: FileRequest) -> tuple[Root, str]:
-        locator = req.locator
-        if lexical_ok(locator):
-            canonical = os.path.normpath(locator)
-            if canonical.startswith(self._prefix):
-                req = FileRequest(
-                    req.role, req.access, canonical[len(self._prefix) :], req.field_key
-                )
-        return super().select(req)
-
-
 def scratch_access_for(directory: Path) -> ScratchAccess:
-    """The reader for files the engine wrote under `directory`, a directory it created."""
-    return ScratchAccess(directory, issuer=_ISSUER)
+    """The reader for files the engine wrote under `directory`, a directory it created.
+
+    Transitional, for the key stager until it takes an arena (S2a-1b-ii deletes it); the reader
+    itself is issued only by `ScratchArena.reader`."""
+    with ScratchArena._adopt(directory) as adopted:  # non-owning: exit closes only its descriptor
+        return adopted.reader()

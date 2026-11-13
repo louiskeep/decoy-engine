@@ -124,9 +124,10 @@ def stage_typed_sources(
     ``root`` is a scratch arena (declared staging) or an engine-made directory (the subset stage,
     until it moves onto the arena). Each file is named by a per-run counter and ``stem``, never
     by the table name, so no config value shapes a path (the out-of-core runner's opaque
-    ``t0000`` scratch names follow the same rule), and it is read back only through a reader
-    issued over the root (``scratch_access_for``), as the out-of-core key stager does. Each file
-    is created 0600 before any row lands, whatever the umask: by the arena, or on its own
+    ``t0000`` scratch names follow the same rule), and it is read back only through the arena's
+    own reader (``arena.reader()``) or a reader issued over the directory
+    (``scratch_access_for``), as the out-of-core key stager reads its own files. Each file is
+    created 0600 before any row lands, whatever the umask: by the arena, or on its own
     descriptor (``open_private``) under a directory.
     """
     import pyarrow.parquet as pq
@@ -197,7 +198,7 @@ def stage_typed_sources(
         if max_bytes is not None:
             check_temp_disk_budget(base, max_bytes=max_bytes)
         if reader is None:
-            reader = scratch_access_for(base)
+            reader = arena.reader() if arena is not None else scratch_access_for(base)
         # The arena's released path is absolute: the reader strips its own root prefix from it.
         path = Path(arena.local_path(name)) if arena is not None else base / name
         out[table] = LazySource(path, access=reader, field_key="engine.scratch")

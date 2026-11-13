@@ -12,12 +12,13 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine import fileaccess, reasons
@@ -396,3 +397,82 @@ def test_report_text_is_value_free(
         assert not any(s in f"{each!s} {each!r}" for s in SENTINELS), repr(each)
         if isinstance(each, BaseException):
             assert each.__context__ is None and each.__cause__ is None
+
+
+# -- the transitional Path arm under a strict policy, and the arena's reader (S2a-1b-i) --------
+
+
+@pytest.mark.parametrize("cell", ["under_live_root", "outside_refused", "dotdot_refused"])
+def test_adopt_under_a_strict_policy(tmp_path: Path, strict: Strict, cell: str) -> None:
+    """A path at or below a live issued root is adopted under every policy, by the rule
+    `open_protected_dir` applies; any other path still needs the ambient policy."""
+    with ScratchArena.open() as arena:
+        inside = Path(arena.local_path()) / "staged" / "t0000"
+        with strict():
+            if cell == "under_live_root":
+                with ScratchArena._adopt(inside) as adopted:
+                    os.close(adopted.create_file("masked_keys.parquet"))
+                assert _mode(inside.parent) == _mode(inside) == 0o700
+                assert (inside / "masked_keys.parquet").is_file()
+            elif cell == "outside_refused":
+                outside = tmp_path / "outside" / "x"
+                with pytest.raises(FileAccessUnavailable):
+                    ScratchArena._adopt(outside)
+                assert not (tmp_path / "outside").exists(), "refused before anything is made"
+            else:  # `..` that stays inside is refused by `_vet_live`; one that leaves is outside
+                within = f"{arena.local_path()}/staged/../staged/t0000"
+                with pytest.raises(ProtectedDirUnsafe):
+                    ScratchArena._adopt(within)
+                assert not inside.parent.exists()
+                escape = f"{arena.local_path()}/staged/../../escape"
+                with pytest.raises(FileAccessUnavailable):
+                    ScratchArena._adopt(escape)
+                assert not os.path.exists(os.path.normpath(escape))
+    if cell == "under_live_root":
+        with strict(), pytest.raises(FileAccessUnavailable):
+            ScratchArena._adopt(inside)  # the root is no longer live once reclaimed
+
+
+def _staged(arena: ScratchArena, name: str) -> pa.Table:
+    table = pa.table({"k": [1, 2, 3]})
+    with arrow.parquet_writer(arena, name, table.schema) as writer:
+        writer.write_table(table)
+    return table
+
+
+def test_reader_reads_only_beneath_its_directory(tmp_path: Path, strict: Strict) -> None:
+    from decoy_engine.profile._readers import LazySource
+
+    outside = tmp_path / "outside.parquet"
+    pq.write_table(pa.table({"k": [9]}), outside)
+    with ScratchArena.open() as arena:
+        os.close(arena.create_file("top.parquet"))
+        child = arena.create_dir("staged")
+        table = _staged(child, "k.parquet")
+        reader = child.reader()
+        released = Path(child.local_path("k.parquet"))
+        for scope in (nullcontext, strict):  # the reader is its own policy, whatever is ambient
+            with scope():
+                # T02 holds the bare component; T18 the absolute released path (prefix stripped).
+                assert LazySource(Path("k.parquet"), access=reader).to_table() == table
+                assert LazySource(released, access=reader).to_table() == table
+                for denied in (outside, Path("../top.parquet"), released.parent / ".." / "x"):
+                    with pytest.raises(FileAccessDenied):
+                        LazySource(denied, access=reader).to_table()
+    with pytest.raises(FileAccessUnavailable):
+        arena.reader()  # reclaimed
+
+
+def test_reader_holds_its_own_descriptor() -> None:
+    """The reader outlives the arena object it came from (its own descriptor), never the disk."""
+    from decoy_engine.profile._readers import LazySource
+
+    with ScratchArena.open() as arena:
+        child = arena.create_dir("staged")
+        table = _staged(child, "k.parquet")
+        reader = child.reader()
+        del child
+        gc.collect()  # the child's finalizer closes the child's descriptor
+        assert LazySource(Path("k.parquet"), access=reader).to_table() == table
+    with pytest.raises(FileAccessDenied):  # reclaimed: the file is gone beneath the descriptor
+        LazySource(Path("k.parquet"), access=reader).to_table()
