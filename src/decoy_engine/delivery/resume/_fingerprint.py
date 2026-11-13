@@ -13,19 +13,18 @@ canonical JSON digest (`records.payload_digest`); no second hasher exists.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.keyprovider import KeyProvider, mask_key_from_provider
 from decoy_engine.plan import job_seed_for_config, pipeline_config_hash
 from decoy_engine.records import payload_digest
 
 __all__ = ["RunFingerprint", "binding_digest", "build_fingerprint"]
 
-_KEY_CHECK_LABEL = b"decoy-resume-key-check/v1"
+_KEY_CHECK_LABEL = "decoy-resume-key-check/v1"
 _KEY_CHECK_HEX = 16
 # The version of a key the engine derives from the job seed, mirroring `SeedKeyProvider`.
 _SEED_KEY_VERSION = "seed"
@@ -72,14 +71,6 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _key_check(key: bytes) -> str:
-    try:
-        return hmac.new(key, _KEY_CHECK_LABEL, hashlib.sha256).hexdigest()[:_KEY_CHECK_HEX]
-    except BaseException:
-        del key
-        raise
-
-
 def build_fingerprint(
     config: dict[str, Any],
     key_provider: KeyProvider | None,
@@ -100,15 +91,16 @@ def build_fingerprint(
         raise ValueError("a resume fingerprint needs at least one component version")
     config_hash = pipeline_config_hash(config)
     version = key_provider.key_version if key_provider is not None else _SEED_KEY_VERSION
-    key = mask_key_from_provider(key_provider, job_seed_for_config(config))
-    try:
-        return RunFingerprint(
-            config_hash=config_hash,
-            components=pairs,
-            key_check=_key_check(key),
-            key_version=version,
-            chunk_size=chunk_size,
-        )
-    except BaseException:
-        del key
-        raise
+    # The key goes straight into the reviewed `hmac_hex` frame, so no frame here ever names it.
+    digest = hmac_hex(
+        mask_key_from_provider(key_provider, job_seed_for_config(config)), _KEY_CHECK_LABEL
+    )
+    if digest is None:
+        raise ValueError("the key check label is empty")
+    return RunFingerprint(
+        config_hash=config_hash,
+        components=pairs,
+        key_check=digest[:_KEY_CHECK_HEX],
+        key_version=version,
+        chunk_size=chunk_size,
+    )
