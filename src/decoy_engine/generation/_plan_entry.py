@@ -136,7 +136,12 @@ def _prepare_generation(generation: GenerationPlan | None, caller: str) -> _Prep
     # 4.8/F4): every consumer (the statistical sampler via
     # `statistical_specs` above, and the fidelity gate via this list)
     # reads only these already-pinned bytes.
-    snapshot_artifacts = [json.loads(base64.b64decode(s.payload_b64)) for s in generation.snapshots]
+    from decoy_engine.generation.statistical import parse_snapshot_json
+
+    snapshot_artifacts = [
+        parse_snapshot_json(base64.b64decode(s.payload_b64), shown=f"generation.snapshots[{i}]")
+        for i, s in enumerate(generation.snapshots)
+    ]
     reference_fanouts = _decode_fanouts(config, generation, snapshot_artifacts)
     return _PreparedPlan(
         config,

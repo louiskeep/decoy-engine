@@ -378,7 +378,10 @@ def _bad_snapshot_config(tmp_path: Path, content: bytes) -> dict[str, Any]:
 
 
 def test_at_e1_2_compile_wraps_a_non_utf8_snapshot_like_a_truncated_one(tmp_path: Path) -> None:
-    code, text = _error(_bad_snapshot_config(tmp_path, b'{"a": "\xff"}'))
+    config = _bad_snapshot_config(tmp_path, b'{"a": "\xff"}')
+    with pytest.raises(PlanCompileError) as caught:
+        _compile(config)
+    code, text = caught.value.code, str(caught.value)
     assert code == UNREADABLE
     assert "snap.json" in text
     assert not [leak for leak in ("\xff", "0xff", "\u00ff", "position", "codec") if leak in text]
@@ -397,3 +400,22 @@ def test_at_e1_6_load_snapshot_second_site_raises_the_same_code(tmp_path: Path) 
     assert caught.value.code == UNREADABLE
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+def test_at_e1_9_plan_entry_decode_of_a_pinned_payload_is_closed(tmp_path: Path) -> None:
+    import base64
+
+    from decoy_engine.generation._plan_entry import generate_tables
+
+    plan = _compile(_bad_snapshot_config(tmp_path, (FIXTURES / "snap.json").read_bytes()))
+    bad = base64.b64encode(b'{"a": "\xff"}').decode("ascii")
+    snaps = [dataclasses.replace(s, payload_b64=bad) for s in plan.generation.snapshots]
+    plan = dataclasses.replace(
+        plan, generation=dataclasses.replace(plan.generation, snapshots=snaps)
+    )
+    with pytest.raises(_spec.StatisticalSpecError) as caught:
+        generate_tables(plan)
+    assert caught.value.code == UNREADABLE
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "\xff" not in str(caught.value)
