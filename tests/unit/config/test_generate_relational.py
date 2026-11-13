@@ -215,3 +215,36 @@ def test_problems_are_locations_and_codes_only() -> None:
     problems = config_api.per_parent_problems(tables)
     assert problems == [(("tables", 1, "generate_columns", 0, "min_per_parent"), BOUNDS_CONFLICT)]
     assert marker not in repr(problems) and "79" not in repr(problems)
+
+
+# ---- the one reader of a per-parent bound -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, (0, 0)),
+        ({"min_per_parent": None, "max_per_parent": None}, (0, 0)),
+        ({"min_per_parent": 0, "max_per_parent": 0}, (0, 0)),
+        ({"min_per_parent": 2}, (2, 0)),
+        ({"max_per_parent": 5}, (0, 5)),
+        ({"min_per_parent": 2, "max_per_parent": 5}, (2, 5)),
+        ({"min_per_parent": 7, "max_per_parent": 3}, (7, 3)),
+    ],
+)
+def test_per_parent_bounds_reads_every_value_a_valid_config_carries(
+    options: dict[str, Any], expected: tuple[int, int]
+) -> None:
+    assert config_api.per_parent_bounds({"name": "pid", "type": "reference", **options}) == expected
+
+
+@pytest.mark.parametrize("value", [-1, True, False, 2.5, 2.0, "3", "abc", [2]])
+def test_per_parent_bounds_never_coerces_a_value_the_registry_refuses(value: Any) -> None:
+    # Only an int above zero is a bound, so a refused value can never become one by coercion.
+    col = {"min_per_parent": value, "max_per_parent": value}
+    assert config_api.per_parent_bounds(col) == (0, 0)
+
+
+def test_per_parent_bounds_reads_each_bound_from_its_own_key() -> None:
+    assert config_api.per_parent_bounds({"min_per_parent": 1, "max_per_parent": 9}) == (1, 9)
+    assert config_api.per_parent_bounds({"min_per_parent": 9, "max_per_parent": 1}) == (9, 1)

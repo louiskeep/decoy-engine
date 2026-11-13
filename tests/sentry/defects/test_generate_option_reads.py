@@ -50,6 +50,9 @@ READER_FILES = (
     "generators/derivation.py",
     "generators/_formula.py",
     "generation/statistical/_spec.py",
+    "generation/relational/_cardinality.py",
+    # The one reader of the per-parent bounds every generation route goes through.
+    "config/_generate_relational.py",
 )
 # Transform parsers read the column dict as `cfg`, but only inside `from_dict`.
 FROM_DICT_FILES = (
@@ -184,3 +187,40 @@ def test_every_registry_key_is_read_somewhere() -> None:
 
 def test_internal_key_list_starts_empty() -> None:
     assert not INTERNAL_KEYS
+
+
+# Run-time packages that consume a generate column. A per-parent bound is read here only through
+# `config.per_parent_bounds`, so every route agrees on what counts as a bound.
+BOUND_READER_ROOTS = ("generation", "generators", "execution")
+BOUND_KEYS = frozenset({"min_per_parent", "max_per_parent"})
+
+
+def _bound_key_uses(tree: ast.AST) -> list[int]:
+    """Lines that name a bound key other than as the target of a write."""
+    written = {
+        id(node.slice)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store)
+    }
+    return sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value in BOUND_KEYS and id(node) not in written
+    )
+
+
+def test_per_parent_bounds_are_read_only_through_the_config_helper() -> None:
+    found = {
+        f"{path.relative_to(SRC).as_posix()}:{line}"
+        for root in BOUND_READER_ROOTS
+        for path in sorted((SRC / root).rglob("*.py"))
+        for line in _bound_key_uses(ast.parse(path.read_text()))
+    }
+    assert not found, f"read the bounds through config.per_parent_bounds instead: {sorted(found)}"
+
+
+def test_the_bound_scan_sees_a_direct_read() -> None:
+    tree = ast.parse(
+        'lo = col.get("min_per_parent")\ncol["max_per_parent"] = 3\nf(c, "max_per_parent")'
+    )
+    assert _bound_key_uses(tree) == [1, 3]
