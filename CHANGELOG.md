@@ -13,6 +13,9 @@ minimum engine version it was tested against via its
 
 ### Breaking for consumers
 
+- post-scan `fk_preservation` findings now come from the declared keys' facts, with no orphan-rate thresholds: one orphan the run introduced now fails at any table size (it used to be `info` in a large table), an `error` finding carries `total_child_rows` 0, composite `parent_column` and `child_column` join names with `", "` (was `","`), and a relationship entry that does not parse now raises `PipelineConfigError`.
+- `run_sequential` and `run_fk_out_of_core` take a required keyword-only `config`; pass the raw pipeline config
+- the mask entries that run no post-scan (`run_sequential`, `run_fk_out_of_core` and the three chunked entries) now refuse a config with `post_scan.integrity` on that asks for a model post-scan detector or `ner_findings: fail`, with `route/post_scan_models_unsupported`; such a config used to run without the model check.
 - the engine license changes from Apache-2.0 to FSL-1.1-ALv2 (source-available; Competing Use is not permitted)
 - a token vault opens and writes only under the 32-byte mask root of a secret; a vault keyed on the job seed by an older engine no longer opens and must be regenerated with its masked output under a secret
 - S3 and GCS connector errors carry fixed text and a `kind`, and `S3Config.region` has no default.
@@ -26,6 +29,32 @@ minimum engine version it was tested against via its
 - the `ml` extra is removed; scikit-learn and lightgbm are now base dependencies, so drop `[ml]` from installs.
 - `run_mask_pipeline_chunked` requires the keyword `source_schema`, and the three chunked entries refuse an undeclared table or column before masking.
 - a source column or table the config does not declare is now refused by `profile_source`, `run_pipeline` and `run_pipeline_isolated` before any data row is read; list such columns as `passthrough`.
+
+### Changed (FK findings from the key facts, POSTSCAN-STREAM PS-4, 2026-11-12)
+
+The post-scan report's `fk_preservation` findings now come from the declared keys' facts instead of
+a pandas orphan count with rate thresholds. A finding fails when the run introduced orphans, warns
+when every output orphan was already in the source or the key carries only warning codes, and is an
+`error` only when the key could not be counted. One introduced orphan now fails at any table size.
+Composite keys fill the new `parent_columns` and `child_columns` tuples, and `source_orphan_count`
+is null when the source side was not counted. `run_post_mask` takes an optional `keys=`. A key
+result's `source` is now `None` whenever its baseline was not counted. A float key column whose
+values are all whole numbers, such as a nullable integer self-reference, is checked as an integer
+key, so `decoy report integrity` still fails on an orphan the run introduced there. The report tag
+stays `post-scan-integrity/v2`.
+
+### Added (post-scan route guard, SCAN-ML M5, 2026-11-12)
+
+The entries that mask without running the post-scan (`run_sequential`, `run_fk_out_of_core`,
+`run_mask_pipeline_chunked`, `run_mask_chunked` and `run_native_or_oracle_chunked`) refuse a config
+that turns on `post_scan.integrity` and asks for a model post-scan detector or for
+`ner_findings: fail`. The refusal comes before any source is read, as the new public
+`PostScanRouteError` with the new reason code `route/post_scan_models_unsupported`. Its text is
+the fixed registry summary and it carries no exception chain. Regex-only `integrity: true` keeps
+its behavior on these routes, and `run_pipeline` is unchanged: its resident auto-chunk lane runs the
+post-scan itself. `run_sequential` and `run_fk_out_of_core`, and the wrappers that forward to them
+(`PandasExecutionAdapter.run_sequential`, the physical sequential and out-of-core adapters), now
+require a keyword-only `config`, so a direct caller cannot leave out what the guard reads.
 
 ### Added (S3 object store, CLI-CLOUD EC2b, 2026-11-12)
 

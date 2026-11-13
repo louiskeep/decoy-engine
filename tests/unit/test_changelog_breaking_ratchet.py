@@ -65,11 +65,17 @@ TRIAGED: dict[tuple[str, str], str] = {
     ("0.23.0", "The declaration gate refuses a column the config declares fo"): (
         "Breaking: a column declared for a mask table but missing from the source is refused"
     ),
+    ("0.23.0", "The entries that mask without running the post-scan (`run_se"): (
+        "Breaking: the mask entries that run no post-scan refuse a model post-scan config"
+    ),
     ("0.23.0", "The file is read once at compile time and its bytes are stor"): (
         "new `lookup` type: the refusal applies only to a plan that carries a lookup column"
     ),
     ("0.23.0", "The local record library's `evidence` payload (`cli-local-1`"): (
         "new optional key pair; the reader refuses only a half pair, which no earlier writer produced"
+    ),
+    ("0.23.0", "The post-scan report's `fk_preservation` findings now come f"): (
+        "Breaking: one orphan the run introduced now fails at any table size"
     ),
     ("0.23.0", "The shared staging writer now raises `out_of_core_temp_disk_"): (
         "Breaking: a full scratch disk during staging raises a code in CAPACITY_EXCLUSIONS"
