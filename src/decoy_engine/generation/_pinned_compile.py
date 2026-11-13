@@ -22,6 +22,8 @@ from typing import Any
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine._reference_date import normalize_reference_date
+from decoy_engine.config import is_self_reference
+from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileAccess
 from decoy_engine.generation._pinned_plan import (
     PINNED_PLAN_SCHEMA,
@@ -32,6 +34,7 @@ from decoy_engine.generation._pinned_plan import (
     PinnedTable,
     runtime_identity,
 )
+from decoy_engine.generation.pool import GenerationError
 
 # Fail-closed allowlist: a generator type enters pinned mode only by being listed here after its
 # purity is reviewed. The sentry test keeps this and REJECTED_TYPES in step with the config Literal.
@@ -125,8 +128,40 @@ def _where(table: str, column: str) -> str:
     return f"table {table!r} column {column!r}"
 
 
-def reject_unpinnable(config: dict[str, Any]) -> None:
-    """Raise ``PinnedModeError`` for any construct pinned mode refuses. Reads config only."""
+def relational_option_unsupported(tname: str, col: dict[str, Any]) -> bool:
+    """Whether ``col`` has a relational shape pinned mode cannot run: a pure test of the config.
+
+    A self-reference reads its own table's rows; pinned execution draws a reference from a
+    finished parent table only. Compile and execute both ask this one question.
+    """
+    return is_self_reference(tname, col)
+
+
+def _relational_refusal(tname: str, cname: str, at_execute: bool) -> DecoyError:
+    """The one builder of the relational refusal: the fixed summary plus the two names.
+
+    Compile raises the plan code as ``PinnedModeError``. Execution is the generate phase, so a
+    plan that skipped compile gets the run-time twin, raised as ``GenerationError`` like every
+    other run-time generation refusal.
+    """
+    where = f" Table {tname!r}, column {cname!r}."
+    if at_execute:
+        return GenerationError(
+            code=reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED,
+            message=f"{reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED.spec.summary}{where}",
+        )
+    return PinnedModeError(
+        code=reasons.plan.PINNED_RELATIONAL_OPTION_UNSUPPORTED,
+        message=f"{reasons.plan.PINNED_RELATIONAL_OPTION_UNSUPPORTED.spec.summary}{where}",
+    )
+
+
+def reject_unpinnable(config: dict[str, Any], *, at_execute: bool = False) -> None:
+    """Raise a coded refusal for any construct pinned mode refuses. Reads config only.
+
+    ``at_execute`` is set when execute re-checks a plan: it selects the run-time twin of the
+    relational refusal and changes nothing else.
+    """
     tables = config.get("tables")
     if not isinstance(tables, list) or not tables:
         raise PinnedModeError(
@@ -153,6 +188,8 @@ def reject_unpinnable(config: dict[str, Any]) -> None:
         by_name = {c.get("name"): c for c in gcols}
         for col in gcols:
             _reject_column(tname, col, by_name)
+            if relational_option_unsupported(tname, col):
+                raise _relational_refusal(tname, str(col.get("name")), at_execute)
 
 
 def _reject_column(tname: str, col: dict[str, Any], siblings: dict[Any, dict[str, Any]]) -> None:

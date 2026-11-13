@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.config import per_parent_bounds
+from decoy_engine.config import is_self_reference, per_parent_bounds
 from decoy_engine.generation._numeric_typing import numeric_plan
 from decoy_engine.generation.kinds import (
     constant_arrow_type,
@@ -227,7 +227,8 @@ def classify_plan(
         )
         if parent is None or parent_col is None or not isinstance(parent_name, str):
             return decline(table, col, "reference_parent_unresolved")
-        if parent_name == table:
+        # A tree over the table's own rows reads rows a batch has not finished, so it runs whole.
+        if is_self_reference(table, col):
             return decline(table, col, "reference_to_own_table")
         parent_adm = classify(parent_name, parent_col)
         if not parent_adm.eligible or parent_adm.arrow_type is None:

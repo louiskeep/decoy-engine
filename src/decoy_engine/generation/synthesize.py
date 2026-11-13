@@ -36,6 +36,7 @@ import numpy as np
 import pyarrow as pa
 from faker import Faker
 
+from decoy_engine.config import is_self_reference
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
 from decoy_engine.generation._statistical_column import (
@@ -52,6 +53,7 @@ from decoy_engine.generation.kinds import (
 )
 from decoy_engine.generation.kinds._lookup import lookup_column_values
 from decoy_engine.generation.relational import reference_draw_extras, reference_policies
+from decoy_engine.generation.relational._self_reference import reference_parents, self_reference
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
@@ -243,26 +245,17 @@ def generation_order(config: dict[str, Any]) -> tuple[tuple[str, tuple[str, ...]
     The one order walk for every generation route. Roots are visited in table declaration order
     and each table's parents in first-reference order (the first `type: reference` column naming
     each parent, deduplicated), so the result is a function of the config alone and does not
-    depend on `PYTHONHASHSEED`. Takes unvalidated dicts, so a `reference_table` that is not a
+    depend on `PYTHONHASHSEED`. A reference to the table's own key is a tree inside the table,
+    not a parent. Takes unvalidated dicts, so a `reference_table` that is not a
     generate table raises a typed `ValueError` here rather than a `KeyError` downstream.
     """
     generate_by_name = {
         t["name"]: t for t in config.get("tables") or [] if t.get("generate_columns")
     }
-    deps: dict[str, tuple[str, ...]] = {}
-    for name, t in generate_by_name.items():
-        refs: list[str] = []
-        for col in t["generate_columns"]:
-            if col.get("type") != "reference":
-                continue
-            ref = col["reference_table"]
-            if ref not in generate_by_name:
-                raise ValueError(
-                    f"table {name!r} column {col.get('name')!r}: "
-                    f"reference_table {ref!r} is not a generate table"
-                )
-            refs.append(ref)
-        deps[name] = tuple(dict.fromkeys(refs))
+    deps = {
+        name: reference_parents(name, t["generate_columns"], generate_by_name)
+        for name, t in generate_by_name.items()
+    }
     return tuple((name, deps[name]) for name in _topo_sort(deps))
 
 
@@ -350,6 +343,9 @@ def _generate_column(
         )
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
+    elif kind == "reference" and is_self_reference(table_name, col):
+        # The parent is an earlier row of this table, so the draw reads `generated`, not `pools`.
+        values = self_reference(col, n, seed, derive_key, generated or {})
     elif kind == "reference":
         # A plain call keeps its five-argument shape: parity tests wrap `_reference`.
         extra = reference_draw_extras(

@@ -54,6 +54,10 @@ infeasible bounds. `downscale_config` therefore loosens the bounds of a
 bounded `reference` column to the scaled sizes, by the same pigeonhole rule
 the run checks, and never strips them: a bounded reference stays on the
 whole-table route the full job takes.
+
+A self-reference's explicit `root_count` is valid only up to its table's
+`row_count`, so `downscale_config` clamps it to the scaled count: a config
+that validates at full size never becomes invalid only in its probe.
 """
 
 from __future__ import annotations
@@ -64,7 +68,12 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.config import generate_columns_of, per_parent_bounds
+from decoy_engine.config import (
+    generate_columns_of,
+    is_exact_sequence_key,
+    is_self_reference,
+    per_parent_bounds,
+)
 
 __all__ = [
     "DEFAULT_PROBE_FLOOR_ROWS",
@@ -119,7 +128,9 @@ def downscale_config(
     rejected upstream) is left alone rather than guessed at.
 
     A `reference` column with a positive `min_per_parent` or `max_per_parent`
-    gets both bounds rewritten for the scaled sizes (`_loosened_bounds`).
+    gets both bounds rewritten for the scaled sizes (`_loosened_bounds`), and a
+    self-reference's explicit `root_count` is held to the scaled row count
+    (`_clamp_root_counts`).
     """
     scaled = copy.deepcopy(config)
     for table in scaled.get("tables") or []:
@@ -131,6 +142,7 @@ def downscale_config(
         if isinstance(row_count, int):
             table["row_count"] = scale_row_count(row_count, fraction, floor_rows=floor_rows)
     _loosen_per_parent_bounds(scaled)
+    _clamp_root_counts(scaled)
     return scaled
 
 
@@ -175,10 +187,29 @@ def _loosen_per_parent_bounds(scaled: dict[str, Any]) -> None:
                 ),
                 {},
             )
-            exact = key.get("type") == "sequence" and not (key.get("null_probability") or 0) > 0
             col["min_per_parent"], col["max_per_parent"] = _loosened_bounds(
-                lo, hi, rows, parent_rows, exact
+                lo, hi, rows, parent_rows, is_exact_sequence_key(key)
             )
+
+
+def _clamp_root_counts(scaled: dict[str, Any]) -> None:
+    """Hold each self-reference's explicit `root_count` to its table's scaled row count, in place.
+
+    Only a count above a positive row count is rewritten: an absent option stays absent, and a
+    table that scales to no rows keeps the option because the run ignores it there.
+    """
+    for table in scaled.get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        rows = table.get("row_count")
+        if type(rows) is not int or rows <= 0:
+            continue
+        for col in generate_columns_of(table):
+            if not isinstance(col, dict) or not is_self_reference(table.get("name"), col):
+                continue
+            roots = col.get("root_count")
+            if type(roots) is int and roots > rows:
+                col["root_count"] = rows
 
 
 def downscale_sources(

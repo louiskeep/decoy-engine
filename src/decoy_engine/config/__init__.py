@@ -43,7 +43,13 @@ from decoy_engine.config._generate_option_catalog import (
     generate_option_catalog,
 )
 from decoy_engine.config._generate_options import refuse_unlisted_generate_families
-from decoy_engine.config._generate_relational import per_parent_bounds, per_parent_problems
+from decoy_engine.config._generate_relational import (
+    is_exact_sequence_key,
+    is_self_reference,
+    per_parent_bounds,
+    per_parent_problems,
+    self_reference_problems,
+)
 from decoy_engine.config._generate_type_checks import (
     parse_output_type,
     refuse_fixed_width_output_types,
@@ -158,6 +164,8 @@ __all__ = [
     "distinct_categories",
     "generate_columns_of",
     "generate_option_catalog",
+    "is_exact_sequence_key",
+    "is_self_reference",
     "override_sources",
     "parse_delivery_config",
     "parse_output_type",
@@ -169,5 +177,6 @@ __all__ = [
     "post_scan_integrity_requested",
     "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",
+    "self_reference_problems",
     "value_key",
 ]

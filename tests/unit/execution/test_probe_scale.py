@@ -249,3 +249,87 @@ class TestDownscalePerParentBounds:
         for config in (full, probe):
             verdict = classify_plan(config)
             assert [d.reason for d in verdict.declines] == ["reference_cardinality_repair"]
+
+
+def _tree(rows: int, **options) -> dict:
+    return {
+        "version": 2,
+        "global_settings": {"seed": 3},
+        "sources": {},
+        "tables": [
+            {
+                "name": "employees",
+                "row_count": rows,
+                "generate_columns": [
+                    {"name": "id", "type": "sequence", "start": 1},
+                    {
+                        "name": "manager_id",
+                        "type": "reference",
+                        "reference_table": "employees",
+                        "reference_column": "id",
+                        **options,
+                    },
+                ],
+            }
+        ],
+        "targets": {"employees": {"type": "file", "format": "csv", "path": "o.csv"}},
+    }
+
+
+def _scaled_tree(config: dict, fraction: float, floor_rows: int = 0) -> dict:
+    return downscale_config(config, fraction, floor_rows=floor_rows)["tables"][0]
+
+
+class TestDownscaleRootCount:
+    """GEN-REL AT-5: an explicit `root_count` never exceeds the scaled row count."""
+
+    def test_a_root_count_above_the_scaled_rows_is_clamped_to_them(self) -> None:
+        scaled = _scaled_tree(_tree(1000, root_count=600), 0.5)
+        assert scaled["row_count"] == 500
+        assert scaled["generate_columns"][1]["root_count"] == 500
+
+    def test_a_root_count_that_still_fits_is_kept(self) -> None:
+        scaled = _scaled_tree(_tree(1000, root_count=40), 0.1)
+        assert (scaled["row_count"], scaled["generate_columns"][1]["root_count"]) == (100, 40)
+        scaled = _scaled_tree(_tree(1000, root_count=100), 0.1)
+        assert scaled["generate_columns"][1]["root_count"] == 100
+
+    def test_a_default_root_count_is_not_written(self) -> None:
+        config = _tree(1000)
+        scaled = _scaled_tree(config, 0.1)
+        assert scaled["generate_columns"][1] == config["tables"][0]["generate_columns"][1]
+
+    def test_a_zero_row_table_keeps_the_option(self) -> None:
+        scaled = _scaled_tree(_tree(0, root_count=7), 0.5)
+        assert (scaled["row_count"], scaled["generate_columns"][1]["root_count"]) == (0, 7)
+
+    def test_the_clamp_does_not_touch_the_original_config(self) -> None:
+        config = _tree(1000, root_count=600)
+        downscale_config(config, 0.5, floor_rows=0)
+        assert config["tables"][0]["generate_columns"][1]["root_count"] == 600
+
+    def test_a_reference_to_another_table_is_not_clamped(self) -> None:
+        ref = _scaled_ref(_family(1000, 3000, root_count=2500), 0.1)
+        assert ref["root_count"] == 2500
+
+    def test_a_capped_tree_keeps_its_cap_and_stays_valid(self) -> None:
+        from decoy_engine.config._pipeline import PipelineConfig
+
+        probe = downscale_config(_tree(1000, root_count=600, max_per_parent=2), 0.1, floor_rows=0)
+        column = probe["tables"][0]["generate_columns"][1]
+        assert (column["root_count"], column["max_per_parent"]) == (100, 2)
+        assert PipelineConfig.model_validate(probe)
+
+    def test_the_probe_of_a_valid_tree_validates_and_runs(self) -> None:
+        from decoy_engine.config._pipeline import PipelineConfig
+        from decoy_engine.generation._admission import classify_plan
+        from tests.unit._dps_helpers import compile_and_generate
+
+        full = _tree(1000, root_count=600)
+        probe = downscale_config(full, 0.1, floor_rows=0)
+        assert PipelineConfig.model_validate(full) and PipelineConfig.model_validate(probe)
+        out = compile_and_generate(probe)["employees"]
+        assert out.num_rows == 100 and out.column("manager_id").null_count == 100
+        for config in (full, probe):
+            verdict = classify_plan(config)
+            assert [d.reason for d in verdict.declines] == ["reference_to_own_table"]

@@ -17,6 +17,8 @@ __all__ = [
     "GENERATE_PER_PARENT_BOUNDS_CONFLICT",
     "GENERATE_PER_PARENT_INFEASIBLE",
     "GENERATE_PER_PARENT_NULL_CONFLICT",
+    "GENERATE_SELF_REFERENCE_KEY_INVALID",
+    "GENERATE_SELF_REFERENCE_OPTION_UNSUPPORTED",
     "GENERATE_UNIQUE_CONFLICT",
     "GENERATE_UNIQUE_DOMAIN_TOO_SMALL",
     "GENERATE_UNIQUE_UNSUPPORTED",
@@ -87,6 +89,17 @@ GENERATE_PER_PARENT_INFEASIBLE = _d(
 GENERATE_PER_PARENT_NULL_CONFLICT = _d(
     "generate_per_parent_null_conflict",
     "Generate column null_probability cannot be combined with a per-parent option.",
+    since=UNRELEASED,
+)
+GENERATE_SELF_REFERENCE_KEY_INVALID = _d(
+    "generate_self_reference_key_invalid",
+    "Generate self-reference column must name an earlier sequence column of its own table with "
+    "no null_probability.",
+    since=UNRELEASED,
+)
+GENERATE_SELF_REFERENCE_OPTION_UNSUPPORTED = _d(
+    "generate_self_reference_option_unsupported",
+    "Generate self-reference column takes distribution random and an optional max_per_parent only.",
     since=UNRELEASED,
 )
 GENERATE_UNIQUE_CONFLICT = _d(
