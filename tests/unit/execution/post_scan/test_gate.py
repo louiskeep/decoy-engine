@@ -211,3 +211,23 @@ def test_the_memory_limit_is_the_runs_budget_share_with_a_working_floor(
     monkeypatch.setattr(_post_scan, "check_keys", spy)
     run(PostScanGate(KEYS, budget_bytes=small))
     assert seen == [resolve_ooc_memory_limit(small).memory_limit]
+
+
+def _ctx(loader: object | None = None) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(source_loader=loader, config={})
+
+
+def test_a_loader_supplied_input_defers_on_every_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {})
+    for route in ("full_frame", "sequential", "out_of_core"):
+        assert _post_scan._deferred(_ctx(object()), route) is True
+        assert _post_scan._deferred(_ctx(None), route) is False
+
+
+def test_declared_casting_defers_on_a_bounded_route_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {"t": ["c"]})
+    assert _post_scan._deferred(_ctx(), "full_frame") is False
+    assert _post_scan._deferred(_ctx(), "sequential") is True
+    assert _post_scan._deferred(_ctx(), "out_of_core") is True
