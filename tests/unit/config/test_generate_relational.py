@@ -1,5 +1,5 @@
 """GEN-REL config-time checks for per-parent bounds (AT-2, AT-2b, AT-3, AT-4, AT-6f) and for
-self-reference trees (AT-7, AT-9).
+self-reference trees (AT-7, AT-9), and the one exact-sequence-key predicate every caller shares.
 
 Every refusal is a registered `config` code raised through `PipelineConfig`, in a fixed order:
 `min > max`, then fitted with a bound, then nulls with a bound, then the row-count ceiling. A
@@ -8,8 +8,11 @@ self-reference reports its key first, then an option it cannot honor, then `root
 
 from __future__ import annotations
 
+from decimal import Decimal
+from fractions import Fraction
 from typing import Any
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -442,3 +445,75 @@ def test_the_one_self_reference_predicate_reads_the_table_name_and_the_column() 
     assert not config_api.is_self_reference("", {**column, "reference_table": ""})
     assert not config_api.is_self_reference("employees", {**column, "type": "categorical"})
     assert not config_api.is_self_reference("employees", {**column, "reference_table": None})
+
+
+# ---- the one exact-sequence-key predicate: fails closed on any rate it cannot read -------------
+
+_SEQ = {"name": "id", "type": "sequence", "start": 1}
+_ABSENT = object()
+
+
+@pytest.mark.parametrize(
+    "rate",
+    [
+        _ABSENT,
+        None,
+        0,
+        0.0,
+        -0.5,
+        float("nan"),
+        Fraction(0),
+        np.float64(0),
+        np.int64(0),
+    ],
+    ids=[
+        "absent",
+        "none",
+        "zero",
+        "zero-float",
+        "negative",
+        "nan",
+        "fraction-zero",
+        "np-zero",
+        "np-int-zero",
+    ],
+)
+def test_a_sequence_with_no_positive_real_rate_is_an_exact_key(rate: Any) -> None:
+    column = _SEQ if rate is _ABSENT else {**_SEQ, "null_probability": rate}
+    assert config_api.is_exact_sequence_key(column) is True
+
+
+@pytest.mark.parametrize(
+    "rate",
+    [
+        0.5,
+        1,
+        float("inf"),
+        True,
+        False,
+        Decimal("0.5"),
+        Decimal("0"),
+        Fraction(1, 2),
+        np.float64(0.5),
+        np.int64(1),
+        np.bool_(False),
+        "0.5",
+        "0",
+        "",
+        [],
+        [1],
+        {},
+    ],
+    ids=repr,
+)
+def test_any_other_rate_may_hold_nulls_so_the_key_is_not_exact(rate: Any) -> None:
+    assert config_api.is_exact_sequence_key({**_SEQ, "null_probability": rate}) is False
+
+
+@pytest.mark.parametrize(
+    "column",
+    [{}, {"type": "categorical"}, {"type": "faker", "null_probability": 0}, {"type": None}],
+    ids=["empty", "categorical", "faker", "none-type"],
+)
+def test_only_a_sequence_is_an_exact_key(column: dict[str, Any]) -> None:
+    assert config_api.is_exact_sequence_key(column) is False
