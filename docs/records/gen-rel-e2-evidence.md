@@ -1,7 +1,6 @@
 # GEN-REL E2 build evidence
 
-Status: built on `feat/gen-rel-e2`. Review round 1 item 2 stopped on a guarantee decision (see
-"Review round 1").
+Status: built on `feat/gen-rel-e2`, with both review round 1 items (see "Review round 1").
 
 Spec: `docs/plans/gen-rel.md` on `origin/plan/gen-rel` (`26a83542`), slice row 2 (self-reference
 trees). The plan stays on the plan branch.
@@ -441,9 +440,10 @@ Not run on this head: the full suite, the gate steps under Python 3.11, a rerun 
 
 ## Review round 1 (2026-11-13)
 
-Review of `ff0ab08c`: two fix items. Item 1 is built; item 2 stopped before any change, because
-the three copies of its rule differ (below). Commits: `1f9aad0b` red cells, `20faa7ba` the
-item 1 fix (final source head), then this record.
+Review of `ff0ab08c`: two fix items, both built. Commits: `1f9aad0b` item 1 red cells,
+`20faa7ba` the item 1 fix, `e2b5ff9d` this record's first round 1 version (item 2 stopped),
+`3a5cfdfd` item 2 red cells and guard, `35ec8c9f` the item 2 refactor (final source head),
+`5b7e02a5` the guard listed in the sentry manifest (tests only), then this record.
 
 ### Item 1 (V1): a self-reference key that declares `output_type`
 
@@ -461,72 +461,149 @@ column of the table may still declare `output_type`). Run on `ff0ab08c`'s source
 3.10.20): both new parametrized cells failed, `Failed: DID NOT RAISE ValidationError`; the
 accept cell passed, as it should on both heads.
 
-### Item 2 (DESIGN): one sequence-key predicate, stopped
+### Item 2 (DESIGN): one exact-sequence-key predicate
 
-Not built: no predicate, guard test or call-site change was committed. The three copies are:
+The rule "a `sequence` key with no `null_probability`, so every row is a distinct key" had
+three copies: `config/_generate_relational.py:_key_is_valid`,
+`execution/_probe_scale.py:_loosen_per_parent_bounds` (`exact`) and
+`plan/checks/_generate_columns.py:_check_reference_weights` (`keeps_all_keys`). They differed
+on rates that are not plain numbers, so the build stopped and reported before unifying.
 
-- `config/_generate_relational.py:_key_is_valid`: `type == "sequence" and not
-  _nulls_on(null_probability)`, where `_nulls_on(v)` is `type(v) in (int, float) and v > 0`.
-- `execution/_probe_scale.py:_loosen_per_parent_bounds` (`exact`) and
-  `plan/checks/_generate_columns.py:_check_reference_weights` (`keeps_all_keys`):
-  `type == "sequence" and not (null_probability or 0) > 0`.
+Orchestrator ruling (2026-11-13): fail closed. One public predicate,
+`is_exact_sequence_key(column: Mapping[str, Any]) -> bool` in `config/_generate_relational.py`,
+exported from `decoy_engine.config`. True only for `type == "sequence"` with a
+`null_probability` that is absent, `None`, or a `numbers.Real` that is not a bool and is not
+above 0. Anything else reads as "may have nulls", the safe side for every caller: a
+self-reference key is refused, the probe loosens to the widest bounds, the weights-length check
+is not applied. It never raises. NaN: the three copies all read it as no nulls; a strict `<= 0`
+would flip that, so, as the ruling directs, the agreed result is kept (`not rate > 0`).
+`_key_is_valid` keeps item 1's `output_type` refusal beside the predicate; the probe and plan
+callers do not need it. Each caller keeps its own way of finding the key column (the plan check
+still iterates `parent.get("generate_columns")`; the table-kind sentry passes).
 
-They agree on an absent value, `None`, `0`, `0.0`, negatives, NaN, `0.5`, `1`, infinity,
-`False`, `""`, `[]` and `{}`. They differ on any value that is not exactly an `int` or `float`
-but compares above 0: `True`, `Decimal("0.5")`, `Fraction(1, 2)`, `numpy.float64(0.5)` and
-`numpy.int64(1)` read as "no nulls" in the config copy and as "nulls" in the other two; `"0.5"`
-and `[1]` read as "no nulls" in the config copy and raise `TypeError` in the other two.
-`PipelineConfig` refuses every such value (`generate_option_type`), but `compile_plan` and the
-probe take a raw dict, so the plan check and the probe can see one; unifying would change the
-weights-length check and the probe's exact bounds there. The two non-config copies also find
-the key differently (the plan check reads `parent.get("generate_columns")` and every candidate
-of that name; the probe reads `generate_columns_of(parent)` and the first). Which behavior the
-one predicate keeps is a guarantee decision, reported to the orchestrator.
+Old against new, by `null_probability` on a `sequence` column (`exact` = every row a distinct
+key):
 
-### Mutations (final source head `20faa7ba`, Python 3.10.20)
+| `null_probability` | config copy | probe and plan copies | predicate |
+| --- | --- | --- | --- |
+| absent | exact | exact | exact |
+| `None` | exact | exact | exact |
+| `0` | exact | exact | exact |
+| `0.0` | exact | exact | exact |
+| `-0.5` | exact | exact | exact |
+| `nan` | exact | exact | exact |
+| `0.5` | not | not | not |
+| `1` | not | not | not |
+| `inf` | not | not | not |
+| `True` | exact | not | not |
+| `False` | exact | exact | not |
+| `Decimal('0')` | exact | exact | not |
+| `Decimal('0.5')` | exact | not | not |
+| `Fraction(0, 1)` | exact | exact | exact |
+| `Fraction(1, 2)` | exact | not | not |
+| `np.float64(0.0)` | exact | exact | exact |
+| `np.float64(0.5)` | exact | not | not |
+| `np.int64(0)` | exact | exact | exact |
+| `np.int64(1)` | exact | not | not |
+| `np.False_` | exact | exact | not |
+| `'0'` | exact | TypeError | not |
+| `'0.5'` | exact | TypeError | not |
+| `''` | exact | exact | not |
+| `[]` | exact | exact | not |
+| `[1]` | exact | TypeError | not |
+| `{}` | exact | exact | not |
 
-63 of 63 red: the 62 recorded on `6c1a8691` plus K1 (drop the `output_type` refusal from
-`_key_is_valid`; red in `test_at9_a_key_that_is_not_a_non_null_sequence_is_refused` for
-`decimal-output-type` and `int-output-type`). C1c, C1d and C1e were re-anchored to the new
-three-line return of `_key_is_valid` with the same edits (drop the null test; key type check
-replaced by `True`; null test replaced by `is None`); every anchor matched exactly once. 62 ran
-in a detached worktree of `20faa7ba` importing its own `src` (removed afterwards); the results
-JSON shows 62 `RED` and H2 `NOT RED` there, as before. H2 (its witness runs a child process
-that imports the checkout) was applied once in the checkout, red in
-`test_order_and_result_keys_are_equal_across_seeds_and_routes` (`['p1', 'p2'] == ['p2',
-'p1']`), and reverted; the tree was clean before and after.
+Only rates `PipelineConfig` refuses (`generate_option_type` or `generate_option_range`) change,
+so a validated config is unaffected: the changes reach only raw-dict paths (`compile_plan` on an
+unvalidated dict, the probe). Beyond the values where the copies already disagreed, failing
+closed also changes values on which all three agreed as exact: `False`, `Decimal("0")`,
+`numpy.False_`, `""`, `[]` and `{}` are now not exact. No existing test changed its expectation
+and no output byte moved.
 
-### Gates (final source head `20faa7ba`)
+Callers: `_key_is_valid` (`is_exact_sequence_key(earlier) and "output_type" not in earlier`),
+`_loosen_per_parent_bounds` (passes `is_exact_sequence_key(key)` to `_loosened_bounds`),
+`_check_reference_weights` (`if is_exact_sequence_key(candidate) and len(weights) != rows`).
+The seam sentry's comment on the `_probe_scale.py` entry names the predicate; the file still
+imports nothing from `execution.physical`.
+
+Guard: `tests/sentry/defects/test_sequence_key_predicate.py` (listed in the sentry manifest).
+Scope: a function outside the predicate itself that reads the `null_probability` key and has a
+`== "sequence"` comparison as an operand of an `and`. A dispatcher's own `if kind ==
+"sequence"` or a `!= "sequence"` test is not flagged (`_column_streams.make_column_stream` and
+`_window_admission._class_b_reason` read both and are correctly left alone); a restatement
+spread across helpers or written without `and` is not seen. It also requires each of the three
+callers to call the predicate. Meta-tests seed the copies' shapes (one expression, the split
+read, a typed subscript, a method) and the accepted shapes.
+
+Red first: `3a5cfdfd`, run on source `20faa7ba` (Python 3.10.20): 32 failed. 30 predicate cells
+(`test_a_sequence_with_no_positive_real_rate_is_an_exact_key` x9,
+`test_any_other_rate_may_hold_nulls_so_the_key_is_not_exact` x17,
+`test_only_a_sequence_is_an_exact_key` x4) with `AttributeError: module 'decoy_engine.config'
+has no attribute 'is_exact_sequence_key'`; `test_no_module_restates_the_exact_sequence_key_rule`
+found exactly the three copies; `test_the_owner_defines_the_rule_and_the_listed_callers_use_it`
+found no predicate. The meta-tests passed, as they test the scanner only.
+
+### Mutations (final source head `35ec8c9f`, Python 3.10.20)
+
+76 of 76 red: the 62 recorded on `6c1a8691`, item 1's K1, and 13 new ones.
+
+- Re-anchored to the moved code, same intent: C1c (the null test dropped: `_key_is_valid`
+  tests the type only), C1d (the type test dropped: `_key_is_valid` tests nulls only), C1e (a
+  zero rate read as nulls: the predicate's last line returns `False`), K1 (the `output_type`
+  refusal dropped). Every anchor matched exactly once.
+- S1 a bool read as a number; S2 NaN read as nulls (`rate <= 0`); S3 the type test dropped;
+  S4 a non-real rate compared (fails open or raises); S5 an absent rate read as nulls: each red
+  in the predicate cells.
+- Q1, Q2, Q3: each caller restates the rule inline: red in the guard. Q4 the probe treats every
+  key as exact: red in `test_a_parent_with_unknown_distinct_keys_gets_the_widest_bounds`. Q5 the
+  weights check treats every key as exact: red in
+  `test_weights_length_not_checked_when_the_parent_can_drop_keys_or_is_not_a_sequence`. G3 the
+  weights check stops calling the predicate: red in the guard's caller inventory.
+- G1 the guard looks for `or` instead of `and`: red in `test_seeded_restatements_are_seen`. G2
+  the guard exempts the whole owner file: red in `test_the_owner_function_alone_is_exempt`.
+
+75 ran in a detached worktree of `35ec8c9f` importing its own `src` (removed afterwards); the
+results JSON shows 75 `RED` and H2 `NOT RED` there, as before. H2 (its witness runs a child
+process that imports the checkout) was applied once in the checkout, red in
+`test_order_and_result_keys_are_equal_across_seeds_and_routes`, and reverted; the tree was clean
+before and after. `5b7e02a5` changes only the sentry manifest, so the mutations hold for it.
+
+### Gates
 
 `GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
 ruff,format,mypy,sentry,layers,licenses,tests` with the slice's T1 paths plus
-`tests/unit/execution/test_probe_scale.py`, `tests/unit/execution/test_probe_scale_kills.py`
-and `tests/unit/plan/checks` (the changed test file is under `tests/unit/config`, in T1).
-Python 3.10.20, PyArrow 24.0.0, DuckDB 1.5.4, pandas 2.3.3, NumPy 2.2.6.
+`tests/sentry/defects/test_sequence_key_predicate.py`, `tests/unit/execution/test_probe_scale.py`,
+`tests/unit/execution/test_probe_scale_kills.py` and `tests/unit/plan/checks`. Python 3.10.20,
+PyArrow 24.0.0, DuckDB 1.5.4, pandas 2.3.3, NumPy 2.2.6.
 
-| Step | Branch (`20faa7ba`) |
-| --- | --- |
-| ruff | pass |
-| format | pass |
-| mypy | pass |
-| sentry | 5286 passed, 0 failed, 2 skipped |
-| layers | 15 passed, 0 failed, 0 skipped |
-| licenses | 63 passed, 0 failed, 0 skipped |
-| tests | 6772 passed, 0 failed, 60 skipped |
+| Step | `20faa7ba` (item 1) | `35ec8c9f` | `5b7e02a5` (final) |
+| --- | --- | --- | --- |
+| ruff | pass | pass | pass |
+| format | pass | pass | pass |
+| mypy | pass | pass | pass |
+| sentry | 5286 passed, 0 failed, 2 skipped | 5296 passed, 1 failed, 2 skipped | 5297 passed, 0 failed, 2 skipped |
+| layers | 15 passed | 15 passed | 15 passed |
+| licenses | 63 passed | 63 passed | 63 passed |
+| tests | 6772 passed, 0 failed, 60 skipped | 6813 passed, 0 failed, 60 skipped | 6813 passed, 0 failed, 60 skipped |
 
-Failure sets: branch 0, branch-only 0; the baseline was not rerun because every branch step
-passed. No digest, golden or snapshot moved.
+The one failure on `35ec8c9f` was `test_sentry_manifest.py::test_manifest_lists_every_sentry_file_and_no_ghost`
+(the new guard was not listed; `origin/main` passed it in the baseline rerun); `5b7e02a5` lists
+it. Final head: failure sets branch 0, branch-only 0; the baseline was not rerun because every
+branch step passed. No digest, golden or snapshot moved.
 
-Checks on `20faa7ba`, by exit code, `origin/main` at `c86ca58d`:
+Checks on `5b7e02a5`, by exit code, `origin/main` at `c86ca58d`:
 `registry_renumber.py --check --main c0961a17` exit 0 (`registry consistent`);
 `--main origin/main` exit 2 (`main-not-merged`); `ratchet_check.py --base c0961a17` exit 0;
 `--base origin/main` exit 1 (`exception-context`, `f29-producer-inventory`, `gcs-call-kwargs`,
 `private-file-sinks`, `secret-material-census`: keys main gained); `check_fragment.py --base
-origin/main` exit 0; `reason_release_pin.py --check` exit 0. The two `origin/main` failures
-are the same on `ff0ab08c` (main moved; main is not merged here).
+origin/main` exit 0; `reason_release_pin.py --check` exit 0. The two `origin/main` failures are
+the same on `ff0ab08c` (main moved; main is not merged here). The same six results held on
+`20faa7ba`.
 
-Line counts: `config/_generate_relational.py` 182, `tests/unit/config/test_generate_relational.py`
-444; `plan/checks/_generate_columns.py` (517) and `execution/_probe_scale.py` (273) unchanged.
+Line counts: `config/_generate_relational.py` 207, `execution/_probe_scale.py` 272,
+`plan/checks/_generate_columns.py` 517, `config/__init__.py` 178,
+`tests/unit/config/test_generate_relational.py` 519,
+`tests/sentry/defects/test_sequence_key_predicate.py` 165 (new).
 
 ### V2-LOG (accepted from review)
 
@@ -547,7 +624,8 @@ Line counts: `config/_generate_relational.py` 182, `tests/unit/config/test_gener
 
 ### Not run
 
-The full suite; the gate steps under Python 3.11; a baseline rerun on `origin/main`; item 2.
+The full suite; the gate steps under Python 3.11; a baseline rerun on `origin/main` for the
+final head (it ran for `35ec8c9f`'s failing sentry step only).
 
 ## Not run
 
