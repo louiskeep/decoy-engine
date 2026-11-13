@@ -10,8 +10,8 @@ Rules consulted: `/home/cam/dev-rules/README.md`, `00-universal.md`, `risk-and-e
 `docs/compatibility-contract.md` (3.3); CLI `docs/ROADMAP.md` (rows 24j, 24k, 24y, 24zd),
 CLI `CODEMAP.md`.
 
-Revision 2, after Dennis r1 (BLOCK: 1 HIGH, 6 MEDIUM, 8 LOW). Every finding is taken; the
-change list is in 16.
+Revision 3, after Dennis r2 (V1: 1 HIGH, 3 MEDIUM; 6 LOW). Every finding is taken; the
+round-by-round change list is in 16.
 
 Bases (2026-11-13): engine `origin/main` `3a30eb89` (includes #564 `is_null_cell`), CLI
 `origin/main` `a15afcc` (pins `decoy-engine==0.23.0`). Line numbers are read at these bases.
@@ -77,7 +77,8 @@ Kinds checked:
 | `faker` float-annotated providers (`pyfloat`) | `str` | yes, reader typing |
 | any of the three above, also read by another unsafe reader | `str` | yes, reader typing (the formula binding follows the output type) |
 | `reference` to one of the above | `str` (the reference group is demoted together) | yes, reader typing |
-| `categorical` with int or float categories, `constant`, `distribution`, `grouped_series` | the number, but `float` for an int column that holds a null | yes, the pandas hop |
+| `categorical` with int or float categories, `constant`, `distribution` | the number, but `float` for an int column that holds a null | yes, the pandas hop |
+| `grouped_series` | a number on a non-null row; `""` on a null row because `_generated_type` has no branch for this kind | only the non-null cell is in scope; the nullable case is V2-LOG (13) |
 | `sequence` with a prefix, suffix or pad; text faker; unproven range | `str` | no: the column is not a candidate, so text is its own type |
 | `faker` date providers, `windowed_date` | ISO `str` | no: dates are text in generate output on every route; out of scope |
 | `statistical`, `lookup`, `derived`, `derived_aggregate`, `group_key`, `formula` | unchanged | the binding stays as today (4.3 rule 2) |
@@ -124,8 +125,9 @@ After E1:
 4. The only nulls a formula writes come from the config: `null_probability` on the formula, or a
    missing referenced cell (rules in 4.3).
 5. A formula that uses a number reference as text in a way that silently changes meaning (a
-   compare with a text literal) or always fails (concatenation with text, a text method,
-   indexing or slicing, `len`, a `join` over it) is refused at compile with
+   compare with a text literal or a declared string reference) or always fails (concatenation
+   with text, a text method, indexing or slicing, `len`, a `join` over it, or membership against
+   a declared string reference) is refused at compile with
    `plan.generate_formula_number_used_as_text`, in `decoy validate` and in `decoy run`. The
    check judges on the same candidate type as point 1, so co-readers do not change the verdict.
 
@@ -168,7 +170,8 @@ E1 adds no new mechanism beyond one check module.
   `_base_types(config, provider_snapshot)` (today's `base` loop, `:213-230`) and
   `_generated_type(cols, root, numeric)` (today's inner `generated()` body, `:260-277`).
   `numeric_plan` calls `_generated_type` with the candidate map, as today.
-- New public `reader_types(config, *, provider_snapshot=None) -> dict[Key, pa.DataType]`: for
+- New public `reader_types(config, *, provider_snapshot=None) -> dict[Key, pa.DataType]`,
+  re-exported by `decoy_engine.generation`: for
   every generated column, `_generated_type` of its reference root given the full `base` map.
   So a `sequence` or `faker` candidate reads as `int64` or `float64` even when the fixed point
   dropped it. There is no second type table.
@@ -235,10 +238,13 @@ by construction: one owner of the candidate type (`_base_types` behind `numeric_
 compile check, because the old text spellings are the realistic bypass.
 
 New `plan/checks/_formula_types.py` with `check_formula_text_use(table, col, tree, declared,
-types)`. `check_generate_columns` computes `types = reader_types(config,
-provider_snapshot=provider_snapshot)` once and passes it down through `_check_column` to
-`_check_formula`, which calls the new check after its existing checks, with the `tree` it already
-parsed (`plan/checks/_generate_columns.py:417`) and its `declared` list. No second parse.
+types)`. It lazily imports `reader_types` from the public `decoy_engine.generation` facade, never
+from `generation._numeric_typing`. Runtime code and tests take `GenerationError` from the public
+`decoy_engine.generation.pool` facade, never `generation.pool._errors`. `check_generate_columns`
+computes `types = reader_types(config, provider_snapshot=provider_snapshot)` once and passes it
+down through `_check_column` to `_check_formula`, which calls the new check after its existing
+checks, with the `tree` it already parsed (`plan/checks/_generate_columns.py:417`) and its
+`declared` list. No second parse.
 
 Scope: a name is treated as the reference only when it is a declared reference, its `types` entry
 is int or float, and it is a global read. The walk does not descend into a `Lambda`, `ListComp`,
@@ -254,15 +260,28 @@ Refused shapes (the accidental spellings, catalog entry 5):
 - the value of a subscript (`a[0]`, `a[-4:]`);
 - the argument of `len` (`len(a)`);
 - an element of a list or tuple literal passed to `<str>.join` (`'-'.join([a, b])`);
-- compared with `==`, `!=`, `in` or `not in` against a `str` constant, or against a list, tuple
-  or set literal that holds one.
+- compared with `==` or `!=`, or tested with `in` or `not in`, against a `str` constant, a list,
+  tuple or set literal that holds one, or another declared reference whose `types` entry is
+  `string`. A number-to-number reference comparison remains valid.
 
-Refusal: `PlanCompileError` with `plan.generate_formula_number_used_as_text`, path
-`tables.<t>.generate_columns.<c>.formula`. The message names the table, the column and the
-reference, never the formula text. Hint for the compare shape: "compare with a number". Hint for
-every other shape: "wrap the reference in str()". Accepted: `str(a)`, `f'{a}'`, `a == 1`,
-`a in (1, 2)`, `str(a).zfill(5)`, `str(a)[-4:]`, `len(str(a))`, and every spelling on a text
-column.
+Refusal: `PlanCompileError` with `plan.generate_formula_number_used_as_text`, summary `A formula
+uses a number reference as text.`, and path `tables.<t>.generate_columns.<c>.formula`. Extend the
+existing `_refusal` through `_located`; do not add a second error builder. `_refusal` accepts an
+optional reference name for `where` and an optional detail key. `_located` resolves that key from
+the closed table `{compare: "compare with a number", other: "wrap the reference in str()"}` and
+appends ` Hint: <detail>.`; callers cannot supply free detail text. The exact messages pinned by
+AT-8 are:
+
+- compare: `A formula uses a number reference as text. At table 't', column 'f', option
+  'formula', reference 'a'. Hint: compare with a number.`
+- other: `A formula uses a number reference as text. At table 't', column 'f', option 'formula',
+  reference 'a'. Hint: wrap the reference in str().`
+
+Both name structure only and never include formula text or a data value. Accepted: `str(a)`,
+`f'{a}'`, `a == 1`, `a in (1, 2)`, `a == b` when both declared references are numeric,
+`str(a).zfill(5)`, `str(a)[-4:]`, `len(str(a))`, and every spelling on a text column. The reversed
+membership spelling `'1' in a` has the number on the right; it is not a seeded compile refusal and
+fails loudly at run with `generate_formula_evaluation_failed`.
 
 Deliberate evasion (`getattr`, a name rebound through a comprehension, `eval`) is V2-LOG by
 catalog entry 5.
@@ -284,7 +303,7 @@ added. C1 lands in the CLI repin PR, so there is no window where a formula failu
 | same, `a * 2` | `'11'`, `'22'` | `2`, `4` |
 | same, `a == 1` | always `False` | `True` on row 0 |
 | same, `'ORD-' + a`, `a.zfill(5)`, `a[-4:]`, `len(a)` | text works | refused at compile, `generate_formula_number_used_as_text`, exit 1 |
-| same, `a == '1'` or `a in ('1', '2')` | text compare works | refused at compile, same code, hint "compare with a number" |
+| same, `a == '1'`, `a in ('1', '2')`, `a == code`, or `a in code` where `code` is a declared string reference | text compare works or can silently differ | refused at compile, same code, hint "compare with a number" |
 | same, `'ORD-' + str(a)` or `f'ORD-{a}'` | `ORD-1` | `ORD-1` (unchanged) |
 | sequence with `null_probability`, `'ORD-' + str(a)` | `ORD-` on a null row | null on a null row (rule 1) |
 | categorical `[1, 2, 3]` with nulls, `str(cat)` | `'1.0'`, and `''` on a null row | `'1'`, and null on a null row |
@@ -296,7 +315,7 @@ added. C1 lands in the CLI repin PR, so there is no window where a formula failu
 | plain sequence read by a `group_key.group_by` and by `a * 2` | `'11'`, `a` is `string` | `2`, `4`; `a` stays `string` in the output |
 | same co-read column, `'ORD-' + a` | text works | refused at compile |
 | `pyfloat` `amount` read by a `derived_aggregate` and by `amount * 2` | text repeated | a float; `amount` stays `string` |
-| streamed child table whose `reference` column points at a parent sequence read by a formula | child column `string` | child column `int64`, as with no formula |
+| child `reference` points at a parent sequence read by a formula | child column `string` | child column `int64` on the legacy whole-plan route; the formula makes the whole plan ineligible for streaming |
 | CSV bytes of the read column | `1` | `1` (unchanged) |
 | Parquet or Arrow type of the read column (no other unsafe reader) | `string` | `int64` or `float64` |
 
@@ -315,7 +334,7 @@ added. C1 lands in the CLI repin PR, so there is no window where a formula failu
 | 7 | Check then use (TOCTOU) | the run binding and rule 1 read `reader_types` from the run's provider snapshot, so the run agrees with itself. The compile check reads the live custom providers, because `compile_plan` calls `check_generate_columns` without a snapshot (`plan/_compile.py:214`, `:535`); the pipeline takes its snapshot from the same registry in the same process. They differ only if a custom provider is added or changed between compile and run (threading the snapshot is in 13). Pinned and saved plans reject formula | AT-8 and AT-1 on one config | derive the run binding from the cell values instead of `reader_types` |
 | 8 | Weak tests and overclaimed evidence | every AT is red on `3a30eb89` except the named controls; AT-3 compares Arrow types, not only "not null"; every existing test that changes is listed in 7b with why it is not weaker | reviewers rerun the named mutations on the final head | relax AT-3 to values only |
 | 9 | Behaviour-preserving refactor drift | `numeric_plan` and `reader_types` share `_base_types` and `_generated_type`; derived and formula share `failure_reason` and `failure_text`; derived text stays byte-identical | `tests/unit/transforms/test_derived.py` green with one import rename; numeric typing tests; `numeric_plan` results unchanged on every parity config without a formula | give `reader_types` its own copy of the kind table |
-| 10 | Frozen contract drift | the output change is listed in 5 and the compat note; two reason codes `since=UNRELEASED` with one fragment; parity refreeze limited to the fixtures in 9, with digests; no `SEED_PROTOCOL_VERSION`, exit map or `--json` shape change | AT-11, reason registry tests, golden suites, AT-C1-2 asserts only existing fields | change a third parity fixture; add `error_kind` to the usage arm |
+| 10 | Frozen contract drift | the output change is listed in 5 and the compat note; two reason codes `since=UNRELEASED` with one fragment; parity changes stay limited to the two fixtures in 9; the `all_basic_types` golden records its before/after cell digests while its config and fingerprint digests stay fixed; the unlisted variant becomes a coded-error assertion; no `SEED_PROTOCOL_VERSION`, exit map or `--json` shape change | AT-11, reason registry tests, golden suites, AT-C1-2 asserts only existing fields | change another parity or golden fixture; add `error_kind` to the usage arm |
 
 ### 6.2 Enumerations
 
@@ -333,7 +352,7 @@ added. C1 lands in the CLI repin PR, so there is no window where a formula failu
 | Route | Formula runs | Change |
 |---|---|---|
 | legacy whole-table (`generation/synthesize.py:208`) | yes | all of E1 |
-| streamed and windowed (`generation/_admission.py:56` declines formula) | no | a child table whose `reference` points at a parent sequence read by a formula now gets `int64`, because the reference group is no longer demoted; this is the rule the no-formula case already follows (`generation/_admission.py:187`) |
+| streamed and windowed (`generation/_admission.py:10`, `:56`, `:91-92`) | no | no streamed-route change: eligibility is whole-plan, so any formula sends every table through `_streamed._run_legacy`; a child `reference` to the formula-read parent changes type on that legacy route |
 | pinned | no, rejected (`generation/_pinned_compile.py:341` records numeric types for the rest) | recorded types change only for configs with a formula, which pinned refuses |
 | mask-mode `formula` | a separate transform | out of scope |
 
@@ -374,16 +393,16 @@ values only. Engine tests run `compile_plan`, then `generate_tables`.
 |---|---|---|---|---|
 | AT-1 | add `("round(a / 3)", [0, 1, 1, 1, 2])` back to `test_scoped_shapes_are_accepted_and_generate_values` | yes, all null | set `formula.references` back to unsafe | `tests/unit/plan/checks/test_generate_columns.py:531` |
 | AT-2 | sequence `a` read by `a * 2` and by `a == 1`: `[2, 4, ...]` and `[True, False, ...]`; `a`'s Arrow type is `int64` | yes | the same | `tests/unit/generators/test_formula_types.py` (new) |
-| AT-3 | type fidelity over every value of the `GenerateColumnConfig.type` Literal (`config/_tables.py:274`): one example config per value-producing type (plain sequence, `pyint`, `pyfloat`, categorical int, float and text, constant int, distribution, grouped_series, reference to a sequence parent), each with `null_probability` 0 and 0.5. A formula over `col` with `references: [col]` returns values whose Python type matches the source column's Arrow type, with equal non-null values. A Literal value with no example and not in the listed exemptions (`formula`, `derived`, `derived_aggregate`, `group_key`, `windowed_date`, `statistical`, `lookup`, each with its reason) fails the test | yes (sequence, faker, categorical int with nulls) | drop `dtype=object` at `_referenced_formula.py:58`; flip the reader back | the same file |
+| AT-3 | type fidelity over every value of the `GenerateColumnConfig.type` Literal (`config/_tables.py:274`): one example config per value-producing type (plain sequence, `pyint`, `pyfloat`, categorical int, float and text, constant int, distribution, grouped_series, reference to a sequence parent), each with `null_probability` 0 and 0.5. A formula over `col` with `references: [col]` returns values whose Python type matches the source column's Arrow type, with equal non-null values. The grouped-series non-null cell stays in; only its `null_probability: 0.5` cell is exempt because `_generated_type` has no grouped-series branch, so it is not in `number_refs` and rule 2 binds `""`. A Literal value with no example and not in the listed exemptions (`formula`, `derived`, `derived_aggregate`, `group_key`, `windowed_date`, `statistical`, `lookup`, plus only that grouped-series null cell, each with its reason) fails the test | yes (sequence, faker, categorical int with nulls) | drop `dtype=object` at `_referenced_formula.py:58`; flip the reader back | the same file |
 | AT-4 | nullable sequence, `'ORD-' + str(a)`: non-null rows `ORD-<n>`, null rows null, non-null rows equal the run without nulls | yes (`ORD-` today) | bind `""` for number columns | the same file |
 | AT-5 | `1 / (a - 3)`: `GenerationError` with `generate_formula_evaluation_failed`; the message has the table, the column, `row 2` and `division by zero`; `__cause__` and `__context__` are `None`; a counting spy on `safe_eval` shows no row after row 2 ran | yes (null) | restore `values.append(None)` at `:220`; continue after the first failure | the same file |
 | AT-5b | value-bearing: text categorical `["SENTINEL-X1"]`, no nulls, `int(code)`. `GenerationError` with the code; `SENTINEL-X1` is absent from `str(err)`, `err.message` and the captured log | yes (null) | put `{exc}` in the message | the same file |
-| AT-6 | inline `randint(5, 1)` raises the same code | yes | restore `values.append(None)` at `:283` | the same file |
+| AT-6 | inline `randint(5, 1)` and `random.randint(1, 100)` both raise the same code; the second pins that `random` is the bound random function, not a module or RNG object | yes | restore `values.append(None)` at `:283` | the same file |
 | AT-7 (control) | text categorical `["1", "2"]` with nulls, `int(code)`: null rows null, the others ints, no raise | no | remove rule 2's null branch | the same file |
-| AT-8 | seeded spellings refused at both sites with `generate_formula_number_used_as_text` and the formula path: `'ORD-' + a`, `a + 'x'`, `f'x' + a`, `a.zfill(5)`, `a.upper()`, `a[0]`, `a[-4:]`, `len(a)`, `'-'.join([a, b])`, `a == '1'`, `'1' != a`, `a in ('1', '2')`, `a not in ['x']`, and `'ORD-' + r` where `r` is a `reference` to a sequence parent; no formula text in the message; the compare cases carry the "compare with a number" hint. Controls accepted: `'ORD-' + str(a)`, `f'ORD-{a}'`, `a == 1`, `a in (1, 2)`, `str(a).zfill(5)`, `str(a)[-4:]`, `len(str(a))`, `len([a for a in ['x']])` (a comprehension variable with the same spelling), and every refused spelling on a prefixed sequence | yes (accepted today) | drop the compare branch; drop the subscript branch; drop alias resolution; descend into a binding comprehension | `tests/unit/plan/checks/test_formula_types.py` (new) |
+| AT-8 | seeded spellings refused at both sites with `generate_formula_number_used_as_text` and the formula path: `'ORD-' + a`, `a + 'x'`, `f'x' + a`, `a.zfill(5)`, `a.upper()`, `a[0]`, `a[-4:]`, `len(a)`, `'-'.join([a, b])`, `a == '1'`, `'1' != a`, `a in ('1', '2')`, `a not in ['x']`, `a == code`, `a in code`, and `a not in code` where `code` is a declared text-categorical reference, plus `'ORD-' + r` where `r` is a `reference` to a sequence parent. Every compare/membership cell pins exactly `A formula uses a number reference as text. At table 't', column 'f', option 'formula', reference 'a'. Hint: compare with a number.`; every other cell pins exactly `A formula uses a number reference as text. At table 't', column 'f', option 'formula', reference 'a'. Hint: wrap the reference in str().`; no formula text appears. Controls accepted: `'ORD-' + str(a)`, `f'ORD-{a}'`, `a == 1`, `a in (1, 2)`, `a == b` with both `a` and `b` plain sequences, `str(a).zfill(5)`, `str(a)[-4:]`, `len(str(a))`, `len([a for a in ['x']])` (a comprehension variable with the same spelling), and every refused spelling on a prefixed sequence | yes (accepted today) | drop the compare branch; drop the declared-string-reference branch; drop the subscript branch; drop alias resolution; descend into a binding comprehension | `tests/unit/plan/checks/test_formula_types.py` (new) |
 | AT-9 | sequence read by `derived: a + 1` and by formula `str(a)`: runs, the derived column is `int64` | yes (`ValueError`) | flip the reader back | `tests/unit/generators/test_formula_types.py` |
 | AT-10 | #445 pins updated as listed in 7b | yes (they pin the old text) | revert the reader | `tests/parity/test_numeric_typing_readers.py` |
-| AT-11 (control) | parity: only the two fixtures named in 9 change, and only in the named columns | no | change any other fixture | `tests/parity/` freeze tests |
+| AT-11 (control) | parity: only the two parity fixtures named in 9 change, and only in the named columns; golden: only `all_basic_types.cells` is re-pinned, while its `config_json` and `fingerprints` stay fixed, and the unlisted variant is a coded-error assertion rather than a digest pin | no | change any other fixture or digest | parity freeze tests and `tests/unit/generation/unique/test_gen_unique_old_input_bytes.py` |
 | AT-12 | co-reader: plain sequence `a` read by a `group_key.group_by` and by `a * 2`: `[2, 4, ...]`, and `a`'s output Arrow type stays `string`; the same config with `'ORD-' + a` is refused at compile. Second cell: `pyfloat` `amount` read by a same-table `derived_aggregate` and by `amount * 2` gives floats equal to twice the output text parsed | yes (`'11'`) | have `reader_types` return the fixed-point type (`numeric_plan`'s answer) | `tests/unit/generators/test_formula_types.py` |
 
 CLI (slice C1, in the repin PR):
@@ -407,7 +426,7 @@ real type). Any other test that goes red is a stop (11).
 | Test | Today | New expectation | Why not weaker |
 |---|---|---|---|
 | `tests/unit/execution/test_expression_log_redaction.py:74-104` (`int(first_name)`, strict) | `[None] * 5`, one "failed to evaluate" warning, no name in the log | `GenerationError` with the code; no `first_name` value in `str(err)`, `err.message` or the log | the value-free check stays and now covers the error too |
-| same file `:122-130` and `:133-140` (lenient `nope + 1`, `nofn(1)`) | one warning with "undefined name(s)" | `GenerationError` with the code and the default reason word; no warning | the name is refused at compile in a strict run; the lenient run now fails instead of writing nulls |
+| same file `:122-129` and `:131-137` (lenient `nope + 1`, `nofn(1)`) | one warning with "undefined name(s)" | `GenerationError` with the code and the default reason word; no warning | the name is refused at compile in a strict run; the lenient run now fails instead of writing nulls |
 | same file `:159-176` (lenient referenced `first_name + nope`) | the same warning | the same as the row above | the same |
 | `tests/unit/test_v2_generation.py:806` `TestReferencedFormulaPostPass` (lenient) | joined strings, reverse-order chain sees `""` | unchanged: the references are text faker and formula columns, so rule 2 applies | no change expected; the builder confirms green |
 | `tests/parity/test_numeric_typing_readers.py:41` | `'ORD-' + id` and `id.zfill(5)` keep the column text | cases one and two move to AT-8 refusals; case three stays | the spellings now fail at compile with a hint instead of hiding a type change |
@@ -416,6 +435,18 @@ real type). Any other test that goes red is a stop (11).
 | `tests/unit/transforms/test_derived.py:738-740` | imports `evaluation_failure_text` | imports `failure_text`, calls it with `subject="derived expression"`; expected text byte-identical | same assertion, renamed helper |
 | `tests/parity/_f0_witness.py:422-449` | records formula result lists | unchanged wrapper; the F0 `bad` column leaves the fixture (9) | the wrapper is not an assertion |
 | `tests/unit/generators/test_formula_missing.py` | `""` for a missing cell | unchanged (the keyword defaults to empty) | no change |
+| `tests/unit/generation/unique/test_gen_unique_old_input_bytes.py::test_cells_plan_and_fingerprints_are_unchanged[all_basic_types]` | the `cells` digest pins `score` and formula `f = score * 2` as text/repetition | re-pin only `cells`; record its before and after digests at build time; keep `config_json` and `fingerprints` unchanged | `f` intentionally changes from repeated text to numeric multiplication, so GEN-C2's render-back argument and the old "do not re-pin" default do not apply; the explicit refreeze record authorizes this one digest |
+| same test, `all_basic_types_unlisted_formula` variant | a `cells` digest pins all-null output for inline `id + score` under `lenient_generate_checks` | remove this variant from the digest table and assert `GenerationError` with `generate_formula_evaluation_failed` instead | GEN-STRICT already refuses the unlisted read at compile; the lenient bypass must now fail loudly rather than preserve null bytes |
+| `tests/unit/test_v2_generation.py::TestFormulaParityV1::test_inline_with_random` (`:734-741`) | `random.randint(1, 100)` makes both legacy helpers silently return nulls because `random` is bound to `_rng.random` | change the formula to `randint(1, 100)` and keep the V1 == V2 assertion; AT-6 separately pins `random.randint(1, 100)` as a coded run failure | the parity test now exercises the supported RNG name instead of parity between two swallowed `AttributeError`s |
+
+All-tests formula-fixture scan at fetched engine `origin/main` `3a30eb89`: searched all of
+`tests/` for formula configs, `references`, plain sequences, candidate int/float Faker providers,
+and inline failures. The changed fixtures found are exactly the lenient error tests above; the
+three numeric-typing parity cases and reader-registry row above; `_f0_fixtures.py`'s `bad` formula
+and `_f_audit_cells.py`'s `cfg_formula_referenced` in section 9; and the three newly listed golden
+or inline-random cases. Referenced formulas over prefixed sequences, text Faker/categorical
+columns, numeric values used only through f-strings, and the reverse-order formula chain remain
+byte- or assertion-equivalent. Any additional red formula fixture is still a stop.
 
 ## 7a. Reuse inventory
 
@@ -428,7 +459,8 @@ real type). Any other test that goes red is a stop (11).
 | missing-cell rule | `is_null_cell` (`internal/pandas_missing.py`) | no new predicate |
 | formula parse and scope | `_check_formula`'s tree and the `_unbound_reads` scope rule | no second parse |
 | run error class | `GenerationError` (`generation/pool/_errors.py:17`) | no new exception class |
-| compile refusal helper | `_refusal` in `plan/checks/_generate_columns.py` (imported, not copied) | |
+| compile refusal helper | `_refusal` in `plan/checks/_generate_columns.py`, extended through `_located` with the one closed detail table and imported, not copied | no second message shape or free-form hint |
+| sibling number-as-text analyzer | `generation/_numeric_derived.py:54-155` is the existing derived-grammar analyzer; formula uses the already-parsed Python AST because the grammars differ | no attempted shared walker; policy alignment is V2-LOG (13) |
 | CLI usage mapping | the `uniqueness_impossible` arm | no new CLI category or `--json` field |
 
 ## 8. Placement
@@ -437,7 +469,7 @@ Engine `execution/` and the CLI flat `src/decoy/cli/` get no new files.
 
 | Change | File | CODEMAP row |
 |---|---|---|
-| reader entry, `_base_types`, `_generated_type`, `reader_types` | `src/decoy_engine/generation/_numeric_typing.py` (347 lines) | `generation/` |
+| reader entry, `_base_types`, `_generated_type`, `reader_types`; public re-export | `src/decoy_engine/generation/_numeric_typing.py` (347 lines), `src/decoy_engine/generation/__init__.py` | `generation/`; checks import the facade |
 | object frame, number set, formula-scope cast | `src/decoy_engine/generation/_referenced_formula.py` (75 lines) | `generation/` (the cross-column formula post-pass) |
 | one `reader_types` call and one keyword | `src/decoy_engine/generation/synthesize.py` (592 lines, cap 600, at most +2) | `generation/synthesize.py` |
 | row rule, coded raise | `src/decoy_engine/generators/_formula.py` (367 lines) | `generators/` |
@@ -475,16 +507,26 @@ and the compile check read it.
   | `id.zfill(5)` | `str(id).zfill(5)` or `f'{id:05d}'` |
   | `id[-4:]`, `len(id)` | `str(id)[-4:]`, `len(str(id))` |
   | `id == '1'` | `id == 1` |
-  | `x if id else y` with a sequence from 0 | `x if id is not None else y` |
+  | `x if id else y` with a sequence from 0 | `x if id is not None else y` (only the numeric zero case changes; rule 1 skips the formula on a null number reference, so a formula cannot replace that null) |
 
   Dennis r1 scanned engine and CLI docs, `src` and examples for the refused spellings and found
-  none outside plans, so no shipped example changes.
+  none outside plans, so no shipped example changes. `docs/strategies.md` also states that rule 1
+  prevents formulas from replacing a missing number reference, and that reversed membership such
+  as `'1' in id` is not refused at compile but fails at run with
+  `generate_formula_evaluation_failed`.
 - **Parity freeze.** `tests/parity/_f0_fixtures.py:314` `bad: undefined_name + 1` now raises.
   GEN-STRICT already refuses it at compile and the fixture bypasses compile, so the column leaves
   the frozen fixture. `tests/parity/_f_audit_cells.py:246` (`cfg_formula_referenced`): `seq`
   changes from `string` to `int64`; the `rfm` text is byte-identical. The refreeze record lists,
   for both fixtures, the frozen digest before and after and the column-level diff. The builder
   runs the freeze and lists every diff; any other diff is a stop (11).
+- **Golden corpus.** `tests/unit/generation/unique/_gu_corpus.py:78-87` `all_basic_types` has
+  `score: pyint` and `f: score * 2`. Re-pin only its `cells` digest, recording the exact before
+  and after digests in the refreeze record at build time; `config_json` and `fingerprints` must
+  remain unchanged. This is not GEN-C2 render-back: `f` changes meaning from text repetition to
+  numeric multiplication. The `all_basic_types_unlisted_formula` variant at `:214-223` stops
+  being a digest pin and becomes a `GenerationError(generate_formula_evaluation_failed)`
+  assertion under `lenient_generate_checks`, because GEN-STRICT already refuses it at compile.
 - **Reason codes.** Added: `runtime.generate_formula_evaluation_failed` and
   `plan.generate_formula_number_used_as_text`; the registry is stamped at release (#506). None
   renamed.
@@ -496,7 +538,7 @@ and the compile check read it.
 
 | Slice | Content | Risk | Size | Depends on | Tests at T1 |
 |---|---|---|---|---|---|
-| E1 | 4.1 to 4.4, codes, docs, compat note, migration table, refreeze record, fragment | R2 | M (about 280 source and 350 test lines) | none | AT-1 to AT-12, the 7b tests, `tests/unit/generators/`, `tests/unit/plan/checks/`, `tests/unit/transforms/test_derived.py`, `tests/parity/test_numeric_typing_readers.py`, `tests/sentry/test_numeric_reader_registry.py`, reason registry tests, golden and parity freeze suites |
+| E1 | 4.1 to 4.4, codes, docs, compat note, migration table, refreeze record, fragment | R2 | M (about 280 source and 350 test lines) | none | AT-1 to AT-12, the 7b tests, all of `tests/unit/generation/`, `tests/unit/test_v2_generation.py`, `tests/unit/generators/`, `tests/unit/plan/checks/`, `tests/unit/transforms/test_derived.py`, `tests/parity/test_numeric_typing_readers.py`, `tests/sentry/test_numeric_reader_registry.py`, reason registry tests, golden and parity freeze suites; re-scan all of `tests/` for changed formula fixtures before gate |
 | C1 | 4.5 mapping, explain text, e2e, CLI docs, roadmap row; lands in the CLI repin PR for the engine release that carries E1 (repin checklist) | R1 | S | E1 merged and released | AT-C1-1 to AT-C1-4, `tests/e2e/first_user/test_items_run_unique.py` |
 
 E1 changes pinned tests and parity fixtures (moved or changed tests, a frozen contract), so its
@@ -509,8 +551,9 @@ merge head gets the full engine suite against the saved main baseline. Gate: Den
    relationship rule.
 2. Do not add a second type table, a second cast, a second missing-cell predicate or a second
    failure text shape.
-3. A parity or golden diff outside the two fixtures in 9 is a stop. An existing test that goes
-   red and is not in 7b is a stop.
+3. A parity diff outside the two parity fixtures in 9, or a golden change other than the named
+   `all_basic_types.cells` re-pin and unlisted-formula assertion, is a stop. An existing test that
+   goes red and is not in 7b is a stop.
 4. No raised module-size ceiling, sentry baseline, allowlist or pin. `synthesize.py` grows at
    most 2 lines.
 5. If a second formula evaluator turns up on another route, stop and report it.
@@ -535,6 +578,15 @@ None open.
 - Thread the run's provider snapshot into `compile_plan`'s `check_generate_columns` calls
   (`plan/_compile.py:214`, `:535`), so the compile check and the run read one snapshot.
 - Deliberate evasion of the compile check (`getattr`, rebinding through a comprehension).
+- A nullable non-candidate numeric kind (`grouped_series`, `statistical`, `derived`, `lookup`, or
+  `formula`) binds `""` for a missing cell; an expression such as `x * 2` then gives `""`. This
+  is outside the candidate-type guarantee and remains for the generation QA pass.
+- The new Python-AST check is a second number-used-as-text analyzer beside
+  `generation/_numeric_derived.py:54-155`, whose derived-expression grammar currently demotes the
+  column instead of refusing the plan. The grammars do not support one shared walker; align the
+  derived policy with OQ-1(a) in V2.
+- Chained spellings such as `str(a) + '-' + b`, where `b` is numeric, can pass the seeded compile
+  check and then fail loudly at run with `generate_formula_evaluation_failed`.
 
 ## 14. Pre-mortem
 
@@ -543,7 +595,8 @@ None open.
 - **A co-reader hides the type.** AT-12 pins that the formula sees the number and the check
   still refuses text use when a `group_key` or `derived_aggregate` demotes the column.
 - **The refreeze hides a real change.** AT-11, the before and after digests, and stop line 3
-  limit it to two named fixtures.
+  limit it to the two named parity fixtures plus the one named golden cell digest; the unlisted
+  golden variant becomes an error assertion instead of being re-pinned.
 - **GEN-INHERIT lands first and moves the type code.** E1 follows the rebase rules in 1.3, with
   no copy.
 - **A formula that worked by luck on text now fails at run.** That is the intended loud failure,
@@ -557,7 +610,28 @@ flipped only the reader entry: `round(a / 3)` then gave `[0, 1, 1, 1, 2, 2]` for
 The co-reader case (HIGH-1) is shown by reading `_numeric_typing.py:260-277` at `3a30eb89`, not
 by a run. No test suite ran.
 
-## 16. Changes in revision 2 (Dennis r1)
+## 16. Review closure
+
+### Revision 3 (Dennis r2)
+
+- V1-1: 7b and 9 name all three missed tests. `all_basic_types` gets one authorized cell-digest
+  refreeze with recorded before/after values and stable config/fingerprint digests; the unlisted
+  variant becomes a coded `GenerationError` assertion; `test_inline_with_random` uses `randint`
+  while AT-6 pins `random.randint` as a coded failure. E1 T1 now includes all of
+  `tests/unit/generation/` and `tests/unit/test_v2_generation.py`; the all-tests scan and its
+  complete changed-fixture result are recorded in 7b.
+- V1-2: the guard refuses compare and membership against a declared string reference; AT-8 adds
+  `a == code`, `a in code`, `a not in code`, and the numeric `a == b` control.
+- V1-3: AT-3 exempts only the grouped-series nullable cell with the `_generated_type` reason;
+  section 1.2 is corrected and 13 records the nullable non-candidate behavior as V2-LOG.
+- V1-4: `_refusal` is extended through `_located` with one closed detail table and the reference
+  name in `where`; AT-8 pins both exact value-free messages.
+- LOW-5 to LOW-10: `reader_types` is re-exported and lazily imported through the generation
+  facade; `GenerationError` comes from `generation.pool`; whole-plan legacy routing, the
+  null-versus-zero migration wording, reversed membership, and corrected test lines are recorded;
+  7a names the derived analyzer; 13 records the analyzer-policy and chained-spelling V2-LOG items.
+
+### Revision 2 (Dennis r1)
 
 - HIGH-1: `reader_types` returns the candidate type; the post-pass casts text cells for the
   formula scope only through `restore_declared`; the check judges on the candidate type; AT-12.
@@ -569,6 +643,6 @@ by a run. No test suite ran.
 - MEDIUM-6: one `failure_text` builder with a subject.
 - MEDIUM-7: AT-3 over the type Literal; rebase rules for #555 and #557.
 - LOWs: rebased to `3a30eb89` and #564 branches dropped; class 7 narrowed; OQ-1 closed with a
-  migration table; streamed child reference listed; the number set lives in
+  migration table; the child-reference type change is listed; the number set lives in
   `_referenced_formula.py`; keywords default to empty; rule 3 stops at the first failing row;
   C1 in the repin PR; refreeze digests.
