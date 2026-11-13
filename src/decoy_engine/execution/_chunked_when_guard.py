@@ -1,7 +1,7 @@
 """Per-chunk type guard for a positional draw under `when:` on the chunked route (C8-iii-d-2).
 
 A seeded categorical or non-deterministic REUSE faker under `when:` runs chunked only when its
-TARGET and every predicate REFERENCE is a chunk-stable `string`. The native leg converts and
+TARGET and every predicate REFERENCE is a chunk-stable text type (`string` or `large_string`). The native leg converts and
 evaluates each predicate reference per chunk, so a numeric reference can widen (int64 -> float64
 around a null) and select different rows than the whole frame, which no position key can repair.
 The config-time veto cannot see Arrow types; this guard runs where schemas exist.
@@ -23,6 +23,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._arrow_types import is_text_or_null
 from decoy_engine.plan._errors import PlanCompileError
 
 CAT_WHEN_CODE = reasons.plan.CHUNKED_CATEGORICAL_NONDETERMINISTIC_WHEN_NOT_SUPPORTED
@@ -45,7 +46,7 @@ def closed_grammar_when(when: str) -> bool:
 class _PositionalWhenColumn:
     column: str
     code: str
-    # The target plus every predicate reference; each must stay `string`/`null` per chunk.
+    # The target plus every predicate reference; each must stay text/`null` per chunk.
     names: tuple[str, ...]
 
 
@@ -63,7 +64,7 @@ class PositionalWhenGuard:
                 if name not in schema.names:
                     continue
                 typ = schema.field(name).type
-                if pa.types.is_string(typ) or pa.types.is_null(typ):
+                if is_text_or_null(typ):
                     continue
                 raise PlanCompileError(
                     code=col.code,
