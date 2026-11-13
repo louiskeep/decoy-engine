@@ -1,4 +1,4 @@
-"""A caller-named scratch directory that does not exist yet works under any umask.
+"""A per-run scratch root whose parent does not exist yet works under any umask.
 
 Every level the engine creates on the way to (and including) the run's root is 0700, so a umask
 of 0777 cannot leave a level the engine itself cannot search before it creates the next one.
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from decoy_engine.execution.out_of_core._scratch import engine_scratch_root, scratch_root
+from decoy_engine.execution.out_of_core._scratch import engine_scratch_root
 
 UMASKS = (0o000, 0o077, 0o777)
 
@@ -67,16 +67,3 @@ def test_engine_scratch_root_creates_missing_parent_under_any_umask(
     assert root_mode == 0o700, (oct(mask), oct(root_mode))
     assert {p: oct(m) for p, m in created.items() if m != 0o700} == {}, oct(mask)
     assert gone, root
-
-
-def test_scratch_root_creates_missing_levels_under_any_umask(tmp_path: Path, mask: int) -> None:
-    temp_dir = tmp_path / "x" / "y" / "z"
-    assert not (tmp_path / "x").exists()  # non-vacuity: the engine creates all three levels
-    try:
-        with _umask(mask):
-            root = scratch_root(temp_dir)
-        created = {p: _mode(tmp_path / p) for p in ("x", "x/y", "x/y/z")}
-    finally:
-        _open_up(tmp_path)
-    assert root == temp_dir
-    assert {p: oct(m) for p, m in created.items() if m != 0o700} == {}, oct(mask)

@@ -77,7 +77,6 @@ from decoy_engine.execution.out_of_core._route_policy import (
     decide_route,
     validate_outgoing_parent_columns,
 )
-from decoy_engine.execution.out_of_core._scratch import scratch_root
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (  # noqa: F401 -- one resolver
@@ -211,14 +210,9 @@ def run_fk_out_of_core(
     # Opened only after the pool exists, so nothing that can fail sits between the arena being
     # made and the `try` whose `finally` reclaims it. A handed arena is its opener's to reclaim.
     owned: ScratchArena | None = None
-    if _arena is not None:
-        root = Path(_arena.local_path())
-    elif _staged and temp_dir is not None:
-        # run_staged's issued root, still handed as a path: the one root its budget covers.
-        root = scratch_root(temp_dir)
-    else:
-        owned = ScratchArena.open(under=temp_dir)
-        root = Path(owned.local_path())
+    if _arena is None:
+        _arena = owned = ScratchArena.open(under=temp_dir)
+    root = Path(_arena.local_path())
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}

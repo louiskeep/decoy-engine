@@ -59,6 +59,7 @@ ambient_guards = [
 # Modules that release a scratch arena path (`ScratchArena.local_path`, the one path release).
 # `scratch_native` membership is derived from the scanner (`tests/sentry/fa/rules.py`).
 scratch_path_release = [
+  "decoy_engine/declared_casting/_stream.py",
   "decoy_engine/execution/out_of_core/_runner.py",
 ]
 
