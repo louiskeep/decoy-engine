@@ -1,6 +1,7 @@
 # GEN-REL E2 build evidence
 
-Status: built on `feat/gen-rel-e2`, with both review round 1 items (see "Review round 1").
+Status: built on `feat/gen-rel-e2`, with both review round 1 items (see "Review round 1") and
+slice 1's review fixes merged forward (see "Forward merge of review fixes (2026-11-13)").
 
 Spec: `docs/plans/gen-rel.md` on `origin/plan/gen-rel` (`26a83542`), slice row 2 (self-reference
 trees). The plan stays on the plan branch.
@@ -626,6 +627,161 @@ Line counts: `config/_generate_relational.py` 207, `execution/_probe_scale.py` 2
 
 The full suite; the gate steps under Python 3.11; a baseline rerun on `origin/main` for the
 final head (it ran for `35ec8c9f`'s failing sentry step only).
+
+## Forward merge of review fixes (2026-11-13)
+
+Slice 1's review fixes are merged forward. Main is not merged into this branch directly.
+
+| Commit | Subject |
+| --- | --- |
+| `00770342` | `Merge feat/gen-rel-e1 into feat/gen-rel-e2` (parents `5d7462c4`, `872f097d`) |
+| `92cce31d` | `fix(native): catalogue the self-reference tree draw` (final source head) |
+
+### The merge
+
+`origin/feat/gen-rel-e1` at `872f097d` holds `origin/main` `c86ca58d` (0.23.0 released), slice
+1's review rounds 1 and 2 (`per_parent_bounds`, its exclusivity guard over `generation/`,
+`generators/`, `execution/` and `config/`, and the `gen.reference` catalogue entry for the
+repair). The venv was resynced (`uv sync --frozen --python 3.10 --extra dev --extra lint
+--extra vault --extra cloud`; `decoy-engine` 0.22.0 to 0.23.0) and `decoy_engine.__file__` is
+`/home/user/wt-e2/src/decoy_engine/__init__.py`.
+
+Conflicts, each resolved as a union:
+
+- `config/__init__.py` and `config/_generate_relational.py` (`__all__`): both sides' names,
+  `is_exact_sequence_key`, `is_self_reference`, `per_parent_bounds`, `per_parent_problems`,
+  `self_reference_problems`.
+- `config/_pipeline.py`, `execution/_probe_scale.py`, `generation/_admission.py`: the import
+  lines carry both sides' names. The bodies merged without a conflict: the probe's
+  `_loosen_per_parent_bounds` reads the bounds through `per_parent_bounds` (slice 1) and the
+  key through `is_exact_sequence_key` (this slice), and `_clamp_root_counts` is unchanged.
+- `tests/sentry/test_physical_seam_disconnection.py`: the `_probe_scale.py` comment names
+  `config.generate_columns_of`, `config.per_parent_bounds`, `config.is_self_reference` and
+  `config.is_exact_sequence_key`.
+- `tests/unit/config/test_generate_relational.py`: both appended blocks kept (this slice's
+  AT-7, AT-9 and predicate cells, then slice 1's `per_parent_bounds` cells).
+
+A non-conflicting break the merge exposed: main's release stamped every `UNRELEASED` code in
+`reasons/plan/_part3.py`, so slice 1 dropped that file's `UNRELEASED` import, while this
+slice's `pinned_relational_option_unsupported` in the same file is still `since=UNRELEASED`.
+The import is kept (the union); without it the package does not import.
+
+Auto-merged ledger files read against both parents: `docs/reasons.md`, `CODEMAP.md`,
+`changelog.d/` (`gen-rel-e1.md` and `gen-rel-e2.md` both present),
+`tests/sentry/test_sentry_manifest.py` (both `test_generate_option_reads.py` and
+`test_sequence_key_predicate.py` listed), `tests/sentry/defects/test_generate_option_reads.py`
+and `plan/checks/_generate_columns.py`.
+
+Adaptations required by slice 1's bounds guard (a direct `min_per_parent`/`max_per_parent`
+read in a scanned package fails it):
+
+- `config/_generate_relational.py` `_tree_problem`: `_positive(col.get("min_per_parent"))`
+  becomes `per_parent_bounds(col)[0]`. The same reading (`_positive` is what the helper
+  applies), so every input refuses as before.
+- `generation/relational/_self_reference.py` `self_reference`: `int(col.get("max_per_parent")
+  or 0)` becomes `_, cap = per_parent_bounds(col)`. Every value a validated config can carry
+  (absent, None, 0, a positive int) reads the same. On values the registry refuses, which only
+  an unvalidated raw dict can carry, the helper's reading applies: `True`, `2.5` or `"3"` no
+  longer become a cap (the tree is drawn uncapped), and a negative cap was already uncapped.
+  This is the reading slice 1 chose for every other draw.
+
+This slice's sequence-key guard stays green over slice 1's code (`test_sequence_key_predicate.py`
+22 of 22 in the gate run). `generation/synthesize.py` is 595 lines, no census entry (slice 1
+599, this slice 595 before the merge; slice 1 has not changed the file since `9b1b78bf`).
+
+### The tree draw in the catalogue (owner ruling: option A)
+
+Red on the merge head `00770342` (Python 3.10.20): `tests/native/test_draw_site_inventory_coverage.py`
+and `tests/native/test_draw_sites_catalogue_pinned.py` gave 1 failed, 16 passed;
+`test_static_scan_finds_no_uncatalogued_draw_site` reported
+`['generation/relational/_self_reference.py']`.
+
+Decision: the existing `gen.reference` site, not a new id. A self-reference column is kind
+`reference`, which `GEN_KIND_TO_SITE` maps to `gen.reference`; its `random.Random` is seeded by
+`GenDeriveContext.for_column(derive_key=..., column_config=col, fallback_seed=seed).base_int("py")`,
+the derivation the entry records; it is one Random advanced across every row, so it is not
+partitionable, and its identity is the column. It replaces the per-row choice for that column,
+as the fitted fan-out allocator (already a `gen.reference` mirror) does. A new id would claim a
+second stream that does not exist and would need its own provider, which nothing calls.
+
+`gen.reference` in `execution/native/_draw_sites_gen.py`: `generation/relational/_self_reference.py:86`
+(the `random.Random` construction) is appended to `mirror_call_sites`, and the notes now say
+that a self-reference draws its tree from the column's own Random in place of the per-row
+choice (`rng.randrange(row)` per non-root row, or `rng.randrange(len(open_rows))` under
+`max_per_parent`), that root rows hold null and draw nothing, and that the pool is the table's
+own key column. No other field, entry, order or map changed. No allowlist entry; the seam
+sentry's whole-file `permitted_non_physical` entry for `_draw_sites_gen.py` is unchanged.
+
+`tests/native/test_draw_sites_catalogue_pinned.py` re-pinned by its procedure: a
+`Re-pinned for GEN-REL E2: ...` line above `_CATALOGUE_DIGEST` and a per-entry comment above
+the `gen.reference` digest. On top of slice 1's pin: catalogue `49e1c138...` to `cf4f3f18...`
+(`cf4f3f18a346d0ad4c6af2baddac955be80f1aa3501c3e80a627680a291ea240`), `gen.reference`
+`a53519d7...` to `43afe9de...` (`43afe9de3ce00612a433759bb040bccdd178207cd330437f34ea595f9c3c5009`).
+The 40 ids, their order, the other 39 entry digests and every map and enum digest are unchanged.
+The catalogue is metadata: no draw, seed or output byte moved, and the determinism and
+draw-site provider goldens pass unchanged.
+
+### Mutations (final source head `92cce31d`, 79 of 79 red)
+
+All 76 recorded mutations and three new ones. 78 ran in a detached worktree at `/home/user/`
+importing its own `src` (Python 3.10.20, removed afterwards); the results JSON shows 78 `RED`
+and H2 `NOT RED` there, as before (its witness runs a child process that imports the
+checkout). H2 was applied once in `/home/user/wt-e2` at `92cce31d`, clean before and after: red
+in `test_order_and_result_keys_are_equal_across_seeds_and_routes`.
+
+- Re-anchored, same intent: C2b and C2f now anchor on `if per_parent_bounds(col)[0]:` (the
+  adapted `min_per_parent` refusal). Every anchor matched exactly once.
+- Red counts equal the run on `35ec8c9f` except A6e (`root_count` dropped from the registry):
+  6 red, one more than before, because slice 1 added `config/_generate_relational.py` to the
+  option-read sentry's `READER_FILES`, which now also sees that file's `root_count` read.
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| F1 | drop the tree draw's mirror from the catalogue | `execution/native/_draw_sites_gen.py` | 1: `test_static_scan_finds_no_uncatalogued_draw_site` |
+| F2 | the tree draw reads `max_per_parent` itself | `generation/relational/_self_reference.py` | 1: `test_per_parent_bounds_are_read_only_through_the_config_helper` |
+| F3 | the self-reference config check reads `min_per_parent` itself | `config/_generate_relational.py` | 1: `test_per_parent_bounds_are_read_only_through_the_config_helper` |
+
+### Gates (final source head `92cce31d`)
+
+`GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
+ruff,format,mypy,sentry,layers,licenses,tests` over the slice's T1 paths, `tests/unit/reasons`,
+`tests/native/test_draw_site_inventory_coverage.py`, `tests/native/test_draw_sites_catalogue_pinned.py`,
+`tests/unit/execution/test_probe_scale.py`, `tests/unit/execution/test_probe_scale_kills.py`,
+`tests/unit/plan/checks`, the test files slice 1's fixes changed
+(`tests/sentry/defects/test_generate_option_reads.py`, `tests/sentry/test_physical_seam_disconnection.py`;
+`tests/unit/config` is a T1 path), `tests/sentry/defects/test_sequence_key_predicate.py` and the
+other native files that read the catalogue (`test_draw_sites_assembly.py`,
+`test_determinism_protocol.py`, `test_c1b_i_metadata_inventory.py`,
+`test_c5b_i_metadata_inventory.py`, `test_capabilities.py`). Python 3.10.20, PyArrow 24.0.0,
+DuckDB 1.5.4, pandas 2.3.3, NumPy 2.2.6; `origin/main` at `c86ca58d`.
+
+| Step | Branch (`92cce31d`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5445 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 7089 passed, 0 failed, 60 skipped |
+
+Failure sets: branch 0, baseline 0, branch-only 0; no step failed, so `origin/main` was not
+rerun. `test_static_scan_finds_no_uncatalogued_draw_site` passed (the inventory file 12 of 12)
+and `test_draw_sites_catalogue_pinned.py` passed 5 of 5. No digest, golden or snapshot of
+generated output moved; the only re-pin is the catalogue metadata above.
+
+### Script checks
+
+On `92cce31d` (clean tree), `origin/main` at `c86ca58d`, which slice 1 holds:
+`registry_renumber.py --check --main origin/main` exit 0 (`registry consistent`),
+`ratchet_check.py --base origin/main` exit 0, `check_fragment.py --base origin/main` exit 0,
+`reason_release_pin.py --check` exit 0 (`reason release pin current`). The changelog fragment
+is unchanged: nothing a user sees changes for a validated config.
+
+### Not run
+
+The full suite; the gate steps under Python 3.11; a rerun of `origin/main` (no branch step
+failed).
 
 ## Not run
 
