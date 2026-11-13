@@ -3,11 +3,26 @@
 from __future__ import annotations
 
 import ast
+from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from tests.sentry.fa import sinks
-from tests.sentry.fa.scan import CAPABILITY_ANNOTATIONS, FunctionInfo, Site
+from tests.sentry.fa.callgraph import FuncDef
+from tests.sentry.fa.resolve import module_name
+from tests.sentry.fa.scan import (
+    CAPABILITY_ANNOTATIONS,
+    CONN,
+    ITER_WRAPPERS,
+    READ_FORMS,
+    READER,
+    RESULT,
+    FunctionInfo,
+    NativeFlow,
+    Site,
+    own_nodes,
+)
 
 try:  # pragma: no cover - interpreter dependent
     import tomllib as toml_reader
@@ -319,3 +334,214 @@ def creator_problems(
         if not any(isinstance(n, ast.FunctionDef) and n.name == function for n in tree.body):
             problems.append(f"{entry}: no such module-level function")
     return problems
+
+
+# -- F25 plan 4.1: the scratch path release key and the scratch-native rule ----------------
+
+RELEASE_OWNERS = frozenset({"decoy_engine/fileaccess/_scratch.py"})
+# Exclusions, fixed here and changed only by a plan amendment (plan 4.1).
+NATIVE_OWNERS = RELEASE_OWNERS | {"decoy_engine/fileaccess/__init__.py"}
+NATIVE_OWN_MAPPING = frozenset(
+    {
+        # runs inside a caller's wrapped `connect_internal` or `untrusted_session`
+        "decoy_engine/fileaccess/adapters/duckdb.py",
+        # code-only `PostgresSnapshotError` raised from None
+        "decoy_engine/connectors/postgres_snapshot.py",
+        # code-only `DiscoverySqlError` raised after the handler
+        "decoy_engine/data_discovery.py",
+    }
+)
+NATIVE_EXCLUDED = NATIVE_OWNERS | NATIVE_OWN_MAPPING
+# Where a bare scratch file read is a finding, beside every member and every release module. An
+# entry ending in "/" covers every module under it.
+SCRATCH_READ_SCOPE = frozenset(
+    {
+        "decoy_engine/execution/out_of_core/",
+        "decoy_engine/execution/_isolated_run.py",
+        "decoy_engine/execution/_isolated_worker.py",
+        "decoy_engine/execution/_isolated_commit.py",
+    }
+)
+# Pulls on what a scratch read form returns (`RecordBatchFileReader.get_batch` and the rest).
+READER_METHODS = frozenset({"get_batch", "read_next_batch", "read_all"})
+# Every module with a bare native call or scratch read, exactly; the set may only shrink
+# (`test_pending_set_only_shrinks`). The slice that clears each name is beside it.
+SCRATCH_NATIVE_PENDING = frozenset(
+    {
+        "decoy_engine/execution/out_of_core/_relation.py",  # S2a-1c-ii
+        "decoy_engine/execution/out_of_core/_multi_parent.py",  # S2a-1c-ii
+        "decoy_engine/execution/out_of_core/_duckdb.py",  # S2a-1c-i
+        "decoy_engine/execution/out_of_core/_batch_join.py",  # S2a-2
+        "decoy_engine/execution/out_of_core/_join.py",  # S2a-2
+        "decoy_engine/execution/out_of_core/_stream_join.py",  # S2b-2
+        "decoy_engine/execution/out_of_core/_stream_join_plan.py",  # S2b-2
+        "decoy_engine/execution/out_of_core/_route_policy.py",  # S2a-1c-ii
+        "decoy_engine/execution/out_of_core/_payload_store.py",  # S2b-1
+        "decoy_engine/execution/out_of_core/_external_sort.py",  # S2b-2
+        "decoy_engine/execution/out_of_core/_external_sort_run.py",  # S2b-2
+        "decoy_engine/execution/_isolated_run.py",  # S3a
+        "decoy_engine/execution/_isolated_worker.py",  # S3a
+        "decoy_engine/execution/native/_pool_quality.py",  # S4b-0
+        "decoy_engine/profiling/_scan_integrity.py",  # S2a-1c-iii
+    }
+)
+
+
+def source_modules(root: Path, package: str) -> dict[str, str]:
+    """Dotted module name to the posix path relative to `root`."""
+    files = sorted((root / package).rglob("*.py"))
+    return {module_name(f, root): f.relative_to(root).as_posix() for f in files}
+
+
+def _in_scope(rel: str, scope: frozenset[str]) -> bool:
+    return rel in scope or any(e.endswith("/") and rel.startswith(e) for e in scope)
+
+
+def _is_member(flow: NativeFlow, fd: FuncDef) -> bool:
+    """A function that connects (a connect site or a function returning a connection) or was
+    handed a connection."""
+    params = {a.arg for a in ast.walk(fd.node.args) if isinstance(a, ast.arg)}
+    if any((fd.qualname, p) in flow.params for p in params):
+        return True
+    return any(isinstance(n, ast.Call) and flow.connects(n.func, fd) for n in own_nodes(fd.node))
+
+
+def _bare_in(flow: NativeFlow, fd: FuncDef, member: bool, reads: bool) -> Iterator[str]:
+    names = flow.names[fd.qualname]
+    nodes = list(own_nodes(fd.node))
+    wrapped = {id(n.args[0]) for n in nodes if flow.is_wrapper(n, fd) and n.args}
+
+    def native(node: ast.AST) -> bool:
+        found = flow.kind(node, fd, names)
+        return (member and found in (CONN, RESULT)) or (reads and found == READER)
+
+    def pulls(expr: ast.AST) -> bool:
+        """A native object iterated other than inside `scratch_native_iter`."""
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            if not flow.is_wrapper(node, fd, ITER_WRAPPERS):
+                if native(node):
+                    return True
+                stack.extend(ast.iter_child_nodes(node))
+        return False
+
+    qual = fd.qualname[len(fd.module) + 1 :]
+    for node in nodes:
+        what = ""
+        if id(node) in wrapped:
+            continue
+        if isinstance(node, ast.Call) and member and flow.connects(node.func, fd):
+            what = f"connects bare through {flow.target(node.func, fd).rsplit('.', 1)[-1]}"
+        elif isinstance(node, ast.Call) and flow.target(node.func, fd) == "getattr":
+            what = "a bare getattr on a native object" if node.args and native(node.args[0]) else ""
+        elif isinstance(node, (ast.Name, ast.Attribute)) and reads:
+            if flow.target(node, fd) in READ_FORMS:
+                what = "a bare scratch read"
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and not what:
+            found = flow.kind(node.value, fd, names)
+            if (member and found in (CONN, RESULT)) or (
+                reads and found == READER and node.attr in READER_METHODS
+            ):
+                what = f"a bare native call {_receiver(node.value)}.{node.attr}"
+        iterated = (
+            getattr(node, "iter", None) if isinstance(node, (ast.For, ast.AsyncFor)) else None
+        )
+        if isinstance(node, ast.comprehension):
+            iterated = node.iter
+        elif isinstance(node, ast.YieldFrom) or (
+            isinstance(node, ast.Call) and getattr(node.func, "id", "") == "next" and node.args
+        ):
+            iterated = node.value if isinstance(node, ast.YieldFrom) else node.args[0]
+        if iterated is not None and pulls(iterated):
+            what = what or "a bare pull on a native iterator"
+        if what:
+            line = getattr(node, "lineno", getattr(iterated, "lineno", 0))
+            yield f"{qual}:{line}: {what}"
+
+
+def _receiver(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute) and getattr(node.value, "id", "") == "self":
+        return f"self.{node.attr}"
+    return "<result>"
+
+
+def bare_native(
+    root: Path,
+    package: str,
+    *,
+    release: frozenset[str] = frozenset(),
+    scope: frozenset[str] = SCRATCH_READ_SCOPE,
+    excluded: frozenset[str] = NATIVE_EXCLUDED,
+) -> dict[str, list[str]]:
+    """Each module's bare native calls (members) and bare scratch reads (in scope)."""
+    flow = NativeFlow(root, package)
+    rels = source_modules(root, package)
+    by_module: dict[str, list[FuncDef]] = defaultdict(list)
+    for fd in flow.funcs.values():
+        by_module[fd.module].append(fd)
+    out: dict[str, list[str]] = {}
+    for module, fds in sorted(by_module.items()):
+        rel = rels.get(module, "")
+        if not rel or rel in excluded:
+            continue
+        member = any(_is_member(flow, fd) for fd in fds)
+        reads = member or rel in release or _in_scope(rel, scope)
+        found = [f for fd in fds for f in _bare_in(flow, fd, member, reads)]
+        if found:
+            out[rel] = found
+    return out
+
+
+def native_findings(
+    bare: dict[str, list[str]], pending: frozenset[str], modules: set[str]
+) -> list[str]:
+    """The modules with a bare finding must equal `pending` exactly."""
+    out = [f"pending: {rel} is not a module" for rel in sorted(pending - modules)]
+    out += [f"{rel}::{f} (not pending)" for rel in sorted(set(bare) - pending) for f in bare[rel]]
+    out += [
+        f"pending: {rel} has no bare call or read (stale)" for rel in sorted(pending - set(bare))
+    ]
+    return out
+
+
+def _qualified(tree: ast.Module) -> Iterator[tuple[str, ast.AST]]:
+    def visit(body: list[ast.stmt], qual: str) -> Iterator[tuple[str, ast.AST]]:
+        for stmt in body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                yield from visit(
+                    stmt.body, stmt.name if qual == "<module>" else f"{qual}.{stmt.name}"
+                )
+            else:
+                yield from ((qual, node) for node in ast.walk(stmt))
+
+    return visit(tree.body, "<module>")
+
+
+def _uses(tree: ast.Module, name: str) -> list[str]:
+    """Where `name` is read as an attribute or name, imported, or looked up by string."""
+    return [
+        qual
+        for qual, node in _qualified(tree)
+        if (isinstance(node, ast.Attribute) and node.attr == name)
+        or (isinstance(node, ast.Name) and node.id == name)
+        or (isinstance(node, ast.alias) and name in (node.name, node.asname))
+        or (isinstance(node, ast.Constant) and node.value == name)
+    ]
+
+
+def release_findings(trees: dict[str, ast.Module], listed: set[str]) -> list[str]:
+    """Why the `scratch_path_release` key does not match the `local_path` callers exactly."""
+    key = "scratch_path_release"
+    out = [f"{key}: {rel} is not a module" for rel in sorted(listed - set(trees))]
+    for rel, tree in sorted(trees.items()):
+        if rel in RELEASE_OWNERS:
+            continue
+        uses = _uses(tree, "local_path")
+        if uses and rel not in listed:
+            out += [f"{key}: {rel}::{qual} is not listed" for qual in uses]
+        if rel in listed and not uses:
+            out.append(f"{key}: {rel} is listed but makes no such call")
+    return out

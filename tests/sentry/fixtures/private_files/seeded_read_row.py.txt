@@ -1,3 +1,18 @@
-# Seeded corpus: a row marked `read` whose call writes (P1).
+# Seeded corpus: a row marked `read` whose call writes (P1), directly and through `_call`.
+import os
+
+
+def _call(fn, *args, **kwargs):
+    return fn(*args, **kwargs)
+
+
 def save(target, v):
     open(target, "wb").write(v)
+
+
+def wrapped_write(target):
+    return _call(os.open, target, os.O_WRONLY | os.O_CREAT)
+
+
+def wrapped_read(target):
+    return _call(os.open, target, os.O_RDONLY | os.O_DIRECTORY)

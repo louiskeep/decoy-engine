@@ -7,7 +7,10 @@ The named leaf types and their one validator factory live in ``run_result/_model
 reviewed site of the fixed error text. :func:`derive_read` turns a strict write model into its
 tolerant read model: unknown fields are ignored at every level and every enum or ``Literal``
 becomes the checked ``Token`` leaf it is given, so a value a later minor added still reads while
-free text does not.
+free text does not. A validator both sides must run lives on a :class:`SharedRules` class
+(validators only: no fields, no config) that the write model inherits, and the read model
+inherits it too; a validator put straight on a write model fails the derivation at import
+instead of being dropped.
 """
 
 from __future__ import annotations
@@ -22,10 +25,15 @@ from pydantic import BaseModel, Field, Strict, create_model
 
 __all__ = [
     "Count",
+    "SharedRules",
     "ValueFree",
     "derive_read",
     "has_kind",
 ]
+
+
+class SharedRules(BaseModel):
+    """Base of a rules class: validators a write model and its derived read model both run."""
 
 
 class ValueFree:
@@ -43,6 +51,33 @@ Count = Annotated[int, Strict(), Ge(0)]
 
 def has_kind(meta: Collection[Any], kind: str) -> bool:
     return any(isinstance(m, ValueFree) and m.kind == kind for m in meta)
+
+
+def _validator_names(model: type[BaseModel]) -> set[str]:
+    deco = model.__pydantic_decorators__
+    groups = (deco.validators, deco.field_validators, deco.root_validators, deco.model_validators)
+    return {name for group in groups for name in group}
+
+
+def _owner(model: type[BaseModel], name: str) -> type:
+    return next(c for c in model.__mro__ if name in vars(c))
+
+
+def _shared_rules(model: type[BaseModel]) -> tuple[type[SharedRules], ...]:
+    """The rules classes of ``model`` (MRO order), after a fail-closed check of its validators."""
+    rules = tuple(
+        c for c in model.__mro__ if issubclass(c, SharedRules) and SharedRules in c.__bases__
+    )
+    for rule in rules:
+        if rule.model_fields:
+            raise TypeError(f"{rule.__name__} is a rules class and declares fields")
+        if rule.model_config:
+            raise TypeError(f"{rule.__name__} is a rules class and sets model_config")
+    # By owner, not name: a same-named validator on the model would run on the write side only.
+    unshared = sorted(n for n in _validator_names(model) if _owner(model, n) not in rules)
+    if unshared:
+        raise TypeError(f"{model.__name__} has validators outside a SharedRules class: {unshared}")
+    return rules
 
 
 def _is_union(origin: object) -> bool:
@@ -90,6 +125,7 @@ class _Deriver:
     def model(self, model: type[BaseModel]) -> type[BaseModel]:
         if model in self.cache:
             return self.cache[model]
+        rules = _shared_rules(model)
         fields: dict[str, Any] = {}
         for name, info in model.model_fields.items():
             ann: Any = info.annotation
@@ -103,7 +139,10 @@ class _Deriver:
             read_ann = ann if keep else self.annotation(ann)
             fields[name] = (read_ann, Field(default, alias=info.alias))
         read = create_model(
-            f"{model.__name__}Read", __base__=self.base, __module__=self.module, **fields
+            f"{model.__name__}Read",
+            __base__=(self.base, *rules),
+            __module__=self.module,
+            **fields,
         )
         self.cache[model] = read
         return read
@@ -126,7 +165,9 @@ def derive_read(
     its place, or ``None`` to keep going (run results swap reason payloads this way).
     ``required_kinds`` names ``ValueFree`` kinds that must be present on read even when the writer
     has a default. ``exact_fields`` keeps the named ``Literal`` fields as written, for a schema tag or a
-    producer id that a reader must match, not tolerate. ``module`` is the caller's ``__name__``:
+    producer id that a reader must match, not tolerate. The read model also inherits each
+    ``SharedRules`` class of ``model``; ``TypeError`` if ``model`` holds a validator that no such
+    class owns, or a rules class declares fields or config. ``module`` is the caller's ``__name__``:
     derived models are stamped with it so a public read model keeps its import path and pickles.
     """
     return _Deriver(base, token, substitute, required_kinds, exact_fields, module).model(model)

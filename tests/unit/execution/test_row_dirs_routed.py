@@ -62,6 +62,16 @@ def test_ooc_private_dir_under_an_arena_root_under_any_policy(tmp_path: Path) ->
         policy.close()
 
 
+def test_ooc_per_run_root_comes_from_the_allocator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _spy(monkeypatch, _scratch, "protected_scratch_dir")
+    with _scratch.engine_scratch_root(tmp_path / "parent") as root:
+        assert root.parent == tmp_path / "parent" and _mode(root) == 0o700
+    assert len(calls) == 1 and calls[0][1] == {"prefix": "decoy-ooc-run-"}
+    assert not root.exists()
+
+
 def test_ooc_private_dir_uses_open_protected_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

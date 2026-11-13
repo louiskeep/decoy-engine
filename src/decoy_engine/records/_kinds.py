@@ -25,6 +25,7 @@ _LAYOUT: TypeAdapter[Any] = TypeAdapter(ExportLayout)
 
 _EVIDENCE_PATHS = (
     "/payload/pipeline_path",
+    "/payload/project_manifest",
     "/payload/input_fingerprints/*/path",
     "/payload/output_fingerprints/*/path",
 )

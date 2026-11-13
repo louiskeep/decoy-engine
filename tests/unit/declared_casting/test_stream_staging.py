@@ -3,6 +3,7 @@ counts against the temp-disk budget, like every other spill of the run."""
 
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -200,3 +201,133 @@ def test_a_table_name_never_places_the_staged_copy(tmp_path: Path, hostile: str)
     assert seen["root"] in seen["staged"].parents, seen
     assert seen["outside"] == sorted([str(tmp_path / "src.parquet"), str(seen["staged"])]), seen
     assert not list(caller.parent.glob("x.typed.parquet")) and not list(elsewhere.iterdir())
+
+
+def test_characterization_staged_file_name_and_mode(tmp_path: Path) -> None:
+    """Characterization: the declared-cast staging keeps its file stem and 0600 mode."""
+    from decoy_engine.declared_casting._stream import run_staged
+
+    seen: dict[str, Any] = {}
+    run_staged(_fn(seen), _call(tmp_path, seen), 1000)
+    assert seen["path"].name == "s0000.typed.parquet"
+
+
+class _ClosesThenFails:
+    """A scratch sink that releases its descriptor, then reports the flush failure."""
+
+    def __init__(self, wrapped: Any, err: int) -> None:
+        self._wrapped = wrapped
+        self._err = err
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
+    def close(self) -> None:
+        self._wrapped.close()
+        raise OSError(self._err, "no room")
+
+
+def _stage(tmp_path: Path, root: Any = None, **extra: Any) -> Any:
+    from decoy_engine.declared_casting._stream import stage_typed_sources
+
+    if root is None:
+        root = tmp_path / "root"
+        root.mkdir(exist_ok=True)
+    return stage_typed_sources(
+        ["t"],
+        {"t": _lazy(tmp_path)},
+        batch_fn=lambda table, batch, offset: pa.Table.from_batches([batch]),
+        empty_fn=lambda table, src: src.schema.empty_table(),
+        resident_fn=lambda table, value: value,
+        root=root,
+        batch_rows=1000,
+        **extra,
+    )
+
+
+def _patch_sink_close(monkeypatch: pytest.MonkeyPatch, err: int) -> None:
+    from decoy_engine.execution.out_of_core import _scratch
+
+    real = _scratch.open_private
+    monkeypatch.setattr(_scratch, "open_private", lambda p: _ClosesThenFails(real(p), err))
+
+
+@pytest.mark.parametrize("err", [errno.ENOSPC, errno.EDQUOT])
+def test_a_full_disk_on_sink_close_is_the_capacity_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int
+) -> None:
+    from decoy_engine.execution._errors import ExecutionError
+
+    _patch_sink_close(monkeypatch, err)
+    with pytest.raises(ExecutionError) as info:
+        _stage(tmp_path)
+    assert str(info.value.code) == "out_of_core_temp_disk_exceeded"
+    assert "root" not in str(info.value)
+
+
+def test_a_non_capacity_sink_close_error_keeps_its_own_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_sink_close(monkeypatch, errno.EIO)
+    with pytest.raises(OSError) as info:
+        _stage(tmp_path)
+    assert info.value.errno == errno.EIO
+
+
+def test_a_full_disk_on_writer_close_is_the_capacity_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution._errors import ExecutionError
+
+    class _WriterFull(pq.ParquetWriter):
+        def close(self) -> None:
+            super().close()
+            raise OSError(errno.ENOSPC, "no room")
+
+    monkeypatch.setattr(pq, "ParquetWriter", _WriterFull)
+    with pytest.raises(ExecutionError) as info:
+        _stage(tmp_path)
+    assert str(info.value.code) == "out_of_core_temp_disk_exceeded"
+
+
+def test_a_source_read_enospc_is_not_a_scratch_capacity_failure(tmp_path: Path) -> None:
+    """Characterization: only scratch writes are translated; a failing source read is not."""
+
+    def failing_read(table: str, src: Any) -> Any:
+        raise OSError(errno.ENOSPC, "source side")
+        yield  # pragma: no cover
+
+    with pytest.raises(OSError) as info:
+        _stage(tmp_path, open_fn=failing_read)
+    assert info.value.errno == errno.ENOSPC
+    assert type(info.value) is OSError
+
+
+def _plain_writer_bytes(tmp_path: Path) -> bytes:
+    """What one plain `ParquetWriter` writes for the source's batches, in memory."""
+    sink = pa.BufferOutputStream()
+    writer: Any = None
+    for batch in _lazy(tmp_path).iter_batches(1000):
+        table = pa.Table.from_batches([batch])
+        writer = writer or pq.ParquetWriter(sink, table.schema)
+        writer.write_table(table)
+    writer.close()
+    return bytes(sink.getvalue().to_pybytes())
+
+
+@pytest.mark.parametrize("arm", ["path", "arena"])
+def test_each_root_arm_stages_the_same_bytes(tmp_path: Path, arm: str) -> None:
+    """The subset stage hands a path (until T18) and declared staging an arena; both stage the
+    bytes a plain writer gives, in a file under the root they were handed."""
+    from decoy_engine.fileaccess import ScratchArena
+
+    expected = _plain_writer_bytes(tmp_path)
+    if arm == "path":
+        staged = Path(_stage(tmp_path)["t"].path)
+        assert staged.parent == tmp_path / "root"
+        assert staged.read_bytes() == expected
+        return
+    with ScratchArena.open(under=tmp_path / "arena") as arena:
+        staged = Path(_stage(tmp_path, root=arena)["t"].path)
+        assert staged.parent == Path(arena.local_path())
+        assert staged.read_bytes() == expected

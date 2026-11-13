@@ -11,6 +11,8 @@ import pytest
 from decoy_engine.plan._types import PlanRelationship, PlanRelationshipEnd
 
 JOB_SEED = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+# `job_seed_for_config` reads the seed as an unsigned 64-bit int, so this config resolves to JOB_SEED.
+JOB_SEED_CONFIG: dict[str, Any] = {"global_settings": {"seed": int.from_bytes(JOB_SEED, "big")}}
 
 
 def make_parquet(

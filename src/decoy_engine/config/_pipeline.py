@@ -43,6 +43,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError, ValidationError
 
 from decoy_engine import reasons
+from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._generate_options import problem_details
 from decoy_engine.config._generate_unique import cross_table_unique_problems
 from decoy_engine.config._global_settings import GlobalSettings
@@ -143,6 +144,9 @@ class PipelineConfig(BaseModel):
     # column with `error_policy: quarantine`; there is deliberately no path or key here, because
     # the store is a runtime capability. Unset stays out of dumps (legacy hashes are unchanged).
     protected_quarantine: ProtectedQuarantineConfig | None = None
+    # How the run's outputs become visible. Equal to the default it stays out of dumps and
+    # hashes, so a legacy config is unchanged.
+    delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
@@ -160,6 +164,8 @@ class PipelineConfig(BaseModel):
         # By value, not by what was written: a pre_scan equal to the default is the legacy shape.
         if self.pre_scan == PreScanConfig():
             data.pop("pre_scan", None)
+        if self.delivery == DeliveryConfig():
+            data.pop("delivery", None)
         return data
 
     @field_validator("name", mode="before")
@@ -362,11 +368,7 @@ class PipelineConfig(BaseModel):
         1. Every `subset.seeds[].table` must be a declared mask-kind table
            with a source (subsetting operates on the same tables masking
            reads).
-        2. Every source referenced by a subsetted or relationship-bearing
-           table must be `format == "parquet"` -- a submit-time mirror of
-           preflight check 5.0, so the operator sees the reject at
-           validation time, not at run time.
-        3. Subset-after-mask rejection: the run path is structurally
+        2. Subset-after-mask rejection: the run path is structurally
            subset-stage -> mask-stage; there is no syntax to express
            mask-then-subset within one config. The one shape that WOULD
            express it is pointing the subset job's sources at this same
@@ -381,18 +383,6 @@ class PipelineConfig(BaseModel):
                 raise ConfigRuleError(
                     f"subset seed names table {seed.table!r}, which is not a declared "
                     "mask-kind table with a source in this config"
-                )
-
-        tables_needing_parquet = {seed.table for seed in self.subset.seeds}
-        for rel in self.relationships:
-            tables_needing_parquet.add(rel.parent.table)
-            tables_needing_parquet.update(c.table for c in rel.children)
-        for source_name in tables_needing_parquet:
-            src = self.sources.get(source_name)
-            if src is not None and src.format != "parquet":
-                raise ConfigRuleError(
-                    f"subsetting is configured but source {source_name!r} is "
-                    f"{src.format!r}; convert to Parquet for subsetting"
                 )
 
         target_paths = {

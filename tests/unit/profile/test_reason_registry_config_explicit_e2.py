@@ -54,9 +54,19 @@ def test_the_declaration_refusals_are_scanned_and_registry_backed() -> None:
         for s in scan.scan(scan.SRC, helpers)
         if s.file == "profile/_declared_columns.py" and s.family == "source_refusal"
     ]
-    assert len(sites) == 2
+    assert len(sites) == 3
     assert {s.value_class for s in sites} == {"registry"}
 
 
 def _keys(manifest: dict) -> set[tuple[str, str]]:
     return {(e["namespace"], e["code"]) for e in manifest["entries"]}
+
+
+def test_declared_column_missing_is_registered_pending_and_owned() -> None:
+    """AT-E2b-1 registry half: one new code, pending and owned."""
+    code = reasons.config.SOURCE_FILE_DECLARED_COLUMN_MISSING
+    spec = reasons.find("config", code)
+    assert code == "source_file.declared_column_missing"
+    assert spec is not None
+    assert (spec.owner, spec.since) == ("PipelineValidationError", reasons.UNRELEASED)
+    assert code == CODES.SOURCE_FILE_DECLARED_COLUMN_MISSING
