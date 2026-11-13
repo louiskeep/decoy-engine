@@ -91,6 +91,7 @@ SENTRIES = (
     "tests/sentry/defects/test_exception_context.py",
     "tests/sentry/defects/test_generate_option_reads.py",
     "tests/sentry/defects/test_reference_pool_choke_point.py",
+    "tests/sentry/defects/test_sequence_key_predicate.py",
     "tests/sentry/defects/test_validation_sites.py",
     "tests/sentry/generation/test_pooled_read_choke_point.py",
     "tests/sentry/generation/test_uniqueness_refusal_choke_point.py",
