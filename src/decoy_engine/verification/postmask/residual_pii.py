@@ -49,7 +49,7 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine.detection.detectors import run_all_detectors
-from decoy_engine.verification.postmask._column_facts import ColumnFacts
+from decoy_engine.verification.postmask._column_facts import ColumnFacts, DetectorRate
 from decoy_engine.verification.postmask.types import ResidualPIIFinding, Severity
 
 # Strategies whose output is EXPECTED to look like real PII. A detector
@@ -153,67 +153,47 @@ def check_residual_pii(
         masking strategy (or absence of one), then escalated by the
         source comparison when evidence of a leak exists.
     """
-    findings: list[ResidualPIIFinding] = []
+    facts = {
+        table_name: {
+            str(col_name): _frame_column_facts(table_name, df, str(col_name), source_frames)
+            for col_name in df.columns
+        }
+        for table_name, df in output_frames.items()
+    }
+    return residual_pii_findings(facts, config)
 
-    # Build a lookup of configured masking strategy per (table, column).
-    # Per-table strategy = column-level "strategy" key in tables[].columns[].
-    strategy_by_col: dict[tuple[str, str], str] = {}
-    for table_cfg in config.get("tables") or []:
-        table_name = table_cfg.get("name")
-        if not isinstance(table_name, str):
-            continue
-        for col_cfg in table_cfg.get("columns") or []:
-            col_name = col_cfg.get("name")
-            strategy = col_cfg.get("strategy")
-            if isinstance(col_name, str) and isinstance(strategy, str):
-                strategy_by_col[(table_name, col_name)] = strategy
 
-    for table_name, df in output_frames.items():
-        for col_name in df.columns:
-            series = df[col_name]
-            matches = run_all_detectors(series, col_name)
-            if not matches:
-                continue
-            # The dominant detector match (highest match_rate; first in list
-            # per run_all_detectors's sorted-descending order).
-            top = matches[0]
-            configured = strategy_by_col.get((table_name, col_name))
-            severity, message = _classify(top.detector_id, configured)
-
-            identity = None
-            if source_frames is not None and configured not in _NO_OP_BY_DESIGN:
-                identity = _source_identity(source_frames, table_name, col_name, series)
-            if identity is not None:
-                rate, identical_count, src_distinct = identity
-                override = _escalate(
-                    configured=configured,
-                    identity_rate=rate,
-                    identical_count=identical_count,
-                    src_distinct=src_distinct,
-                    detector_confidence=top.confidence,
-                    detector_id=top.detector_id,
-                )
-                if override is not None and (
-                    _SEVERITY_ORDER[override[0]] > _SEVERITY_ORDER[severity]
-                ):
-                    severity, message = override
-
-            findings.append(
-                ResidualPIIFinding(
-                    table=table_name,
-                    column=col_name,
-                    detector_id=top.detector_id,
-                    match_rate=top.match_rate,
-                    severity=severity,
-                    configured_strategy=configured,
-                    sample_match_count=int(top.match_rate * len(series)),
-                    message=message,
-                    source_identity_rate=identity[0] if identity is not None else None,
-                    source_compared=identity is not None,
-                )
-            )
-
-    return findings
+def _frame_column_facts(
+    table_name: str,
+    df: pd.DataFrame,
+    col_name: str,
+    source_frames: dict[str, pd.DataFrame] | None,
+) -> ColumnFacts:
+    """The facts one column of a resident frame yields, so the frame check and the batch check
+    share `residual_pii_findings` as the only place a finding is built."""
+    series = df[col_name]
+    comparable = identical = distinct = 0
+    if source_frames is not None:
+        identity = _source_identity(source_frames, table_name, col_name, series)
+        if identity is not None:
+            rate, identical, distinct = identity
+            # The count behind the rate; any positive count gives rate 0 when nothing matched.
+            comparable = round(identical / rate) if identical else 1
+    return ColumnFacts(
+        table=table_name,
+        column=col_name,
+        source_rows=0,
+        output_rows=len(series),
+        comparable_rows=comparable,
+        identical_rows=identical,
+        bytes_identical=False,
+        source_distinct=distinct,
+        output_distinct=0,
+        detectors=tuple(
+            DetectorRate(m.detector_id, m.match_rate, m.confidence)
+            for m in run_all_detectors(series, col_name)
+        ),
+    )
 
 
 def _source_identity(

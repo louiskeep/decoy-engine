@@ -168,7 +168,10 @@ def _key(value: object) -> str:
 
 
 def _null(value: object) -> bool:
-    return value is None or (isinstance(value, float) and value != value)
+    """True for every null family pandas holds in an object cell: None, float NaN, pd.NA, pd.NaT,
+    numpy NaT and Decimal NaN. It is taken before `_key`, which would turn each into a string
+    that reads as a real value. An array-like cell is not a null."""
+    return bool(pd.api.types.is_scalar(value) and pd.isna(value))
 
 
 def _frame_table(name: str, frame: pd.DataFrame, other: pd.DataFrame | None) -> TableBatches:

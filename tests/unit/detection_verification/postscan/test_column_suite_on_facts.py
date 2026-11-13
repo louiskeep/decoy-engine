@@ -10,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
@@ -522,3 +523,42 @@ def test_a_float_source_and_an_int_output_with_one_different_number_are_not_iden
     report = _parity({"t": src}, {"t": out}, _cfg(("zip", "faker")))
     (finding,) = report["policy_validation"]
     assert finding["bytes_identical"] is False
+
+
+_NULLS = [
+    pytest.param(None, id="none"),
+    pytest.param(float("nan"), id="float_nan"),
+    pytest.param(pd.NA, id="pd_na"),
+    pytest.param(pd.NaT, id="pd_nat"),
+    pytest.param(np.datetime64("NaT"), id="numpy_nat"),
+    pytest.param(Decimal("NaN"), id="decimal_nan"),
+]
+
+
+@pytest.mark.parametrize("null", _NULLS)
+def test_every_null_family_is_not_comparable_on_the_text_fallback(null: object):
+    # A stray int in a string column makes Arrow refuse it, so both sides ride the text fallback.
+    values = [*SSN, 7, *([null] * 70)]
+    src = pd.DataFrame({"ssn": pd.Series(values, dtype=object)})
+    out = pd.DataFrame({"ssn": pd.Series(values, dtype=object)})
+    report = _parity({"t": src}, {"t": out}, _cfg(("ssn", "faker")))
+    (finding,) = report["residual_pii"]
+    # Every comparable real value shipped unchanged: the nulls must not dilute the rate.
+    assert finding["source_identity_rate"] == 1.0
+    assert finding["severity"] == "fail"
+
+
+def test_a_nullable_int_column_with_pd_na_keeps_the_identity_rate_of_the_real_values():
+    src = pd.DataFrame({"ssn": pd.Series([*range(100, 130), *([pd.NA] * 70)], dtype="Int64")})
+    out = pd.DataFrame({"ssn": pd.Series([*range(100, 130), *([pd.NA] * 70)], dtype=object)})
+    out.loc[0, "ssn"] = "x"  # one text cell: Arrow refuses the object side, so both go to text
+    report = _parity({"t": src}, {"t": out}, _cfg(("ssn", "faker")))
+    assert report["policy_validation"] == _oracle({"t": src}, {"t": out}, _cfg(("ssn", "faker")))[1]
+
+
+def test_an_object_column_with_nat_keeps_the_identity_rate_of_the_real_values():
+    values = [*SSN, 7, *([pd.NaT] * 70)]
+    src = pd.DataFrame({"ssn": pd.Series(values, dtype=object)})
+    out = pd.DataFrame({"ssn": pd.Series(values, dtype=object)})
+    report = _parity({"t": src}, {"t": out}, _cfg(("ssn", "faker")))
+    assert report["residual_pii"][0]["source_identity_rate"] == 1.0
