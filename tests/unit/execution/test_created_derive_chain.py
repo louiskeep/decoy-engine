@@ -154,15 +154,16 @@ def test_a_when_predicate_adds_no_ordering_edge() -> None:
 
 
 def test_a_when_predicate_naming_a_dependent_does_not_form_a_cycle(tmp_path: Any) -> None:
-    # `a` is gated on `g` while `g` is derived from `a`. The gate reads `g` as it stands when
-    # `a` runs (its source value), so ordering adds only g-after-a and the run succeeds.
+    # `b` is gated on `g` while `g` is derived from `b`. The gate reads `g` as it stands when
+    # `b` runs (its source value), so ordering adds only g-after-b and the run succeeds.
     config = _config(tmp_path, "derived")
     config["tables"][0]["columns"] = [
+        {"name": "a", "strategy": "passthrough"},
         {"name": "d", "strategy": "passthrough"},
-        {"name": "b", "strategy": "passthrough"},
-        {**_derived("a", "a + 10"), "when": "g == 'x'"},
-        _derived("g", "a"),
+        {**_derived("b", "d"), "when": "g == 'x'"},
+        _derived("g", "b"),
     ]
     config = PipelineConfig.model_validate(config).model_dump()
     out = run_pipeline(config, {"t": SRC}, **KW).outputs["t"]
-    assert out.column("a").to_pylist() == [11, 12, 3, 4]
+    assert out.column("b").to_pylist() == ["2024-01-01", "2024-01-01", "r", "s"]
+    assert out.column("g").to_pylist() == out.column("b").to_pylist()
