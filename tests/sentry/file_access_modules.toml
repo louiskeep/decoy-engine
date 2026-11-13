@@ -61,6 +61,8 @@ ambient_guards = [
 scratch_path_release = [
   "decoy_engine/declared_casting/_stream.py",
   "decoy_engine/execution/out_of_core/_runner.py",
+  # Transitional (arm (a)): hands unconverted callees a released path; S2b-3 removes it.
+  "decoy_engine/execution/out_of_core/_rewrite_pass.py",
 ]
 
 # Documented exception (owner decision 2026-10-31, A-4 x F13): file paths a third-party library

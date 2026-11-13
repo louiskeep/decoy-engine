@@ -201,8 +201,10 @@ def test_scratch_stays_inside_its_root_and_the_output_is_unchanged(
     # Nothing was created beside the scratch root, and every probed path is beneath it.
     assert {p for p in _listing(tmp_path) - before if not p.startswith("outer/work")} == set()
     for path in probe.paths:
-        resolved = Path(os.path.abspath(path))
-        assert str(resolved).startswith(str(work)), f"{path} is outside the scratch root"
+        resolved = Path(os.path.realpath(path))
+        assert str(resolved).startswith(os.path.realpath(work)), (
+            f"{path} is outside the scratch root"
+        )
     # No scratch name is derived from a logical name.
     for entry in _listing(work):
         for name in weird:
@@ -259,8 +261,10 @@ def test_the_reorder_driver_names_nothing_from_a_column_or_edge(
     created = {p for p in _listing(tmp_path) - before if not p.startswith(("outer/work", "out"))}
     assert created == set()
     for path in probe.paths:
-        resolved = Path(os.path.abspath(path))
-        assert str(resolved).startswith((str(work), str(tmp_path / "out"))), path
+        resolved = Path(os.path.realpath(path))
+        assert str(resolved).startswith(tuple(map(os.path.realpath, (work, tmp_path / "out")))), (
+            path
+        )
     for entry in _listing(work):
         for name in names[3:]:
             assert name not in entry, entry

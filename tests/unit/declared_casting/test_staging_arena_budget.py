@@ -59,7 +59,8 @@ def _job(
         real = getattr(_runner, name)
 
         def route(*a: Any, _real: Any = real, **k: Any) -> Any:
-            root = Path(k["temp_dir"]).parents[1]
+            joins = k["temp_dir"]  # the batch lane takes an arena child, the reorder lane a path
+            root = Path(joins if isinstance(joins, Path) else joins.local_path()).parents[1]
             if "root" not in seen:
                 seen["root"] = root
                 staged = Path(k["raw"].path).parent
