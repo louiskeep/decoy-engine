@@ -1,7 +1,7 @@
 """Resolve the local spellings of a called function in one module's AST, for sentries.
 
 A call of `target` counts when it is spelled as the bare name, as an alias from
-`from m import target as alias`, as a plain re-binding of either (`alias2 = alias`), or as an
+`from m import target as alias`, as a plain re-binding of either (`alias2 = alias`, `f = mod.target`), or as an
 attribute (`mod.target(...)`, which also covers `import m as mod`). Matching is by name, not by
 the module a name was imported from, so two functions sharing a name are not told apart.
 """
@@ -21,10 +21,9 @@ def local_names(tree: ast.AST, target: str) -> set[str]:
     while grew:
         grew = False
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Assign)
-                and isinstance(node.value, ast.Name)
-                and node.value.id in names
+            if isinstance(node, ast.Assign) and (
+                (isinstance(node.value, ast.Name) and node.value.id in names)
+                or (isinstance(node.value, ast.Attribute) and node.value.attr in names)
             ):
                 bound = {t.id for t in node.targets if isinstance(t, ast.Name)} - names
                 if bound:
