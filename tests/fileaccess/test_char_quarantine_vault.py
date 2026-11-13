@@ -1,7 +1,8 @@
 """E1-0 characterization: the quarantine sidecar writers and the vault writer, no policy.
 
 The quarantine helpers stage a JSONL file beside the final path and publish it with an
-exclusive hardlink (refusing any existing file); the vault writer overwrites its target.
+exclusive hardlink (refusing any existing file). The vault writer does the same since B-6 D1:
+it refuses an existing vault (`vault_exists`) and keeps it.
 """
 
 from __future__ import annotations
@@ -68,7 +69,9 @@ def test_discard_is_idempotent_and_none_is_a_no_op(tmp_path: Path) -> None:
     assert _stages(tmp_path) == []
 
 
-def test_vault_write_overwrites_and_round_trips(tmp_path: Path) -> None:
+def test_vault_write_refuses_an_existing_vault_and_keeps_it(tmp_path: Path) -> None:
+    from decoy_engine.vault import VaultError
+
     key = b"12345678" * 4
     path = tmp_path / "v.dcyvault"
     first = VaultWriter(key)
@@ -76,9 +79,11 @@ def test_vault_write_overwrites_and_round_trips(tmp_path: Path) -> None:
     assert first.write(path) == 1
     second = VaultWriter(key)
     second.add([("ns", "m2", "s2"), ("ns", "m3", "s3")])
-    assert second.write(str(path)) == 2
+    with pytest.raises(VaultError) as exc:
+        second.write(str(path))
+    assert exc.value.code == "vault_exists"
     mapping, ambiguous = load_vault(path, key)
-    assert mapping == {("ns", "m2"): "s2", ("ns", "m3"): "s3"} and ambiguous == 0
+    assert mapping == {("ns", "m1"): "s1"} and ambiguous == 0
 
 
 def test_vault_write_into_a_missing_directory_fails_with_the_os_error(tmp_path: Path) -> None:

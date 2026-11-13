@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import RetryClass
+from decoy_engine.reasons._types import UNRELEASED, Outcome, RetryClass
 
 __all__ = [
     "BOUNDED_READ_ERROR",
@@ -110,6 +110,7 @@ __all__ = [
     "SEED_WRONG_LENGTH",
     "SITE_NOT_PARTITIONABLE",
     "SITE_NOT_REPRODUCIBLE",
+    "VAULT_REQUIRES_RESIDENT_OUTPUT",
 ]
 
 _d = _catalog.runtime("BoundedReadError")
@@ -213,6 +214,14 @@ INTERNAL_PUBLISH_NOT_COMMITTED = _d(
     "internal_publish_not_committed", "Internal publish not committed."
 )
 INVALID_EXECUTION_KNOB = _d("invalid_execution_knob", "Invalid execution knob.")
+# B-6 D1 boundary rule B0: a file-vault writer only where the engine holds every output row.
+VAULT_REQUIRES_RESIDENT_OUTPUT = _d(
+    "vault_requires_resident_output",
+    "A vault writer needs resident output: pass no sink, and use run_pipeline, not a chunked entry.",
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+    since=UNRELEASED,
+)
 INVALID_NATIVE_THREADS = _d("invalid_native_threads", "Invalid native threads.")
 LAZY_SOURCE_CHANGED = _d("lazy_source_changed", "Lazy source changed.")
 LAZY_SOURCE_ROW_COUNT_MISMATCH = _d(

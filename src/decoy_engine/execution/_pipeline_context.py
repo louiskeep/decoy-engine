@@ -38,6 +38,7 @@ import pyarrow as pa
 from decoy_engine.config import classify_table_kinds
 from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
+from decoy_engine.execution._errors import vault_requires_resident_output
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.fileaccess import config_relative
@@ -159,6 +160,12 @@ class RouteDecision:
     stream: StreamVerdict | None = None
 
 
+def refuse_vault_with_sink(sink: Any, vault_writer: Any) -> None:
+    """B0 (B-6 D1): the sink commits output inside the run; the vault could only follow it."""
+    if sink is not None and vault_writer is not None:
+        raise vault_requires_resident_output()
+
+
 def build_run_context(
     config: dict[str, Any],
     sources: Mapping[str, pa.Table | LazySource] | None,
@@ -277,6 +284,12 @@ def build_run_context(
     if execution_mode == "out_of_core":
         # Config-only, so nothing is profiled or read before the refusal.
         reject_any_per_table_transforms(config, route="execution_mode='out_of_core'")
+    if token_vault_writer is not None:
+        # B-6 D2: a token vault without a derivation scope predates vault-scoped tokens; refuse
+        # it before any source is profiled or read.
+        from decoy_engine.execution._strategies._tokenize import require_derivation_scope
+
+        require_derivation_scope(token_vault_writer)
 
     # None-normalize the skip list here (a mutable [] default would be shared across calls).
     skip = list(post_validation_skip) if post_validation_skip else []

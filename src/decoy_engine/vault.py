@@ -72,7 +72,7 @@ import hmac
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -311,10 +311,9 @@ class VaultWriter:
     def write(self, path: str | Path | OutputDir) -> int:
         """Encrypt and write the vault file. Returns the entry count written.
 
-        `path` is an `OutputDir` the policy issued (the file is created exclusively,
-        refusing an existing leaf), or, under the ambient CLI policy only, a path that is
-        overwritten as it always was. A path under any other policy raises
-        `FileAccessUnavailable`.
+        `path` is an `OutputDir` the policy issued, or, under the ambient CLI policy only, a
+        path string. Publication is private, durable and exclusive (`_publish`): an existing
+        vault is never overwritten, and a published one never removed.
 
         Conflicting sources for one `(namespace, masked)` key are
         dropped (see the module docstring's ambiguity policy); the
@@ -328,10 +327,10 @@ class VaultWriter:
         where it sat unencrypted in heap before `fernet.encrypt`.
 
         Raises:
-            VaultError: ``code='vault_crypto_not_installed'`` when the
-                `cryptography` package is missing; ``code='weak_mask_secret'``
-                when the writer's key is shorter than the mask root (no file is
-                created or changed).
+            VaultError: ``code='vault_crypto_not_installed'`` when the `cryptography` package is
+                missing; ``weak_mask_secret`` when the key is not the mask root's size;
+                ``vault_exists`` when the target exists; ``vault_commit_failed`` when the
+                write, fsync or link failed.
         """
         by_key: dict[tuple[str, str], str | None] = {}
         for namespace, masked, source in self._entries:
@@ -383,19 +382,38 @@ class VaultWriter:
                     "pass an OutputDir issued by the policy"
                 )
             out = self._access.output_dir(FileRequest(FileRole.VAULT, "write", str(path), "vault"))
-            mode: Literal["exclusive", "replace"] = "replace"
-            label: Literal["vault", "vault_direct"] = "vault_direct"
         else:
             out = path
-            mode = "exclusive"
-            label = "vault"
-        with out.begin("file", mode, label=label) as txn:
-            serial.write_bytes(txn, "vault", b"".join(parts))
-            txn.publish()
+        _publish(out, b"".join(parts))
         return len(rows)
 
     def _fernet(self) -> Any:
         return _fernet(OpaqueBox(self._mask_key), _key_size(self._mask_key))
+
+
+def _publish(out: OutputDir, data: bytes) -> None:
+    """Publish via a 0600 stage: fsync, exclusive `link(2)` (compare-and-set), directory fsync
+    (commit point). Fixed failure text, raised after the handlers; only the stage is removed (attempted; a failed removal leaves the encrypted 0600 stage)."""
+    failure = ""
+    with out.begin("file", "exclusive", label="vault") as txn:
+        fd = txn.create_file("vault")  # step 1: its errors keep the policy's shape
+        try:
+            serial.write_durable(fd, data)
+            txn.publish()
+        except FileExistsError:
+            failure = "exists"
+        except OSError:
+            failure = "commit"
+    if failure == "exists":
+        raise VaultError(
+            code=reasons.runtime.VAULT_EXISTS,
+            message=reasons.get("runtime", reasons.runtime.VAULT_EXISTS).summary,
+        )
+    if failure:
+        raise VaultError(
+            code=reasons.runtime.VAULT_COMMIT_FAILED,
+            message=reasons.get("runtime", reasons.runtime.VAULT_COMMIT_FAILED).summary,
+        )
 
 
 def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:

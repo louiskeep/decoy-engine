@@ -38,7 +38,7 @@ from decoy_engine.execution import _chunked_dgrn as dgrn
 from decoy_engine.execution import _chunked_text_mask as text_mask_gate
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import ExecutionError, vault_requires_resident_output
 from decoy_engine.execution._guards import (  # re-exported: the core's declaration-gate seam
     prepare_declared_execution_sources as prepare_declared_execution_sources,
 )
@@ -644,7 +644,12 @@ def run_mask_chunked(
     produced it before it is brought to the first chunk's type. A column that is `null`-typed in the first
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`. This route
     runs no post-scan, so a model post-scan config is refused first (`PostScanRouteError`).
+
+    `vault_writer` must be `None`: a writer raises
+    `ExecutionError(code="vault_requires_resident_output")` before any chunk is read (B-6 B0).
     """
+    if vault_writer is not None:
+        raise vault_requires_resident_output()
     # Local imports: the core imports this module at load time.
     from decoy_engine.execution.native.chunked import _core
     from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route

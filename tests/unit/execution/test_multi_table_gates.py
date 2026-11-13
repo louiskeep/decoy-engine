@@ -26,8 +26,11 @@ pytestmark = pytest.mark.filterwarnings("ignore")
 
 class _MemTokenVault:
     """In-memory TokenVaultWriter for the tokenize sentry fixture. The write-seam
-    fails closed without a vault; the token itself is derived from key, namespace
-    and plaintext, not from vault state, so two runs with fresh vaults agree."""
+    fails closed without a vault; the token itself is derived from key, namespace,
+    the vault's derivation scope and plaintext, not from vault state, so two runs with
+    fresh vaults of one scope agree."""
+
+    derivation_scope = b"mem-token-vault-scope-0123456789"
 
     def __init__(self) -> None:
         self._m: dict[tuple[str, str], str] = {}

@@ -109,12 +109,27 @@ def config_taking_entries() -> set[str]:
     return taking
 
 
+def _is_vault_refusal(node: ast.stmt) -> bool:
+    """The B0 statement `if ...: raise vault_requires_resident_output()`: it reads no argument
+    but the writer and sink, so it may precede the guard."""
+    if not isinstance(node, ast.If) or len(node.body) != 1 or node.orelse:
+        return False
+    stmt = node.body[0]
+    return (
+        isinstance(stmt, ast.Raise)
+        and isinstance(stmt.exc, ast.Call)
+        and isinstance(stmt.exc.func, ast.Name)
+        and stmt.exc.func.id == "vault_requires_resident_output"
+    )
+
+
 def guard_first(function: ast.FunctionDef) -> bool:
-    """The first statement after the docstring and local imports is `refuse_unchecked_route(config, ...)`."""
+    """The first statement after the docstring, local imports and the B0 vault refusal is
+    `refuse_unchecked_route(config, ...)`."""
     body = list(function.body)
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
-    while body and isinstance(body[0], ast.Import | ast.ImportFrom):
+    while body and (isinstance(body[0], ast.Import | ast.ImportFrom) or _is_vault_refusal(body[0])):
         body = body[1:]
     if not body or not isinstance(body[0], ast.Expr) or not isinstance(body[0].value, ast.Call):
         return False

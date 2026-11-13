@@ -52,6 +52,7 @@ from decoy_engine.declared_casting import _stream as _declared
 from decoy_engine.declared_casting._boundary import seal_evidence
 from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._errors import vault_requires_resident_output
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
 )
@@ -178,7 +179,13 @@ def run_fk_out_of_core(
 
     `config` is the raw pipeline config and is required: this route runs no post-scan, so a
     model post-scan config is refused before any source is read (`PostScanRouteError`).
+
+    A `vault_writer` with a `sink` is refused before any read (`vault_requires_resident_output`,
+    B-6 rule B0): the sink commits inside this call, so the vault could only follow the output
+    it reverses.
     """
+    if sink is not None and vault_writer is not None:
+        raise vault_requires_resident_output()
     refuse_unchecked_route(config, "out_of_core")
     declared_route_guard("out_of_core", plan=plan, raise_on_decline=True)
     if cast_run is not None and not _staged and cast_run.tables() & set(sources):
