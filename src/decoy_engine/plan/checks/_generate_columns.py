@@ -338,14 +338,15 @@ def _check_input_edges(
     whether the source table exists, the source column exists in it, and an input read while the
     column is drawn was generated earlier. The generators read siblings in declared order, so a
     later or missing name gives nulls, an empty aggregate, one group or a crash, never the
-    intended value. An input in another table, or one read after its table is filled (a
-    per-parent aggregate's child column), is ready whenever it exists: its table is finished
-    before the read.
+    intended value. A formula with `references` is not ready for such a read either: it holds
+    None until the post-pass after every other column is drawn. An input in another table, or
+    one read after its table is filled (a per-parent aggregate's child column, a formula's
+    `references`), is ready whenever it exists: its table is finished before the read.
     """
     from decoy_engine.config import generate_columns_of, iter_generate_input_refs
 
     col = cols[index]
-    earlier = {c["name"] for c in cols[:index]}
+    earlier = {c["name"] for c in cols[:index] if not _has_references(c)}
     for edge in iter_generate_input_refs(tables[table], col):
         if edge.must_be_earlier:
             ready = edge.source_column in earlier

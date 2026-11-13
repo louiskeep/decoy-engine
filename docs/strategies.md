@@ -1385,9 +1385,10 @@ Draws each row from a fixed category pool.
   `["a", null]` do; `["a", 1]` does not).
 - `weights`: optional, one non-negative number per category with a positive sum.
 - `condition_on` and `by`: optional, and given together (either one alone is `missing` on the
-  other). `condition_on` names an earlier column of the table, of any type; `by` maps a value of
-  that column to its own mix, an entry with `weights` (for the top-level `categories`) or with
-  `categories` and optional `weights`:
+  other). `condition_on` names an earlier column of the table, of any type except a `formula`
+  with `references` (that formula is filled only after every other column is drawn); `by` maps a
+  value of that column to its own mix, an entry with `weights` (for the top-level `categories`)
+  or with `categories` and optional `weights`:
 
   ```yaml
   - {name: region, type: categorical, categories: [north, south]}
@@ -1409,7 +1410,8 @@ Draws each row from a fixed category pool.
   that is not a non-empty list or a `by` that is not a mapping is `generate_option_type`, and entry
   weights follow the `weights` rule against the entry's own categories, else the top-level ones
   (`generate_weights_invalid`). Locations name an entry by position, never by its key.
-  `condition_on` naming a later or missing column is `plan.generate_column_forward_reference`, and
+  `condition_on` naming a later or missing column, or a `formula` with `references`, is
+  `plan.generate_column_forward_reference`, and
   the top-level and entry categories together must fit one Arrow type
   (`plan.generate_categories_mixed`). `unique: true` with `condition_on` is
   `generate_unique_conflict`.
@@ -1783,6 +1785,12 @@ the formula scope provides, such as `abs` or `sqrt` (`round` and `random` are in
 (`generate_formula_name_unknown`), wraps a sibling in braces as `{a} * 2` (`generate_formula_template_syntax`), or reads itself or a later formula
 that has `references` (`generate_column_forward_reference`). Declare dependencies
 before the columns that read them.
+
+A formula with `references` is filled after every other column of the table is drawn, so only
+another formula may read it. A column of any other type that reads it (a `derived` expression,
+a `condition_on`, a `group_by`, an `anchor`) is refused with `generate_column_forward_reference`,
+as a read of a later column is. A formula without `references` is drawn in declared order and any
+later column may read it.
 
 ### derived
 

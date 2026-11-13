@@ -23,6 +23,12 @@ with no fitted snapshot.
   Locations never name a `by` key. A later or missing `condition_on` column is
   `plan/generate_column_forward_reference`, and the top-level and entry categories together must
   fit one Arrow type (`plan/generate_categories_mixed`).
+- A `formula` with `references` is filled after every other column of its table is drawn, so a
+  column of another type that reads it while it is drawn (a `condition_on`, fitted or
+  conditional, a `derived` expression, a `group_by` or an `anchor`) is now refused with
+  `plan/generate_column_forward_reference`, as a read of a later column is, instead of reading
+  nulls. A formula reading it, and any column reading a formula without `references`, is
+  unchanged.
 - New `runtime/categorical_condition_column_unavailable`: a conditional column whose
   `condition_on` column is absent from the generated data (a config that skipped the checks)
   is refused on the whole-table and pinned routes, instead of sending every row to the fallback
