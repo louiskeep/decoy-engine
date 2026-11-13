@@ -55,7 +55,6 @@ StageLabel = Literal[
     "hold",
     "subset",
     "vault",
-    "vault_direct",
     "pack",
 ]
 

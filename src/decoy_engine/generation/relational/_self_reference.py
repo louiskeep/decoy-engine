@@ -31,7 +31,7 @@ import random
 from collections.abc import Container, Iterable
 from typing import Any
 
-from decoy_engine.config import is_self_reference
+from decoy_engine.config import is_self_reference, per_parent_bounds
 from decoy_engine.generators.derivation import GenDeriveContext
 
 __all__ = ["reference_parents", "self_reference"]
@@ -82,7 +82,7 @@ def self_reference(
     """
     keys = generated[col["reference_column"]]
     roots = _root_rows(col, n)
-    cap = int(col.get("max_per_parent") or 0)
+    _, cap = per_parent_bounds(col)
     rng = random.Random(
         GenDeriveContext.for_column(
             derive_key=derive_key, column_config=col, fallback_seed=seed

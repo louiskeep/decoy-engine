@@ -106,6 +106,7 @@ def run_ooc(
         result = run_fk_out_of_core(
             shape.plan,
             sources,
+            config={},
             registry=s.REGISTRY,
             relationship_graph=shape.graph,
             **kwargs,

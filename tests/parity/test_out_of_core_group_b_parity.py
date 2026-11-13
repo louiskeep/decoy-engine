@@ -272,7 +272,7 @@ def test_group_b_payload_parity(kind: str, policy: OrphanPolicy) -> None:
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
-    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
     for table in oracle.outputs:
         _assert_value_equal(
             oracle.outputs[table], ooc.outputs[table], f"{kind}/{policy.name}:{table}"
@@ -288,7 +288,7 @@ def test_group_b_payload_actually_transforms(kind: str) -> None:
     plan, sources, graph = _payload_edge_job(
         payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
     )
-    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
     src = sources["parent"].column("pay").to_pylist()
     out = ooc.outputs["parent"].column("pay").to_pylist()
     changed = [o for s, o in zip(src, out, strict=True) if s is not None and o != s]
@@ -309,7 +309,7 @@ def test_text_redact_non_string_token_passthrough_parity() -> None:
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
-    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
     for table in oracle.outputs:
         _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"nonstr_token:{table}")
 
@@ -334,7 +334,7 @@ def test_text_redact_ner_path_parity(batch_rows: int | None) -> None:
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     ooc = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+        plan, sources, config={}, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
     )
     for table in oracle.outputs:
         _assert_value_equal(

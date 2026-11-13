@@ -157,7 +157,7 @@ REFERENCE_WEIGHTS_LENGTH_MISMATCH = _d(
 RELATIONSHIP_PARENT_NOT_UNIQUE = _d(
     "relationship_parent_not_unique",
     "A generated relationship parent key is not provably unique.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 
 _d = _catalog.plan("PlanCompileError")
@@ -165,47 +165,47 @@ _d = _catalog.plan("PlanCompileError")
 LOOKUP_COLUMN_MISSING = _d(
     "lookup_column_missing",
     "Lookup file does not have the value or weight column the generate column names.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_FILE_EMPTY = _d(
     "lookup_file_empty",
     "Lookup file has no entries.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_FILE_FORMAT_UNSUPPORTED = _d(
     "lookup_file_format_unsupported",
     "Lookup file is not a CSV or Parquet file with a value column of a supported type.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_FILE_TOO_LARGE = _d(
     "lookup_file_too_large",
     "Lookup file is larger than the embedded-artifact size cap.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_FILE_UNREADABLE = _d(
     "lookup_file_unreadable",
     "Lookup file could not be read or parsed.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_NOT_PINNED = _d(
     "lookup_not_pinned",
     "A lookup file named by the plan's configuration is not among its pinned lookups.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_PINNED_DIGEST_MISMATCH = _d(
     "lookup_pinned_digest_mismatch",
     "A pinned lookup file does not match its recorded sha256.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_TOO_MANY_ENTRIES = _d(
     "lookup_too_many_entries",
     "Lookup file has more entries than the 1,000,000 entry cap.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 LOOKUP_WEIGHT_INVALID = _d(
     "lookup_weight_invalid",
     "Lookup file has a weight that is not a finite number of at least zero, or no positive total.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 
 _d = _catalog.plan("PinnedModeError")
@@ -213,7 +213,7 @@ _d = _catalog.plan("PinnedModeError")
 PINNED_LOOKUP_UNSUPPORTED = _d(
     "pinned_lookup_unsupported",
     "Lookup columns are not available in pinned mode.",
-    since=UNRELEASED,
+    since="1.25.0",
 )
 # A summary is the whole message beside the table and column names. The run-time twin in the
 # `runtime` namespace carries the same text for a plan that never went through pinned compile.

@@ -200,7 +200,7 @@ def _site_vault(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callable
     path.write_bytes(b"x")
     handle = world.policy.open_read(FileRequest(FileRole.VAULT, "read", str(path), "vault"))
     mp.setattr(_rooted.FdHandle, "read_all", _boom(factory))
-    return lambda: load_vault(None, b"12345678", vault=handle)
+    return lambda: load_vault(None, b"12345678" * 4, vault=handle)
 
 
 def _site_capacity(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callable[[], Any]:

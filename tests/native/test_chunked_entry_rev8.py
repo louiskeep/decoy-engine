@@ -9,6 +9,8 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
+from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.vault import VaultWriter
 from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
@@ -38,17 +40,15 @@ _ROUTES = ["native_eligible", "forced_oracle", "public_oracle"]
 
 
 def _start(route: str, config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> Any:
+    # A vault writer goes through the internal entries: the public ones refuse it (B-6 B0).
+    vault = kw.get("vault_writer") is not None
+    oracle = _mask_pipeline_chunked if vault else run_mask_pipeline_chunked
+    entry = _run_mask_chunked if vault else run_mask_chunked
     if route == "public_oracle":
-        return _call(
-            run_mask_pipeline_chunked,
-            config,
-            chunks,
-            source_schema=declared_schema(config, TABLE),
-            **kw,
-        )
+        return _call(oracle, config, chunks, source_schema=declared_schema(config, TABLE), **kw)
     if route == "forced_oracle":
-        return _call(run_mask_chunked, config, chunks, adapter=_DelegatingAdapter(), **kw)
-    return _call(run_mask_chunked, config, chunks, **kw)
+        return _call(entry, config, chunks, adapter=_DelegatingAdapter(), **kw)
+    return _call(entry, config, chunks, **kw)
 
 
 @pytest.mark.parametrize("route", _ROUTES)

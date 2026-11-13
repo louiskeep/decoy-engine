@@ -1,0 +1,801 @@
+{
+  "entries": [
+    {
+      "code": "source_file.declared_column_missing",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Source file declared column missing.",
+      "symbol": "SOURCE_FILE_DECLARED_COLUMN_MISSING"
+    },
+    {
+      "code": "delivery_dependent_dropped",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "decision",
+      "namespace": "decoy",
+      "owner": "DecoyDelivery",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "info"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A table that depends on a failed table was not delivered.",
+      "symbol": "DELIVERY_DEPENDENT_DROPPED"
+    },
+    {
+      "code": "delivery_pointer_moved",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyDelivery",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "retry_operation",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Another run moved the current pointer before this run could.",
+      "symbol": "DELIVERY_POINTER_MOVED"
+    },
+    {
+      "code": "delivery_rolled_back",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "decoy",
+      "owner": "DecoyDelivery",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A crashed delivery batch was rolled back from its journal.",
+      "symbol": "DELIVERY_ROLLED_BACK"
+    },
+    {
+      "code": "delivery_withheld",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "decision",
+      "namespace": "decoy",
+      "owner": "DecoyDelivery",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "info"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A table that ran well was not delivered because another table failed.",
+      "symbol": "DELIVERY_WITHHELD"
+    },
+    {
+      "code": "process_out_of_memory",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyEngine",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "configuration",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "resolve",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "compile",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "verify",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "publish",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "cleanup",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "The process ran out of memory.",
+      "symbol": "PROCESS_OUT_OF_MEMORY"
+    },
+    {
+      "code": "lookup_column_missing",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup file does not have the value or weight column the generate column names.",
+      "symbol": "LOOKUP_COLUMN_MISSING"
+    },
+    {
+      "code": "lookup_file_empty",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup file has no entries.",
+      "symbol": "LOOKUP_FILE_EMPTY"
+    },
+    {
+      "code": "lookup_file_format_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup file is not a CSV or Parquet file with a value column of a supported type.",
+      "symbol": "LOOKUP_FILE_FORMAT_UNSUPPORTED"
+    },
+    {
+      "code": "lookup_file_too_large",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup file is larger than the embedded-artifact size cap.",
+      "symbol": "LOOKUP_FILE_TOO_LARGE"
+    },
+    {
+      "code": "lookup_file_unreadable",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup file could not be read or parsed.",
+      "symbol": "LOOKUP_FILE_UNREADABLE"
+    },
+    {
+      "code": "lookup_not_pinned",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A lookup file named by the plan's configuration is not among its pinned lookups.",
+      "symbol": "LOOKUP_NOT_PINNED"
+    },
+    {
+      "code": "lookup_pinned_digest_mismatch",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A pinned lookup file does not match its recorded sha256.",
+      "symbol": "LOOKUP_PINNED_DIGEST_MISMATCH"
+    },
+    {
+      "code": "lookup_too_many_entries",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup file has more entries than the 1,000,000 entry cap.",
+      "symbol": "LOOKUP_TOO_MANY_ENTRIES"
+    },
+    {
+      "code": "lookup_weight_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup file has a weight that is not a finite number of at least zero, or no positive total.",
+      "symbol": "LOOKUP_WEIGHT_INVALID"
+    },
+    {
+      "code": "pinned_lookup_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PinnedModeError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Lookup columns are not available in pinned mode.",
+      "symbol": "PINNED_LOOKUP_UNSUPPORTED"
+    },
+    {
+      "code": "relationship_parent_not_unique",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A generated relationship parent key is not provably unique.",
+      "symbol": "RELATIONSHIP_PARENT_NOT_UNIQUE"
+    },
+    {
+      "code": "finding_blocked",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._blocked",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A post-scan column check found a failing finding in the output, so the run is withheld.",
+      "symbol": "FINDING_BLOCKED"
+    },
+    {
+      "code": "foreign_key_orphans_introduced",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._keys",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "The run left more foreign keys without a parent in the output than its inputs held.",
+      "symbol": "FOREIGN_KEY_ORPHANS_INTRODUCED"
+    },
+    {
+      "code": "key_column_missing",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._keys",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "A declared relationship key column is absent from the output.",
+      "symbol": "KEY_COLUMN_MISSING"
+    },
+    {
+      "code": "key_type_mismatch",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._keys",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "The output parent and child key columns of a relationship have types that cannot be compared.",
+      "symbol": "KEY_TYPE_MISMATCH"
+    },
+    {
+      "code": "primary_key_duplicates_introduced",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._keys",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "The run left more duplicate primary keys in the output than its inputs held.",
+      "symbol": "PRIMARY_KEY_DUPLICATES_INTRODUCED"
+    },
+    {
+      "code": "primary_key_nulls_introduced",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._keys",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "The run left more null primary keys in the output than its inputs held.",
+      "symbol": "PRIMARY_KEY_NULLS_INTRODUCED"
+    },
+    {
+      "code": "post_scan_models_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "route",
+      "owner": "PostScanRouteError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "This route runs no post-scan, so it refuses model post-scan detectors and ner_findings: fail.",
+      "symbol": "POST_SCAN_MODELS_UNSUPPORTED"
+    },
+    {
+      "code": "out_of_core_reorder_disk_budget_too_small",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ExecutionError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.25.0",
+      "summary": "Out of core reorder disk budget too small.",
+      "symbol": "OUT_OF_CORE_REORDER_DISK_BUDGET_TOO_SMALL"
+    }
+  ],
+  "event_schema_version": 1,
+  "reason_schema_version": 1,
+  "registry_version": "1.25.0"
+}

@@ -7,7 +7,7 @@
       "file": "src/decoy_engine/__init__.py",
       "line": 5,
       "title": "Where you are",
-      "description": "**`decoy_engine`** is the only repo in the product that contains data manipulation logic. The CLI (`decoy`) and the web platform (`decoy-platform`) both import this as a library -- neither contains masking or generation code itself.\n\nThe docstring at the top of `__init__.py` is the contract: anything listed here is what callers can rely on. Everything else, especially `decoy_engine.internal.*`, can change between minor versions without warning.\n\nLicense: Apache-2.0 (see `LICENSE` at the repo root)."
+      "description": "**`decoy_engine`** is the only repo in the product that contains data manipulation logic. The CLI (`decoy`) and the web platform (`decoy-platform`) both import this as a library -- neither contains masking or generation code itself.\n\nThe docstring at the top of `__init__.py` is the contract: anything listed here is what callers can rely on. Everything else, especially `decoy_engine.internal.*`, can change between minor versions without warning.\n\nLicense: FSL-1.1-ALv2 (see `LICENSE` at the repo root)."
     },
     {
       "file": "src/decoy_engine/__init__.py",

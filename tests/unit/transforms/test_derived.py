@@ -334,49 +334,44 @@ class TestDeterminism:
 
 
 class TestColumnRefExtraction:
-    """_get_column_refs extracts column names from a compiled expression."""
+    """column_refs extracts column names from a compiled expression."""
 
     def test_single_ref(self) -> None:
-        from decoy_engine.expressions import compile_expr
-        from decoy_engine.transforms.derived import _get_column_refs
+        from decoy_engine.expressions import column_refs, compile_expr
 
         compiled = compile_expr("a + 1")
-        refs = _get_column_refs(compiled)
+        refs = column_refs(compiled)
         assert refs == frozenset({"a"})
 
     def test_multiple_refs(self) -> None:
-        from decoy_engine.expressions import compile_expr
-        from decoy_engine.transforms.derived import _get_column_refs
+        from decoy_engine.expressions import column_refs, compile_expr
 
         compiled = compile_expr("a + b * c")
-        refs = _get_column_refs(compiled)
+        refs = column_refs(compiled)
         assert refs == frozenset({"a", "b", "c"})
 
     def test_no_refs_for_literal_expression(self) -> None:
-        from decoy_engine.expressions import compile_expr
-        from decoy_engine.transforms.derived import _get_column_refs
+        from decoy_engine.expressions import column_refs, compile_expr
 
         compiled = compile_expr("1 + 2")
-        refs = _get_column_refs(compiled)
+        refs = column_refs(compiled)
         assert refs == frozenset()
 
     def test_slice_subject_arg_surfaces_as_col_ref(self) -> None:
         """slice()'s subject argument is a normal expr sub-tree, so its
-        column ref must surface via _get_column_refs (HC-6 parity with
+        column ref must surface via column_refs (HC-6 parity with
         concat/days_between)."""
-        from decoy_engine.expressions import compile_expr
-        from decoy_engine.transforms.derived import _get_column_refs
+        from decoy_engine.expressions import column_refs, compile_expr
 
         compiled = compile_expr("slice(firstname, -4)")
-        refs = _get_column_refs(compiled)
+        refs = column_refs(compiled)
         assert refs == frozenset({"firstname"})
 
     def test_slice_start_end_col_refs_also_surface(self) -> None:
-        from decoy_engine.expressions import compile_expr
-        from decoy_engine.transforms.derived import _get_column_refs
+        from decoy_engine.expressions import column_refs, compile_expr
 
         compiled = compile_expr("slice(s, start, end)")
-        refs = _get_column_refs(compiled)
+        refs = column_refs(compiled)
         assert refs == frozenset({"s", "start", "end"})
 
 
@@ -680,6 +675,7 @@ class TestDerivedNullAndBoundsInternals:
 def test_apply_derived_sees_only_compiled_refs(monkeypatch: pytest.MonkeyPatch) -> None:
     """T9 (structural, FAIL-BEFORE by the spy only): the evaluator's context is exactly the
     compiled references, in a direct call and through generation, whatever the caller passes."""
+    from decoy_engine.expressions import column_refs
     from decoy_engine.generation.synthesize import _derived_generate
     from decoy_engine.transforms import derived
 
@@ -696,5 +692,5 @@ def test_apply_derived_sees_only_compiled_refs(monkeypatch: pytest.MonkeyPatch) 
     assert _derived_generate(
         {"name": "c", "expression": "a + b"}, 1, {"a": [1], "b": [2], "z": ["X"]}
     ) == [3]
-    refs = set(derived._get_column_refs(config.compiled))
+    refs = set(column_refs(config.compiled))
     assert seen == [refs, refs] == [{"a", "b"}, {"a", "b"}]

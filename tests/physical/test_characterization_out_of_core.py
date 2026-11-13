@@ -79,10 +79,10 @@ def test_out_of_core_adapter_resident_byte_identical(tmp_path: Path) -> None:
     job = build_job(tmp_path, _sources(), _table_specs(), relationships=_relationships())
 
     direct = run_fk_out_of_core(
-        job.plan, job.sources, registry=job.registry, relationship_graph=job.graph
+        job.plan, job.sources, config={}, registry=job.registry, relationship_graph=job.graph
     )
     via = OutOfCoreAdapter().run(
-        job.plan, job.sources, registry=job.registry, relationship_graph=job.graph
+        job.plan, job.sources, config={}, registry=job.registry, relationship_graph=job.graph
     )
 
     assert _snapshot(direct) == _snapshot(via)
@@ -97,6 +97,7 @@ def test_out_of_core_adapter_sink_batch_join_identical(tmp_path: Path) -> None:
     direct = run_fk_out_of_core(
         job.plan,
         job.sources,
+        config={},
         registry=job.registry,
         relationship_graph=job.graph,
         sink=ParquetTransactionalSink(direct_dir),
@@ -104,6 +105,7 @@ def test_out_of_core_adapter_sink_batch_join_identical(tmp_path: Path) -> None:
     via = OutOfCoreAdapter().run(
         job.plan,
         job.sources,
+        config={},
         registry=job.registry,
         relationship_graph=job.graph,
         sink=ParquetTransactionalSink(via_dir),
@@ -152,10 +154,10 @@ def test_out_of_core_adapter_sink_reorder_inner_route_identical(
     )
 
     direct = run_fk_out_of_core(
-        job.plan, job.sources, sink=ParquetTransactionalSink(direct_dir), **kwargs
+        job.plan, job.sources, config={}, sink=ParquetTransactionalSink(direct_dir), **kwargs
     )
     via = OutOfCoreAdapter().run(
-        job.plan, job.sources, sink=ParquetTransactionalSink(via_dir), **kwargs
+        job.plan, job.sources, config={}, sink=ParquetTransactionalSink(via_dir), **kwargs
     )
 
     # `parent` has no incoming edge (`decide_route` returns `use_reorder=False`
@@ -176,6 +178,8 @@ def test_out_of_core_adapter_scope_bookkeeping(tmp_path: Path) -> None:
     job = build_job(tmp_path, _sources(), _table_specs(), relationships=_relationships())
     adapter = OutOfCoreAdapter()
     assert adapter.last_invocation is None
-    adapter.run(job.plan, job.sources, registry=job.registry, relationship_graph=job.graph)
+    adapter.run(
+        job.plan, job.sources, config={}, registry=job.registry, relationship_graph=job.graph
+    )
     assert adapter.last_invocation is not None
     assert set(adapter.last_invocation.tables) == {"parent", "child"}

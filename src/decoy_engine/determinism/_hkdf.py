@@ -1,107 +1,92 @@
-"""RFC 5869 HKDF-SHA256 implementation on stdlib hmac + hashlib.
+"""RFC 5869 HKDF-SHA256 for the engine's per-namespace and per-purpose keys.
 
-HKDF (HMAC-based Key Derivation Function) is the standard primitive for
-deriving per-context keys from a master seed. Used by the determinism
-layer to bind each namespace to a unique HMAC key while preserving
-within-namespace stability.
+Pattern: RFC 5869 HKDF-SHA256 (PyCA cryptography, Apache-2.0/BSD). See:
+https://datatracker.ietf.org/doc/html/rfc5869 and
+https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/#hkdf
 
-Implementation choice: stdlib only. The PyCA `cryptography` package is
-NOT a dep of decoy-engine; every existing keyed primitive in the engine
-uses `hmac.new(key, msg, hashlib.sha256)`. HKDF on top of stdlib HMAC
-is short enough that a 30-line implementation is the right call here
-(see `src/decoy_engine/transforms/fpe.py` line 21-23 for the engine's
-anti-PyCA design choice that this module preserves).
+The arithmetic is PyCA's `HKDF` / `HKDFExpand` (`HKDF.extract` for the extract step); this module only keeps the engine's
+three entry points and one application rule over the primitive: an empty salt is refused
+(QA-10 F12). RFC 5869 §2.2 and PyCA both treat `salt=b""` as `HashLen` zero bytes, which would
+let a quietly failed salt step degrade to the all-zero salt; a caller that wants that salt passes
+`b"\\x00" * 32` explicitly. The refusal is repeated in the one-shot because it no longer passes
+through `hkdf_extract`. PyCA takes `salt` and `info` only as `bytes`; they are copied to `bytes`
+so a bytes-like argument derives what it did before.
 
-The implementation is pinned by reference-vector unit tests against
-RFC 5869 §A.1 / §A.2 / §A.3. If those tests pass, the implementation
-is correct against the published specification.
-
-References:
-- RFC 5869 (HKDF): https://datatracker.ietf.org/doc/html/rfc5869
-- RFC 2104 (HMAC): https://datatracker.ietf.org/doc/html/rfc2104
+Pinned by the RFC 5869 §A.1-A.3 vectors and by a corpus captured from the earlier stdlib
+implementation (`tests/fixtures/hkdf/engine-vectors.json`), so every derived key is unchanged.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
+from cryptography.hazmat.primitives.hashes import SHA256
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
 
 _HASH_LEN = 32  # SHA-256 output length in bytes
+_MAX_LENGTH = 255 * _HASH_LEN
+
+_EMPTY_SALT_MESSAGE = (
+    "hkdf_extract: salt must be non-empty. Pass an application-"
+    "specific context string. If you genuinely want the RFC 5869 "
+    "§2.2 all-zero default, pass b'\\x00' * 32 explicitly."
+)
+
+
+def _check_length(length: int) -> None:
+    if length < 0:
+        raise ValueError(f"HKDF length {length} is negative")
+    if length > _MAX_LENGTH:
+        raise ValueError(f"HKDF length {length} exceeds RFC 5869 maximum {_MAX_LENGTH}")
 
 
 def hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
     """RFC 5869 §2.2: PRK = HMAC-SHA256(salt, IKM).
 
     Args:
-        salt: required NON-EMPTY salt value (a non-secret random value).
-            RFC 5869 §2.2 allows an empty salt (treated as `HashLen`
-            zero bytes), but an empty salt produces a weaker PRK than
-            any application-specific context string. QA-10 F12 closure
-            (2026-06-01) rejects empty salts so a quietly-failed salt
-            generation step does not silently degrade to the all-zero
-            fallback. Callers that genuinely want the all-zero salt
-            must pass `b"\\x00" * 32` explicitly.
+        salt: required NON-EMPTY salt (QA-10 F12; pass `b"\\x00" * 32` for the RFC default).
         ikm: input keying material (the master seed).
 
     Returns:
         32-byte pseudo-random key (PRK) suitable for input to hkdf_expand.
 
     Raises:
-        ValueError: if `salt` is empty (QA-10 F12, 2026-06-01).
+        ValueError: if `salt` is empty.
     """
     try:
         if not salt:
-            raise ValueError(
-                "hkdf_extract: salt must be non-empty. Pass an application-"
-                "specific context string. If you genuinely want the RFC 5869 "
-                "§2.2 all-zero default, pass b'\\x00' * 32 explicitly."
-            )
-        return hmac.new(salt, ikm, hashlib.sha256).digest()
+            raise ValueError(_EMPTY_SALT_MESSAGE)
+        return HKDF.extract(SHA256(), bytes(salt), ikm)
     except BaseException:
         del ikm
         raise
 
 
 def hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
-    """RFC 5869 §2.3: OKM = T(1) | T(2) | ... | T(N), truncated to `length`.
-
-    T(0) = empty string (zero length)
-    T(N) = HMAC-SHA256(PRK, T(N-1) || info || octet(N))
-
-    Args:
-        prk: pseudo-random key (output of hkdf_extract; >= 32 bytes).
-        info: optional context-specific info string.
-        length: desired output length in bytes. Maximum `255 * 32` per RFC
-            5869 §2.3.
-
-    Returns:
-        `length` bytes of output keying material.
+    """RFC 5869 §2.3: OKM = T(1) | T(2) | ... truncated to `length` (at most `255 * 32`).
 
     Raises:
-        ValueError if `length` exceeds RFC 5869's upper bound.
+        ValueError: if `length` exceeds RFC 5869's upper bound.
     """
     try:
-        if length > 255 * _HASH_LEN:
-            raise ValueError(f"HKDF length {length} exceeds RFC 5869 maximum {255 * _HASH_LEN}")
-        n = (length + _HASH_LEN - 1) // _HASH_LEN
-        t = b""
-        okm_chunks: list[bytes] = []
-        for i in range(1, n + 1):
-            t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
-            okm_chunks.append(t)
-        return b"".join(okm_chunks)[:length]
+        _check_length(length)
+        return HKDFExpand(algorithm=SHA256(), length=length, info=bytes(info)).derive(prk)
     except BaseException:
         del prk
         raise
 
 
 def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
-    """RFC 5869 one-shot: Extract + Expand.
+    """RFC 5869 one-shot: Extract + Expand, equal to `hkdf_expand(hkdf_extract(salt, ikm), ...)`.
 
-    Equivalent to `hkdf_expand(hkdf_extract(salt, ikm), info, length)`.
+    Raises:
+        ValueError: if `salt` is empty or `length` exceeds RFC 5869's upper bound.
     """
     try:
-        return hkdf_expand(hkdf_extract(salt, ikm), info, length)
+        if not salt:
+            raise ValueError(_EMPTY_SALT_MESSAGE)
+        _check_length(length)
+        return HKDF(algorithm=SHA256(), length=length, salt=bytes(salt), info=bytes(info)).derive(
+            ikm
+        )
     except BaseException:
         del ikm
         raise

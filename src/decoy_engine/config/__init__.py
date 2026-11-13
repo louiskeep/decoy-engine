@@ -46,11 +46,14 @@ from decoy_engine.config._generate_options import refuse_unlisted_generate_famil
 from decoy_engine.config._generate_relational import (
     GenerateInputRef,
     aggregate_problems,
+    aggregate_via_target,
+    is_exact_sequence_key,
     is_per_parent_aggregate,
     is_self_reference,
     iter_generate_input_refs,
     parent_key_problem,
     parent_lookup_problems,
+    per_parent_bounds,
     per_parent_problems,
     reference_root,
     self_reference_problems,
@@ -81,6 +84,7 @@ from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._post_scan import (
     Dismissal,
     PostScanConfig,
+    post_scan_gate_applies,
     post_scan_integrity_requested,
 )
 from decoy_engine.config._pre_scan import PreScanConfig
@@ -169,6 +173,7 @@ __all__ = [
     "TargetDescriptor",
     "TransformOp",
     "aggregate_problems",
+    "aggregate_via_target",
     "categorical_arrow_type",
     "classify_table_kinds",
     "constant_arrow_type",
@@ -177,6 +182,7 @@ __all__ = [
     "generate_columns_of",
     "generate_option_catalog",
     "generated_arrow_type",
+    "is_exact_sequence_key",
     "is_per_parent_aggregate",
     "is_self_reference",
     "iter_generate_input_refs",
@@ -188,7 +194,9 @@ __all__ = [
     "parse_output_type",
     "parse_pipeline_config",
     "parse_relationship_config",
+    "per_parent_bounds",
     "per_parent_problems",
+    "post_scan_gate_applies",
     "post_scan_integrity_requested",
     "reference_root",
     "refuse_fixed_width_output_types",

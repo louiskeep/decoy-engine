@@ -24,10 +24,12 @@ import pyarrow as pa
 
 from decoy_engine.execution import _chunked
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 from decoy_engine.execution._column_access import created_columns
 from decoy_engine.execution.native import _chunked_entry, _dispatch
 from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.profile import (
     DeclarationRequest,
     PreparedDeclaredSources,
@@ -126,6 +128,9 @@ def _below_gate_entry(entry: Callable[..., Any], module: ModuleType) -> Callable
 run_mask_chunked_below_gate = _below_gate_entry(run_mask_chunked, _chunked_entry)
 run_native_or_oracle_chunked_below_gate = _below_gate_entry(run_native_or_oracle_chunked, _dispatch)
 run_mask_pipeline_chunked_below_gate = _below_gate_entry(run_mask_pipeline_chunked, _chunked)
+# A vault writer goes through the internal entries: the public ones refuse it (B-6 B0).
+_run_mask_chunked_below_gate = _below_gate_entry(_run_mask_chunked, _chunked_entry)
+_mask_pipeline_chunked_below_gate = _below_gate_entry(_mask_pipeline_chunked, _chunked)
 
 
 @dataclass
@@ -149,8 +154,9 @@ def run_one(
     sink: list[Any] = []
     ev: list[Any] = route_evidence_sink if route_evidence_sink is not None else []
     writer = VaultWriter(vault_key()) if vault else None
+    entry = _run_mask_chunked_below_gate if writer is not None else run_mask_chunked_below_gate
     out = list(
-        run_mask_chunked_below_gate(
+        entry(
             config,
             list(chunks),
             table=TABLE,

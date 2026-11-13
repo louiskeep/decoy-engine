@@ -70,7 +70,14 @@ _LOSSY_OUTPUT_TYPES = frozenset({"categorical", "faker"})
 _REFERENCE_CONFLICT_DISTRIBUTIONS = frozenset({"weighted", "fitted"})
 # Options a pair member may not set: the pair draw replaces the member's own sampling and skips
 # the per-column null post-pass.
-_PAIR_MEMBER_BLOCKED = ("unique", "null_probability", "weights", "min_per_parent", "max_per_parent")
+_PAIR_MEMBER_BLOCKED = ("unique", "null_probability", "weights")
+
+
+def _per_parent_bounds(col: Mapping[str, Any]) -> tuple[int, int]:
+    # Imported here: `_generate_relational` imports `_tables`, which imports this module.
+    from decoy_engine.config._generate_relational import per_parent_bounds
+
+    return per_parent_bounds(col)
 
 
 def _capacity_ok(domain: int, rows: int, *, null_reusable: bool = False) -> bool:
@@ -120,10 +127,11 @@ def column_conflict_problems(
     if type_ == "reference":
         if extras.get("distribution") in _REFERENCE_CONFLICT_DISTRIBUTIONS:
             problems.append((("distribution",), _CONFLICT))
-        for key in ("min_per_parent", "max_per_parent"):
-            value = extras.get(key)
-            if type(value) is int and value > 0:
-                problems.append(((key,), _CONFLICT))
+        lo, hi = _per_parent_bounds(extras)
+        if lo:
+            problems.append((("min_per_parent",), _CONFLICT))
+        if hi:
+            problems.append((("max_per_parent",), _CONFLICT))
     return problems
 
 
@@ -186,6 +194,8 @@ def _is_set(value: Any) -> bool:
 
 
 def _pair_member_blocked(member: Mapping[str, Any]) -> bool:
+    if any(_per_parent_bounds(member)):
+        return True
     if any(_is_set(member.get(key)) for key in _PAIR_MEMBER_BLOCKED):
         return True
     if member.get("determinism") == "fresh":

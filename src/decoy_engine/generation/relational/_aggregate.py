@@ -19,9 +19,10 @@ and null values are skipped. A parent with no children gets `COALESCE(op, 0)` fo
 before the column is written.
 
 The inputs are the resolved edges of `config.iter_generate_input_refs`: the child table and
-column of `column`, and the child's foreign key of `via`, whose `reference_column` is the parent
-key. The filled column is typed by the one whole-table builder (`arrow_table`), so a declared
-`output_type` applies as it does to any other column.
+column of `column`, and the child's foreign key of `via`. The parent key that foreign key
+reaches comes from `config.aggregate_via_target`, the lookup validation judges. The filled
+column is typed by the one whole-table builder (`arrow_table`), so a declared `output_type`
+applies as it does to any other column.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.config import (
+    aggregate_via_target,
     generate_columns_of,
     is_per_parent_aggregate,
     iter_generate_input_refs,
@@ -100,16 +102,8 @@ def _per_parent_values(
     """One aggregate per row of `table`, over the child rows whose foreign key names it."""
     edges = {edge.option: edge for edge in iter_generate_input_refs(table, col)}
     value, via = edges.get("column"), edges.get("via")
-    child_config = by_name.get(via.source_table) if via is not None else None
-    via_config = next(
-        (
-            c
-            for c in generate_columns_of(child_config or {})
-            if isinstance(c, Mapping) and via is not None and c.get("name") == via.source_column
-        ),
-        None,
-    )
-    key = via_config.get("reference_column") if via_config is not None else None
+    target = aggregate_via_target(by_name, col)
+    key = target[1] if target is not None else None
     parent = tables.get(str(table.get("name")))
     child = tables.get(via.source_table) if via is not None else None
     # Validation and the plan check refuse each of these; a caller that skipped both gets a

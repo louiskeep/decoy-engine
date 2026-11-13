@@ -42,6 +42,7 @@ def _sequential(adapter, plan, sources, graph, ns, registry, sink=None):
     return adapter.run_sequential(
         plan,
         _loader(sources),
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,
@@ -144,6 +145,7 @@ def test_sink_is_non_transactional_on_abort():
         adapter.run_sequential(
             fx.plan,
             _loader(fx.sources),
+            config={},
             registry=fx.registry,
             relationship_graph=fx.graph(OrphanPolicy.FAIL),
             namespace_registry=fx.namespace_registry,

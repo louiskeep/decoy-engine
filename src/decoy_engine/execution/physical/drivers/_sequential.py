@@ -13,7 +13,7 @@ the sink's type, unchanged.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -51,6 +51,7 @@ class SequentialAdapter:
         plan: Plan,
         source_loader: Callable[[str], pa.Table],
         *,
+        config: Mapping[str, Any],
         registry: ProviderRegistry,
         pool_cache: PoolCache | None = None,
         relationship_graph: RelationshipGraph,
@@ -69,6 +70,7 @@ class SequentialAdapter:
             adapter,
             plan,
             source_loader,
+            config=config,
             registry=registry,
             pool_cache=pool_cache,
             relationship_graph=relationship_graph,

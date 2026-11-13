@@ -401,9 +401,9 @@ def _schema_disagreement(monkeypatch: pytest.MonkeyPatch, target: Any, name: str
 def test_a_join_failure_on_the_dispatcher_lane_names_the_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
 
-    _schema_disagreement(monkeypatch, _chunked_entry, "run_mask_chunked")
+    _schema_disagreement(monkeypatch, _native_core, "mask_chunked")
     cfg, src = _native_table()
     with pytest.raises(ExecutionError) as raised:
         _call(cfg, src, table="people")
@@ -413,9 +413,9 @@ def test_a_join_failure_on_the_dispatcher_lane_names_the_table(
 def test_a_join_failure_on_the_legacy_lane_names_the_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from decoy_engine.execution import _chunked
+    from decoy_engine.execution import _chunked_oracle
 
-    _schema_disagreement(monkeypatch, _chunked, "run_mask_pipeline_chunked")
+    _schema_disagreement(monkeypatch, _chunked_oracle, "_mask_pipeline_chunked")
     cfg, src = _native_table()
     with pytest.raises(ExecutionError) as raised:
         _call(cfg, src, table="people", dispatcher_enabled=False)

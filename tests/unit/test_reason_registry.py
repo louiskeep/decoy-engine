@@ -535,8 +535,83 @@ def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> No
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
 
 
+def test_scanml_m5_route_refusal_is_registered_as_pending() -> None:
+    """SCAN-ML M5: one route refusal owned by PostScanRouteError, stamped at 1.25.0."""
+    spec = reasons.find("route", "post_scan_models_unsupported")
+    assert spec is not None
+    assert (spec.owner, spec.since, spec.kind.value) == (
+        "PostScanRouteError",
+        "1.25.0",
+        "failure",
+    )
+    assert not re.search(r"[{}%]", spec.summary)
+    assert reasons.route.POST_SCAN_MODELS_UNSUPPORTED == "post_scan_models_unsupported"
+
+
+def _blocked_report(**parts: object) -> dict[str, object]:
+    return {
+        "schema_version": "post-scan-integrity/v2",
+        "residual_pii": [],
+        "fk_preservation": [],
+        "policy_validation": [],
+        **parts,
+    }
+
+
+def _blocked_key(code: str, status: str, baseline: str) -> dict[str, object]:
+    return {
+        "kind": "primary",
+        "status": status,
+        "baseline": baseline,
+        "codes": [{"namespace": "post_scan", "code": code}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("report", "expected"),
+    [
+        (
+            _blocked_report(
+                keys=[_blocked_key("key_column_missing", "key_column_missing", "not_run")]
+            ),
+            "post_scan.key_column_missing",
+        ),
+        (
+            _blocked_report(
+                residual_pii=[{"table": "t", "column": "c", "detector_id": "d", "severity": "fail"}]
+            ),
+            "post_scan.finding_blocked",
+        ),
+        (_blocked_report(pass_failed_with="TypeError"), "post_scan.check_error"),
+    ],
+)
+def test_a_post_scan_blocked_error_is_classified_by_its_first_blocking_code(
+    report: dict[str, object], expected: str
+) -> None:
+    import pickle
+
+    from decoy_engine.reason_adapter import reason_from_exception
+    from decoy_engine.verification.postmask import PostScanBlockedError
+
+    error = PostScanBlockedError(report)
+    for subject in (error, pickle.loads(pickle.dumps(error))):  # noqa: S301
+        record = reason_from_exception(subject)
+        assert f"{record.namespace}.{record.code}" == expected
+
+
+def test_a_post_scan_blocked_error_whose_only_code_is_unregistered_is_unregistered() -> None:
+    from decoy_engine.reason_adapter import reason_from_exception
+    from decoy_engine.verification.postmask import PostScanBlockedError, post_scan_verdict
+
+    report = _blocked_report()
+    error = PostScanBlockedError(report, post_scan_verdict(report, ner_blocked=True))
+    assert error.code is None
+    record = reason_from_exception(error)
+    assert (record.namespace, record.code) == ("decoy", "unregistered_reason")
+
+
 def test_gen_types_e3_codes_are_registered() -> None:
-    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all pending."""
+    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all stamped at 1.25.0."""
     expected = [
         ("plan", "lookup_column_missing", "PlanCompileError"),
         ("plan", "lookup_file_empty", "PlanCompileError"),
@@ -552,7 +627,7 @@ def test_gen_types_e3_codes_are_registered() -> None:
     for ns, code, owner in expected:
         spec = reasons.find(ns, code)
         assert spec is not None
-        assert (spec.owner, spec.since) == (owner, "unreleased")
+        assert (spec.owner, spec.since) == (owner, "1.25.0")
         assert not re.search(r"[{}%]", spec.summary)
         assert getattr(getattr(reasons, ns), code.upper()) == code
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)

@@ -1,5 +1,6 @@
 """GEN-REL config-time checks for per-parent bounds (AT-2, AT-2b, AT-3, AT-4, AT-6f), for
-self-reference trees (AT-7, AT-9) and for the parent lookup of an anchored date (AT-11).
+self-reference trees (AT-7, AT-9) and for the parent lookup of an anchored date (AT-11), and the
+one exact-sequence-key predicate every caller shares.
 
 Every refusal is a registered `config` code raised through `PipelineConfig`, in a fixed order:
 `min > max`, then fitted with a bound, then nulls with a bound, then the row-count ceiling. A
@@ -9,8 +10,11 @@ self-reference reports its key first, then an option it cannot honor, then `root
 
 from __future__ import annotations
 
+from decimal import Decimal
+from fractions import Fraction
 from typing import Any
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -274,8 +278,10 @@ def test_at7_a_self_edge_does_not_hide_a_cycle_through_the_same_table() -> None:
         {"name": "id", "type": "categorical", "categories": ["a", "b", "c"]},
         {"name": "id", "type": "sequence", "start": 1, "null_probability": 0.2},
         {"name": "id", "type": "faker", "faker_type": "uuid4"},
+        {"name": "id", "type": "sequence", "start": 1, "output_type": "decimal(2)"},
+        {"name": "id", "type": "sequence", "start": 1, "output_type": "int"},
     ],
-    ids=["categorical", "nullable-sequence", "faker"],
+    ids=["categorical", "nullable-sequence", "faker", "decimal-output-type", "int-output-type"],
 )
 def test_at9_a_key_that_is_not_a_non_null_sequence_is_refused(key: dict[str, Any]) -> None:
     codes, locs = _refused(_tree(key=key))
@@ -294,6 +300,13 @@ def test_at9_a_key_declared_after_the_reference_is_refused() -> None:
 
 def test_at9_a_sequence_key_with_an_explicit_zero_null_probability_validates() -> None:
     assert validate(_tree(key={**ID, "null_probability": 0}))
+
+
+def test_at9_output_type_is_refused_on_the_key_only() -> None:
+    # The tree copies raw key values and a reference cannot declare `output_type`, so a cast
+    # key would leave every foreign key unmatched; another column may still declare one.
+    cost = {"name": "cost", "type": "sequence", "start": 1, "output_type": "decimal(2)"}
+    assert validate([table("employees", 10, [ID, cost, ref("manager_id", "employees")])])
 
 
 @pytest.mark.parametrize(
@@ -602,3 +615,108 @@ def test_the_self_reference_key_rule_is_the_same_predicate(
     assert validate([table("employees", 10, [ID, ref("manager_id", "employees")])])
     assert validate(_anchored())
     assert asked == ["id", "id"]
+
+
+# ---- the one exact-sequence-key predicate: fails closed on any rate it cannot read -------------
+
+_SEQ = {"name": "id", "type": "sequence", "start": 1}
+_ABSENT = object()
+
+
+@pytest.mark.parametrize(
+    "rate",
+    [
+        _ABSENT,
+        None,
+        0,
+        0.0,
+        -0.5,
+        float("nan"),
+        Fraction(0),
+        np.float64(0),
+        np.int64(0),
+    ],
+    ids=[
+        "absent",
+        "none",
+        "zero",
+        "zero-float",
+        "negative",
+        "nan",
+        "fraction-zero",
+        "np-zero",
+        "np-int-zero",
+    ],
+)
+def test_a_sequence_with_no_positive_real_rate_is_an_exact_key(rate: Any) -> None:
+    column = _SEQ if rate is _ABSENT else {**_SEQ, "null_probability": rate}
+    assert config_api.is_exact_sequence_key(column) is True
+
+
+@pytest.mark.parametrize(
+    "rate",
+    [
+        0.5,
+        1,
+        float("inf"),
+        True,
+        False,
+        Decimal("0.5"),
+        Decimal("0"),
+        Fraction(1, 2),
+        np.float64(0.5),
+        np.int64(1),
+        np.bool_(False),
+        "0.5",
+        "0",
+        "",
+        [],
+        [1],
+        {},
+    ],
+    ids=repr,
+)
+def test_any_other_rate_may_hold_nulls_so_the_key_is_not_exact(rate: Any) -> None:
+    assert config_api.is_exact_sequence_key({**_SEQ, "null_probability": rate}) is False
+
+
+@pytest.mark.parametrize(
+    "column",
+    [{}, {"type": "categorical"}, {"type": "faker", "null_probability": 0}, {"type": None}],
+    ids=["empty", "categorical", "faker", "none-type"],
+)
+def test_only_a_sequence_is_an_exact_key(column: dict[str, Any]) -> None:
+    assert config_api.is_exact_sequence_key(column) is False
+
+
+# ---- the one reader of a per-parent bound -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, (0, 0)),
+        ({"min_per_parent": None, "max_per_parent": None}, (0, 0)),
+        ({"min_per_parent": 0, "max_per_parent": 0}, (0, 0)),
+        ({"min_per_parent": 2}, (2, 0)),
+        ({"max_per_parent": 5}, (0, 5)),
+        ({"min_per_parent": 2, "max_per_parent": 5}, (2, 5)),
+        ({"min_per_parent": 7, "max_per_parent": 3}, (7, 3)),
+    ],
+)
+def test_per_parent_bounds_reads_every_value_a_valid_config_carries(
+    options: dict[str, Any], expected: tuple[int, int]
+) -> None:
+    assert config_api.per_parent_bounds({"name": "pid", "type": "reference", **options}) == expected
+
+
+@pytest.mark.parametrize("value", [-1, True, False, 2.5, 2.0, "3", "abc", [2]])
+def test_per_parent_bounds_never_coerces_a_value_the_registry_refuses(value: Any) -> None:
+    # Only an int above zero is a bound, so a refused value can never become one by coercion.
+    col = {"min_per_parent": value, "max_per_parent": value}
+    assert config_api.per_parent_bounds(col) == (0, 0)
+
+
+def test_per_parent_bounds_reads_each_bound_from_its_own_key() -> None:
+    assert config_api.per_parent_bounds({"min_per_parent": 1, "max_per_parent": 9}) == (1, 9)
+    assert config_api.per_parent_bounds({"min_per_parent": 9, "max_per_parent": 1}) == (9, 1)

@@ -205,6 +205,7 @@ def test_cross_batch_orphan_policies_match_pandas(tmp_path, monkeypatch, policy)
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -413,6 +414,7 @@ def test_cross_batch_orphans_fail_with_total_count(tmp_path, monkeypatch) -> Non
         run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             temp_dir=tmp_path / "work",

@@ -51,7 +51,12 @@ STAGE_PREFIX: dict[str, str] = {
 }
 STAGE_SUFFIX: dict[str, str] = {"quarantine": ".jsonl", "quarantine_direct": ".jsonl"}
 # Labels whose stage holds secrets or real data, so the stage file is 0600 at creation.
-PRIVATE_LABELS: frozenset[str] = frozenset({"quarantine", "isolated"})
+PRIVATE_LABELS: frozenset[str] = frozenset({"quarantine", "isolated", "vault"})
+# Labels published durably and exclusively: the stage is fsynced by its writer
+# (`serial.write_durable`), linked to the leaf, then the parent is fsynced; that fsync is the
+# commit point and its failure is raised. A failure path removes only the unpublished stage,
+# never the leaf.
+DURABLE_LABELS: frozenset[str] = frozenset({"vault"})
 # Every output but a vault leaf may create missing parent directories; a vault leaf sits
 # directly in a directory the caller already provided.
 CREATES_PARENTS: frozenset[str] = frozenset(STAGE_PREFIX) - {"vault"}
@@ -223,6 +228,48 @@ def _sync(dir_fd: int) -> None:
         pass
 
 
+# A directory fsync failing with one of these means the filesystem cannot sync a directory, not
+# that the entry is lost (PostgreSQL `fsync_fname_ext` makes the same call). Any other errno is fatal.
+_DIR_FSYNC_UNSUPPORTED = frozenset({errno.EINVAL, errno.EBADF, errno.ENOTSUP})
+
+
+def discard_stage_at(dir_fd: int, name: str) -> None:
+    """Remove the stage name beneath `dir_fd`; a name already gone or unremovable is left."""
+    validate_component(name, _CREATOR_KEY)
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
+
+
+def publish_exclusive_durable(parent_fd: int, stage_name: str, leaf: str) -> None:
+    """The one durable exclusive publish: `link(2)` the fsynced stage to `leaf` (the
+    compare-and-set), fsync the directory (the commit point), then drop the stage name.
+
+    Raises `FileExistsError` for an existing leaf and an errno-only `OSError` for any other
+    failure. Removal of the stage is attempted on every path (a failed removal is swallowed and leaves
+    only the encrypted 0600 stage); a leaf that was linked is never removed, so a directory
+    fsync failure reports an error with the vault kept."""
+    validate_component(stage_name, _CREATOR_KEY)
+    validate_component(leaf, _CREATOR_KEY)
+    code = 0
+    try:
+        os.link(stage_name, leaf, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        code = exc.errno or errno.EIO
+    if not code:
+        try:
+            os.fsync(parent_fd)
+        except OSError as exc:
+            if exc.errno not in _DIR_FSYNC_UNSUPPORTED:
+                code = exc.errno or errno.EIO
+    discard_stage_at(parent_fd, stage_name)
+    if code == errno.EEXIST:
+        raise FileExistsError(errno.EEXIST, "output exists")
+    if code:
+        raise OSError(code, os.strerror(code))
+
+
 def _rmtree_fd(dir_fd: int) -> None:
     """Remove everything beneath `dir_fd` without following any link."""
     for entry in list(os.scandir(dir_fd)):
@@ -367,6 +414,7 @@ class RootedOutputTxn(_StageDir):
         state = _State(os.dup(parent_fd), name, kind)
         self._state = state
         self._private = label in PRIVATE_LABELS
+        self._durable = label in DURABLE_LABELS
         mode_bits = 0o600 if self._private else 0o666
         stage_fd = -1
         if kind == "dir":
@@ -394,22 +442,29 @@ class RootedOutputTxn(_StageDir):
             raise FileAccessUnavailable("nothing was staged")
         parent = state.parent_fd
         if state.kind == "file" and self._publish_mode == "exclusive":
-            try:
-                _call(
-                    os.link,
-                    state.stage_name,
-                    self._leaf,
-                    src_dir_fd=parent,
-                    dst_dir_fd=parent,
-                    follow_symlinks=False,
-                )
-            except FileExistsError:
-                _discard(state)
-                raise
-            try:
-                os.unlink(state.stage_name, dir_fd=parent)
-            except OSError:
-                pass
+            if self._durable:
+                try:
+                    publish_exclusive_durable(parent, state.stage_name, self._leaf)
+                except OSError:
+                    _discard(state)  # the stage only; a linked leaf is never removed
+                    raise
+            else:
+                try:
+                    _call(
+                        os.link,
+                        state.stage_name,
+                        self._leaf,
+                        src_dir_fd=parent,
+                        dst_dir_fd=parent,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    _discard(state)
+                    raise
+                try:
+                    os.unlink(state.stage_name, dir_fd=parent)
+                except OSError:
+                    pass
         else:
             _call(os.replace, state.stage_name, self._leaf, src_dir_fd=parent, dst_dir_fd=parent)
             if state.kind == "file":
@@ -525,9 +580,12 @@ class RootedOutputDir:
 
 
 __all__ = [
+    "DURABLE_LABELS",
     "PRIVATE_LABELS",
     "STAGE_PREFIX",
     "STAGE_SUFFIX",
     "RootedOutputDir",
     "RootedOutputTxn",
+    "discard_stage_at",
+    "publish_exclusive_durable",
 ]

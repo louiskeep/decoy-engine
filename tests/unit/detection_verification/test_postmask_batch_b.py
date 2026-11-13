@@ -11,10 +11,17 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.verification.postmask.fk_preservation import check_fk_preservation
 from decoy_engine.verification.postmask.policy_validation import check_policy_validation
 from decoy_engine.verification.postmask.residual_pii import check_residual_pii
 from decoy_engine.verification.postmask.runner import run_post_mask
+
+
+def _fk_findings(output: dict, config: dict, source: dict | None = None) -> list[dict]:
+    """The FK findings of one run; with no source given, the source equals the output."""
+    return run_post_mask(output if source is None else source, output, config=config)[
+        "fk_preservation"
+    ]
+
 
 # ── H4: composite FK tuple-wise check ─────────────────────────────
 
@@ -30,13 +37,8 @@ class TestCompositeFkTupleWise:
             "relationships": [
                 {
                     "parent": {"table": "parent_tbl", "columns": ["a", "b"]},
-                    "children": [
-                        {
-                            "table": "child_tbl",
-                            "columns": ["fk_a", "fk_b"],
-                            "orphan_policy": "fail",
-                        }
-                    ],
+                    "children": [{"table": "child_tbl", "columns": ["fk_a", "fk_b"]}],
+                    "orphan_policy": "preserve",
                 }
             ]
         }
@@ -47,55 +49,53 @@ class TestCompositeFkTupleWise:
         # (1 in parent.a, 99 in parent.b); tuple check rejects.
         parent = pd.DataFrame({"a": [1, 2], "b": [1, 99]})
         child = pd.DataFrame({"fk_a": [1], "fk_b": [99]})
-        findings = check_fk_preservation(
+        clean = pd.DataFrame({"fk_a": [1], "fk_b": [1]})
+        findings = _fk_findings(
             {"parent_tbl": parent, "child_tbl": child},
             self._base_config(),
+            {"parent_tbl": parent, "child_tbl": clean},
         )
         assert len(findings) == 1
         f = findings[0]
-        assert f.severity == "fail"
-        assert f.orphan_count == 1
-        assert f.total_child_rows == 1
-        # The finding's column slots carry the composite identity.
-        assert f.parent_column == "a,b"
-        assert f.child_column == "fk_a,fk_b"
+        assert f["severity"] == "fail"
+        assert f["orphan_count"] == 1
+        assert f["total_child_rows"] == 1
+        # The finding's column slots carry the composite identity, joined for display.
+        assert f["parent_column"] == "a, b"
+        assert f["child_column"] == "fk_a, fk_b"
+        assert (f["parent_columns"], f["child_columns"]) == (("a", "b"), ("fk_a", "fk_b"))
 
     def test_composite_valid_tuple_passes(self):
         parent = pd.DataFrame({"a": [1, 2], "b": [1, 99]})
         child = pd.DataFrame({"fk_a": [1, 2], "fk_b": [1, 99]})
-        findings = check_fk_preservation(
+        findings = _fk_findings(
             {"parent_tbl": parent, "child_tbl": child},
             self._base_config(),
         )
         assert len(findings) == 1
-        assert findings[0].severity == "info"
-        assert findings[0].orphan_count == 0
+        assert findings[0]["severity"] == "info"
+        assert findings[0]["orphan_count"] == 0
 
-    def test_single_column_fk_still_routes_through_check_one_fk(self):
-        # Per-column path is preserved for length-1 FKs.
+    def test_single_column_fk_carries_one_name(self):
         cfg = {
             "relationships": [
                 {
                     "parent": {"table": "parent_tbl", "columns": ["a"]},
-                    "children": [
-                        {
-                            "table": "child_tbl",
-                            "columns": ["fk_a"],
-                            "orphan_policy": "fail",
-                        }
-                    ],
+                    "children": [{"table": "child_tbl", "columns": ["fk_a"]}],
+                    "orphan_policy": "preserve",
                 }
             ]
         }
         parent = pd.DataFrame({"a": [1, 2]})
         child = pd.DataFrame({"fk_a": [1, 99]})
-        findings = check_fk_preservation(
+        findings = _fk_findings(
             {"parent_tbl": parent, "child_tbl": child},
             cfg,
         )
         assert len(findings) == 1
         # parent_column is the single col, not a comma-joined label.
-        assert findings[0].parent_column == "a"
+        assert findings[0]["parent_column"] == "a"
+        assert findings[0]["parent_columns"] == ("a",)
 
 
 # ── M11: policy validation -- comparison failure surfaces as error ─

@@ -21,6 +21,14 @@ The row a child's foreign key points at is found once too, by `lookup_parent_val
 6. no other generation module builds a key-to-row map over a `pools[...]` column;
 7. the lookup's callers are inventoried by exact file and function.
 
+The parent table and key a lookup column leads to are found once, by `_via_target` beside the
+resolver; the resolved edge carries both (`source_table`, `source_key`) to the run:
+
+8. no other generate-side function reads a `reference` column's table or key while it handles
+   a lookup (it holds a lookup key name such as `anchor_via` or a per-parent aggregate's `via`,
+   or calls the parent lookup or the lookup key rule), and `_via_target`'s callers are
+   inventoried.
+
 The meta-tests seed one realistic bypass of each scan and require the scan to see it.
 """
 
@@ -43,7 +51,7 @@ SRC = Path(__file__).resolve().parents[3] / "src" / "decoy_engine"
 REGISTRY_FILE = "config/_generate_options.py"
 RESOLVER = "iter_generate_input_refs"
 RESOLVER_FILE = "config/_generate_relational.py"
-RESOLVER_FUNCTIONS = frozenset({RESOLVER, "_named_columns", "_source_table"})
+RESOLVER_FUNCTIONS = frozenset({RESOLVER, "_named_columns", "_source_table", "_via_target"})
 # Every string the resolver may hold: the descriptor vocabulary it branches on, the parse-tree
 # node of a column read, and the keys of the one structure it follows, a `reference` column.
 RESOLVER_LITERALS = frozenset(
@@ -52,12 +60,12 @@ RESOLVER_LITERALS = frozenset(
         "expression",
         "column_in_named_table",
         "inline",
-        "col_ref",
         "",
         "name",
         "type",
         "reference",
         "reference_table",
+        "reference_column",
     }
 )
 INPUT_OPTIONS = frozenset(
@@ -106,6 +114,26 @@ LOOKUP = "lookup_parent_values"
 LOOKUP_FILE = "generation/relational/_parent_lookup.py"
 LOOKUP_CALLERS = frozenset({("generation/_grouped_windowed_generators.py", "_parent_anchor_cells")})
 POOL_NAMES = frozenset({"pools"})
+VIA_RESOLVER = "_via_target"
+VIA_CALLERS = frozenset(
+    {
+        (RESOLVER_FILE, "_source_table"),
+        (RESOLVER_FILE, "parent_lookup_problems"),
+        (RESOLVER_FILE, "aggregate_via_target"),
+    }
+)
+# The option keys that name a lookup column, read from the registry.
+VIA_KEYS = frozenset(
+    option.ref_context_key
+    for spec in registry.GENERATE_OPTIONS.values()
+    for option in spec.keys.values()
+    if option.ref_kind == "column_via_reference" and option.ref_context_key
+)
+# A per-parent aggregate's lookup column: a child's `reference` back to the aggregate's table. It
+# reads a column of a named table, so the registry gives it no lookup kind of its own.
+AGGREGATE_VIA = "via"
+REFERENCE_KEYS = frozenset({"reference_table", "reference_column"})
+LOOKUP_USES = frozenset({LOOKUP, "parent_key_problem"})
 
 
 def _sources() -> dict[str, str]:
@@ -615,3 +643,96 @@ def test_meta_reading_a_pool_column_without_a_map_is_not_flagged() -> None:
 
 def test_meta_the_scan_sees_the_real_lookup() -> None:
     assert pool_key_maps(SOURCES[LOOKUP_FILE])
+
+
+# ---- 8: one place follows a lookup column to its parent table and key ------------------------
+
+
+def via_resolutions(sources: dict[str, str]) -> list[str]:
+    """`file:line function` of each generate-side function, `_via_target` aside, that reads a
+    `reference` column's table or key while handling a lookup column."""
+    found: list[str] = []
+    for rel, text in sorted(sources.items()):
+        # The registry declares the lookup keys; it follows no column.
+        if not rel.startswith(GENERATE_SIDE) or rel == REGISTRY_FILE:
+            continue
+        tree = ast.parse(text)
+        owner = _owners(tree)
+        by_function: dict[str, list[ast.AST]] = {}
+        for node in ast.walk(tree):
+            by_function.setdefault(owner.get(id(node), "<module>"), []).append(node)
+        for function, nodes in by_function.items():
+            if (rel, function) == (RESOLVER_FILE, VIA_RESOLVER):
+                continue
+            strings = {n.value for n in nodes if isinstance(n, ast.Constant)}
+            calls = {_callee(n) for n in nodes if isinstance(n, ast.Call)}
+            lookup = bool(strings & (VIA_KEYS | {AGGREGATE_VIA})) or bool(calls & LOOKUP_USES)
+            if lookup and strings & REFERENCE_KEYS:
+                line = min(getattr(n, "lineno", 0) or 10**9 for n in nodes)
+                found.append(f"{rel}:{line} {function}")
+    return found
+
+
+def test_the_lookup_keys_are_the_ones_this_sentry_knows() -> None:
+    assert sorted(VIA_KEYS) == ["anchor_via"]
+
+
+def test_the_aggregate_lookup_key_is_a_child_column_of_the_named_table() -> None:
+    option = registry.GENERATE_OPTIONS["derived_aggregate"].keys[AGGREGATE_VIA]
+    assert (option.ref_kind, option.ref_context_key) == ("column_in_named_table", "from_table")
+
+
+def test_only_the_via_resolver_follows_a_lookup_column_to_its_parent() -> None:
+    assert via_resolutions(SOURCES) == []
+
+
+def test_the_via_resolver_is_defined_once_and_called_by_the_inventoried_functions() -> None:
+    defined = [
+        rel
+        for rel, text in SOURCES.items()
+        for node in ast.walk(ast.parse(text))
+        if isinstance(node, ast.FunctionDef) and node.name == VIA_RESOLVER
+    ]
+    assert defined == [RESOLVER_FILE]
+    assert callers_of(SOURCES, VIA_RESOLVER) == VIA_CALLERS
+
+
+SIBLING_REREADS = {
+    "a generator re-reads the key from the siblings": (
+        "def cells(via, siblings, pools):\n"
+        "    key = next(s.get('reference_column') for s in siblings if s.get('name') == via)\n"
+        "    return lookup_parent_values(pools, key_column=key)\n"
+    ),
+    "a check reads the lookup column's parent itself": (
+        "def problem(via, by_name):\n"
+        "    parent = by_name.get(via.get('reference_table'))\n"
+        "    return parent_key_problem(parent, via.get('reference_column'), 'c')\n"
+    ),
+    "a run re-reads the aggregate's key from the child's columns": (
+        "def values(col, child_columns):\n"
+        "    via = next(c for c in child_columns if c.get('name') == col.get('via'))\n"
+        "    return via.get('reference_column')\n"
+    ),
+    "a resolver follows the lookup column inline": (
+        "def source(table, col):\n"
+        "    for s in table['generate_columns']:\n"
+        "        if s['name'] == col['anchor_via']:\n"
+        "            return s['reference_table']\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(SIBLING_REREADS))
+def test_meta_a_second_via_resolution_is_seen(shape: str) -> None:
+    sources = {"generation/_rogue.py": SIBLING_REREADS[shape]}
+    assert len(via_resolutions(sources)) == 1, shape
+
+
+def test_meta_a_reference_read_outside_a_lookup_is_not_flagged() -> None:
+    clean = (
+        "def draw(col, pools):\n"
+        "    return pools[col['reference_table']].column(col['reference_column'])\n"
+        "def problems(tables):\n"
+        "    return [t for t in tables if t.get('anchor_via')]\n"
+    )
+    assert via_resolutions({"generation/_rogue.py": clean}) == []

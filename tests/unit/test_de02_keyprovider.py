@@ -837,13 +837,14 @@ class TestPublicEntryPointsGated:
             run_fk_out_of_core(
                 plan,
                 sources,
+                config={},
                 registry=get_default_registry(),
                 relationship_graph=RelationshipGraph(edges=(), ordering=()),
             )
 
     def test_vault_writer_key_mismatch_fails_closed(self, tmp_path, monkeypatch):
-        # Codex BLOCKER 5: a job_seed-keyed vault writer while masking under a
-        # secret must fail closed (never encrypt PII under the public seed).
+        # Codex BLOCKER 5: a vault writer keyed differently from the run's secret must
+        # fail closed (a writer keyed on the public seed cannot be built at all).
         from decoy_engine.execution import ExecutionError
         from decoy_engine.vault import VaultError, VaultWriter
 
@@ -854,7 +855,7 @@ class TestPublicEntryPointsGated:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
-        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
         with pytest.raises((VaultError, ExecutionError)):
             run_pipeline(
                 cfg,
@@ -921,7 +922,6 @@ class TestVaultIsKeyedSurface:
 
     @needs_crypto
     def test_chunked_mismatched_vault_writer_under_secret_fails_closed(self, tmp_path):
-        from decoy_engine import run_mask_pipeline_chunked
         from decoy_engine.vault import VaultError, VaultWriter
 
         cfg = _config(
@@ -931,10 +931,13 @@ class TestVaultIsKeyedSurface:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
-        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
+        # The internal oracle entry: the public one refuses any vault writer first (B-6 B0).
+        from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
+
         with pytest.raises(VaultError):
             list(
-                run_mask_pipeline_chunked(
+                _mask_pipeline_chunked(
                     cfg,
                     [source],
                     table="t",
@@ -947,7 +950,7 @@ class TestVaultIsKeyedSurface:
 
     @needs_crypto
     def test_chunked_matching_secret_writes_and_round_trips(self, tmp_path):
-        from decoy_engine import run_mask_pipeline_chunked, unmask_pipeline
+        from decoy_engine import unmask_pipeline
         from decoy_engine.vault import vault_writer_for_config
 
         cfg = _config(
@@ -958,8 +961,11 @@ class TestVaultIsKeyedSurface:
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
         writer = vault_writer_for_config(cfg, key_provider=_SECRET)
+        # The internal oracle entry: the public one refuses any vault writer (B-6 B0).
+        from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
+
         chunks = list(
-            run_mask_pipeline_chunked(
+            _mask_pipeline_chunked(
                 cfg,
                 [source],
                 table="t",
@@ -1109,3 +1115,14 @@ class TestDeriveGuard:
 
     def test_seed_key_provider_is_job_seed(self):
         assert SeedKeyProvider(_JOB_SEED).mask_key() == _JOB_SEED
+
+
+def test_secret_key_provider_freezes_mutable_secret_FAIL_BEFORE():
+    original = b"a-mutable-32B+-secret-for-freeze!!"
+    buffer = bytearray(original)
+    provider = SecretKeyProvider(buffer)  # type: ignore[arg-type]
+    before = provider.mask_key()
+    buffer[0] ^= 0xFF
+    assert type(provider.secret) is bytes
+    assert provider.secret == original
+    assert provider.mask_key() == before == SecretKeyProvider(original).mask_key()
