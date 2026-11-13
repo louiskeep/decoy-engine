@@ -208,10 +208,11 @@ without it the facts are counted from the two frame dicts, over the edges whose 
 output frames, as before. A relationship entry that does not parse now raises
 `PipelineConfigError` (names only). An `error` finding carries `total_child_rows` 0, because a key
 with no counts has none. With `keys=`, an edge that has no key fact reads `error`. Without `keys=`, a
-float key column, NumPy or nullable `Float32`/`Float64`, whose non-null values are all whole numbers
-in the Int64 range (pandas' reading of a nullable integer column, such as a self-reference with a
-null root) is compared as an integer key; a column with any fraction stays float, so against an
-integer parent it is still a type mismatch. The tag stays `v2`; the field set only grew.
+float key column, NumPy or nullable `Float32`/`Float64`, with at least one non-null value, all of
+them whole numbers in the Int64 range (pandas' reading of a nullable integer column, such as a
+self-reference with a null root), is compared as an integer key. A column with any fraction stays
+float, so against an integer parent it is still a type mismatch, and so is an all-null float column.
+The tag stays `v2`; the field set only grew.
 
 **Rules:**
 
