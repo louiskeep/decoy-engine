@@ -86,10 +86,24 @@ def validate_plan(
     the `Plan` attached. This is the keystone S11-S13 consume to validate a plan
     without a try/except at every call site. `base_dir` is the config file's folder, as for
     `compile_plan`.
+
+    `config` is the validated `PipelineConfig` dump. A malformed `subset:` seed (empty
+    `key_columns`, a fraction outside (0, 1], both or neither of fraction and count) never
+    reaches the split: `SubsetSeedConfig` mirrors `SeedSpec.__post_init__` exactly, so
+    `PipelineConfig` validation refuses it first (`tests/unit/plan/test_validate.py`).
     """
+    from decoy_engine.subset import SubsetError, split_subset_config
+
+    try:
+        # Imported here: `subset._edges` imports `plan._types`, so a top-level import would cycle.
+        run_config = split_subset_config(config).run_config
+    except SubsetError as exc:
+        return PlanValidationResult(
+            ok=False, error=PlanCheckError(code=exc.code, path="subset", message=str(exc))
+        )
     try:
         plan = compile_plan(
-            config,
+            run_config,
             profile,
             decoy_engine_version=decoy_engine_version,
             no_profile=no_profile,
