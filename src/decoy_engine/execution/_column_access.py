@@ -391,20 +391,29 @@ def created_columns(
     """Columns the config creates on this table, given the columns the source has.
 
     A column entry counts only when its declaration says it creates its own target and every
-    column it reads is a source column or a created derive target, so a target that is read, or whose inputs are absent or
-    unreadable, is not created. A `derive` target counts the same way against the source
+    column it reads is a source column, a created derive target or another created column, so a
+    target that is read, or whose inputs are absent, unreadable or circular, is not created. A `derive` target counts the same way against the source
     columns its own expression reads.
     """
     have = frozenset(source_columns)
     derived = _derive_created(table_entry, have)
     readable = have | derived  # transforms run before the columns, so their targets are readable
+    pending = [
+        (entry["name"], column_access(entry, registry))
+        for entry in table_entry.get("columns") or []
+        if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
+    ]
     created: set[str] = set()
-    for entry in table_entry.get("columns") or []:
-        if not isinstance(entry, Mapping) or not isinstance(entry.get("name"), str):
-            continue
-        access = column_access(entry, registry)
-        if _creates_from(access, readable):
-            created.add(entry["name"])
+    # The executor orders a column after the columns it reads, so a created column may read an
+    # earlier-resolved created one. Resolve to a fixed point: each pass admits the entries whose
+    # inputs are now readable, and whatever never resolves (a missing input, a cycle) stays out.
+    progressed = True
+    while progressed:
+        progressed = False
+        for name, access in pending:
+            if name not in created and _creates_from(access, readable | created):
+                created.add(name)
+                progressed = True
     return frozenset(created) | derived
 
 
