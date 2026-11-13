@@ -167,3 +167,22 @@ def test_a_when_predicate_naming_a_dependent_does_not_form_a_cycle(tmp_path: Any
     out = run_pipeline(config, {"t": SRC}, **KW).outputs["t"]
     assert out.column("b").to_pylist() == ["2024-01-01", "2024-01-01", "r", "s"]
     assert out.column("g").to_pylist() == out.column("b").to_pylist()
+
+
+def test_a_when_predicate_naming_a_created_column_is_refused() -> None:
+    # The gate reads the frame as it stands and orders after nothing, so a predicate over a
+    # column that does not exist yet would fail at run time; admission refuses it instead.
+    gated = {**_derived("aa_tgt", "a + 1"), "when": "z_driver > 0"}
+    assert _created([gated, _derived("z_driver", "a + 1")]) == {"z_driver"}
+    assert _created([{**_derived("aa_tgt", "a + 1"), "when": "a > 0"}]) == {"aa_tgt"}
+
+
+def test_a_run_gated_on_a_created_column_refuses_before_any_column_runs(tmp_path: Any) -> None:
+    columns = [
+        {**_derived("aa_tgt", "a + 1"), "when": "z_driver > 0"},
+        _derived("z_driver", "a + 1"),
+    ]
+    with pytest.raises(Exception) as caught:
+        _run_columns(tmp_path, columns)
+    assert reason_from_exception(caught.value).code != "when_expression_error"
+    assert "aa_tgt" in str(caught.value)

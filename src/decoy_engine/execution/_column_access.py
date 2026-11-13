@@ -418,19 +418,25 @@ def created_columns(
     derived = _derive_created(table_entry, have)
     readable = have | derived  # transforms run before the columns, so their targets are readable
     pending = [
-        (entry["name"], column_access(entry, registry))
+        (entry["name"], column_access(entry, registry), _predicate_reads(entry))
         for entry in table_entry.get("columns") or []
         if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
     ]
     created: set[str] = set()
-    # The executor orders a column after the columns it reads, so a created column may read an
-    # earlier-resolved created one. Resolve to a fixed point: each pass admits the entries whose
-    # inputs are now readable, and whatever never resolves (a missing input, a cycle) stays out.
+    # The executor orders a column after the columns its value reads, so a created column may
+    # read an earlier-resolved created one. Resolve to a fixed point: each pass admits the
+    # entries whose inputs are now readable, and whatever never resolves (a missing input, a
+    # cycle) stays out. A `when:` predicate adds no ordering edge (`scalar_creating_reads`), so
+    # it may name only columns on the frame before any column runs, never a created one.
     progressed = True
     while progressed:
         progressed = False
-        for name, access in pending:
-            if name not in created and _creates_from(access, readable | created):
+        for name, access, predicate in pending:
+            if (
+                name not in created
+                and predicate <= readable
+                and _creates_from(access, readable | created)
+            ):
                 created.add(name)
                 progressed = True
     return frozenset(created) | derived
@@ -461,6 +467,14 @@ def _derive_created(table_entry: Mapping[str, Any], have: frozenset[str]) -> fro
             ok[target] = ok.get(target, True) and good
             frame.add(target)
     return frozenset(t for t, good in ok.items() if good)
+
+
+def _predicate_reads(entry: Mapping[str, Any]) -> frozenset[str]:
+    """The columns the entry's `when:` predicate names. Unreadable names are caught by
+    `column_access`, which marks the entry `reads_unknown`."""
+    if not has_when(entry):
+        return frozenset()
+    return SURFACE_DECLARATIONS["surface:when"](entry).reads
 
 
 def _creates_from(access: ColumnAccess, have: frozenset[str]) -> bool:
