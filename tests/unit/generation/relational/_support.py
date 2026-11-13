@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,14 @@ POLICIES = ("fail", "warn", "preserve", "remap")
 CID = {"name": "cid", "type": "sequence", "start": 1}
 # A column the streaming core declines, so the whole plan takes the whole-table route.
 LEGACY_ONLY = {"name": "twice", "type": "derived", "expression": "cid * 2"}
+SECOND_SEED = 977
+# The parent-anchored date fixture: a window of 36 days, anchors far from either range end.
+WINDOW = (5, 40)
+PARENT_ID = {"name": "id", "type": "sequence", "start": 1}
+# "1990-01-10", "1990-01-11", ...: one distinct ISO date per parent row.
+PARENT_BIRTH = {"name": "birth", "type": "sequence", "start": 10, "prefix": "1990-01-"}
+# The child's own `birth` is a plain counter. Read as the anchor it is not a date at all.
+CHILD_BIRTH = {"name": "birth", "type": "sequence", "start": 1000}
 
 
 def relationship(
@@ -96,3 +104,64 @@ def digest(tbl: pa.Table) -> str:
 
 def is_safe(exc: BaseException) -> bool:
     return exc.__cause__ is None and exc.__context__ is None
+
+
+def anchored(
+    child_rows: int = 64,
+    *,
+    seed: int = SEED,
+    parent_rows: int = 4,
+    parent_cols: list[dict[str, Any]] | None = None,
+    pid: dict[str, Any] | None = None,
+    **date_options: Any,
+) -> dict[str, Any]:
+    """`parents(id, birth)` and `kids(cid, pid, birth, visit)`.
+
+    `kids.visit` is a `windowed_date` anchored to `parents.birth` through `kids.pid`. The child
+    carries an unrelated numeric column that is also named `birth`.
+    """
+    visit = {
+        "name": "visit",
+        "type": "windowed_date",
+        "anchor": "birth",
+        "anchor_via": "pid",
+        "min_days": WINDOW[0],
+        "max_days": WINDOW[1],
+        **date_options,
+    }
+    kids = [CID, ref("pid", "parents", **(pid or {})), CHILD_BIRTH, visit]
+    return cfg(
+        [
+            table("parents", parent_rows, parent_cols or [PARENT_ID, PARENT_BIRTH]),
+            table("kids", child_rows, kids),
+        ],
+        seed,
+    )
+
+
+def anchored_dates(out: dict[str, pa.Table]) -> list[str | None]:
+    return [None if v is None else str(v) for v in out["kids"].column("visit").to_pylist()]
+
+
+def dates_outside_parent_window(out: dict[str, pa.Table]) -> list[int]:
+    """Row numbers whose `visit` is not inside its own parent's `birth` window, or is null
+    beside a non-null `pid` (or non-null beside a null one)."""
+    births = dict(
+        zip(
+            out["parents"].column("id").to_pylist(),
+            out["parents"].column("birth").to_pylist(),
+            strict=True,
+        )
+    )
+    bad: list[int] = []
+    rows = zip(out["kids"].column("pid").to_pylist(), anchored_dates(out), strict=True)
+    for row, (pid, visit) in enumerate(rows):
+        if pid is None or visit is None:
+            if pid is not None or visit is not None:
+                bad.append(row)
+            continue
+        anchor = date.fromisoformat(str(births[pid]))
+        low, high = (anchor + timedelta(days=d) for d in WINDOW)
+        if not low <= date.fromisoformat(visit) <= high:
+            bad.append(row)
+    return bad

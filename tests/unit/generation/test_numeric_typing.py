@@ -200,3 +200,48 @@ def test_custom_provider_under_a_stock_numeric_name_stays_text() -> None:
             assert t["a"].to_pylist() == ["007"] * 4
     finally:
         unregister_faker_provider("pyint")
+
+
+# ---- readers in another table: the resolved input decides, not a shared column name -----------
+
+
+def _anchored_tables(parent_birth: dict, child_birth: dict | None = None) -> list[dict]:
+    child = [
+        _seq("cid"),
+        {"name": "pid", "type": "reference", "reference_table": "p", "reference_column": "id"},
+        *([child_birth] if child_birth else []),
+        {
+            "name": "visit",
+            "type": "windowed_date",
+            "anchor": "birth",
+            "anchor_via": "pid",
+            "max_days": 30,
+        },
+    ]
+    return [table("p", 3, [_seq("id"), parent_birth]), table("kids", 6, child)]
+
+
+DATE_TEXT = {"name": "birth", "type": "categorical", "categories": ["1990-01-10"]}
+
+
+def test_a_parent_anchor_does_not_make_a_same_named_child_column_text() -> None:
+    out = run_generate_tables(config(_anchored_tables(DATE_TEXT, _seq("birth", start=500))))
+    assert out["kids"].schema.field("birth").type == pa.int64()
+    assert out["kids"]["birth"].to_pylist() == [500, 501, 502, 503, 504, 505]
+    assert out["kids"]["visit"].null_count == 0
+
+
+def test_the_anchor_read_reaches_the_parent_column_it_names() -> None:
+    """The reader is in `kids`, the column it keeps as date text is in `p`."""
+    from decoy_engine.generation._numeric_typing import numeric_plan
+
+    cfg = config(_anchored_tables(_seq("birth", start=500), _seq("birth", start=500)))
+    plan = numeric_plan(cfg)
+    assert ("p", "birth") not in plan
+    assert plan[("kids", "birth")] == pa.int64()
+
+
+def test_the_lookup_key_stays_numeric_on_both_sides() -> None:
+    out = run_generate_tables(config(_anchored_tables(DATE_TEXT)))
+    assert out["p"].schema.field("id").type == pa.int64()
+    assert out["kids"].schema.field("pid").type == pa.int64()

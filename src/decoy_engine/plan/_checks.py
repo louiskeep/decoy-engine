@@ -593,8 +593,7 @@ def check_derived_column_refs(config: dict[str, Any]) -> None:
     Raises:
         PlanCompileError: A missing column ref or cyclic dependency is found.
     """
-    from decoy_engine.expressions import compile_expr
-    from decoy_engine.transforms.derived import _get_column_refs
+    from decoy_engine.expressions import column_refs, compile_expr
 
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
@@ -639,7 +638,7 @@ def check_derived_column_refs(config: dict[str, Any]) -> None:
                 compiled = compile_expr(str(expr))
             except Exception:
                 continue  # invalid syntax: ValidationError at execution time; skip double-report
-            refs = _get_column_refs(compiled)
+            refs = column_refs(compiled)
             missing = refs - all_col_names
             if missing:
                 raise PlanCompileError(

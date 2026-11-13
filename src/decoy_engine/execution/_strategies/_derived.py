@@ -43,9 +43,10 @@ from decoy_engine import reasons
 from decoy_engine.execution import _guards
 from decoy_engine.execution._adapter import StrategyContext, StrategyOption, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.expressions import column_refs
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.transforms.derived import DerivedConfig, _get_column_refs, apply_derived
+from decoy_engine.transforms.derived import DerivedConfig, apply_derived
 
 
 class DerivedStrategyHandler:
@@ -75,7 +76,7 @@ class DerivedStrategyHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         cfg_dict = provider_config_to_dict(plan.provider_config)
         config = DerivedConfig.from_dict(cfg_dict)
-        refs = sorted(_get_column_refs(config.compiled))
+        refs = sorted(column_refs(config.compiled))
         # Defense in depth for direct callers: every public entry refuses earlier.
         _guards.refuse_duplicate_field_names(ctx.current_table, df.columns)
         missing = [ref for ref in refs if ref not in df.columns]

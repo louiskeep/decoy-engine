@@ -7,7 +7,10 @@ Left alone, a plain counter or a ``pyfloat`` column reaches ``derived`` arithmet
 configuration, which columns are numeric; the admission schema and every emitter read that one
 answer. A column is a candidate when its values provably fit (a sequence's first and last value,
 a faker int provider's declared bounds) and no custom provider overrides its name. It then stays
-numeric only while every reader of it is numeric-safe, per the closed ``READERS`` registry:
+numeric only while every reader of it is numeric-safe, per the closed ``READERS`` registry. Who
+reads which column comes resolved from ``config.iter_generate_input_refs``, so a reader in
+another table (a date anchored to a parent column) counts against the column it reads and not
+against a same-named column of its own table:
 
 * formula references, aggregate input, group labels, window anchors and statistical conditioning
   read the cell as text, so they keep it text;
@@ -27,7 +30,6 @@ Anything else stays text exactly as before. Rendered text is unchanged for numer
 from __future__ import annotations
 
 import inspect
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -110,16 +112,17 @@ def _faker_type(
 
 @dataclass(frozen=True)
 class Reader:
-    """How one kind of sibling-value reader treats a numeric column."""
+    """How one kind of column-value reader treats a numeric column."""
 
     safe: bool
     why: str
 
 
-# The closed registry of every way a generated column's values are read by another column. A
-# numeric column must be safe for ALL of its readers, so a reader that is not listed here, or a
-# column type that is not listed in READER_KEYS, keeps the column text. Add a kind here only after
-# checking it against typed input; tests/sentry/test_numeric_reader_registry.py fails otherwise.
+# The closed registry of every way a generated column's values are read by another column,
+# keyed by the reader's column type and option. A numeric column must be safe for ALL of its
+# readers, so a reader that is not listed here, or a column type the option registry does not
+# know, keeps the column text. Add a kind here only after checking it against typed input;
+# tests/sentry/test_numeric_reader_registry.py fails otherwise.
 READERS: dict[str, Reader] = {
     "formula.references": Reader(
         False, "formula locals are the cell text; str methods and + need text"
@@ -134,6 +137,9 @@ READERS: dict[str, Reader] = {
     "grouped_series.group_by": Reader(False, "the group label is hashed from its text"),
     "group_key.group_by": Reader(False, "the group label is hashed from its text"),
     "windowed_date.anchor": Reader(False, "the anchor must be date text"),
+    "windowed_date.anchor_via": Reader(
+        True, "matched to the parent key by equality; both ends have the same planned type"
+    ),
     "statistical.condition_on": Reader(False, "matched against snapshot category labels as text"),
     "reference.reference_column": Reader(
         True, "copies the parent cell and its type; the group is checked together"
@@ -142,36 +148,33 @@ READERS: dict[str, Reader] = {
         True, "safe only when every paired column is generated with the same planned type"
     ),
 }
-# column type -> (config key, registry id) for each sibling it reads. `expression` is scanned for
-# identifiers. Types that read no sibling map to an empty tuple.
-READER_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
-    "faker": (),
-    "sequence": (),
-    "categorical": (),
-    "constant": (),
-    "distribution": (),
-    "lookup": (),
-    "formula": (("references", "formula.references"),),
-    "reference": (),
-    "statistical": (("condition_on", "statistical.condition_on"),),
-    "derived": (("expression", "derived.expression"),),
-    "derived_aggregate": (("column", "derived_aggregate.column"),),
-    "grouped_series": (
-        ("order_by", "grouped_series.order_by"),
-        ("group_by", "grouped_series.group_by"),
-    ),
-    "windowed_date": (("anchor", "windowed_date.anchor"),),
-    "group_key": (("group_by", "group_key.group_by"),),
-}
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 Key = tuple[str, str]
+# One reader of a column: (reader table, reader column config, option, registry id).
+_Read = tuple[str, Mapping[str, Any], str, str]
 
 
-def _names_read(col: Mapping[str, Any], key: str) -> set[str]:
-    value = col.get(key)
-    if key == "expression":
-        return set(_IDENTIFIER.findall(value)) if isinstance(value, str) else set()
-    return {v for v in (value if isinstance(value, list) else [value]) if isinstance(v, str)}
+def _readers(tables: Mapping[str, Any]) -> tuple[dict[Key, list[_Read]], set[str]]:
+    """Each column's readers, from the resolved inputs, and the tables holding an unknown type.
+
+    A column type the option registry does not know may read anything, so every candidate of
+    its table stays text.
+    """
+    from decoy_engine import config
+
+    known = set(config.generate_option_catalog())
+    readers: dict[Key, list[_Read]] = {}
+    opaque: set[str] = set()
+    for tn, table in tables.items():
+        for col in table["generate_columns"]:
+            kind = str(col.get("type"))
+            if kind not in known:
+                opaque.add(tn)
+            for edge in config.iter_generate_input_refs(table, col):
+                source = (edge.source_table, edge.source_column)
+                readers.setdefault(source, []).append(
+                    (tn, col, edge.option, f"{kind}.{edge.option}")
+                )
+    return readers, opaque
 
 
 def _reference_root(tables: Mapping[str, Any], key: Key) -> Key:
@@ -250,6 +253,7 @@ def numeric_plan(
     in_pairs = {end for row in pairs for p, c in row for end in (p, c)}
 
     candidates = set(base)
+    readers, opaque = _readers(tables)
 
     def planned(key: Key) -> pa.DataType | None:
         """The type the column is emitted as: its declared `output_type`, else the generated type."""
@@ -282,22 +286,20 @@ def numeric_plan(
 
     def reader_ok(m: Key) -> bool:
         tn, cn = m
-        for other in tables[tn]["generate_columns"]:
-            if other["name"] == cn:
+        if tn in opaque:
+            return False
+        for reader_table, other, option, rid in readers.get(m, ()):
+            if reader_table == tn and other["name"] == cn:
                 continue
-            spec = READER_KEYS.get(str(other.get("type")))
-            if spec is None:
-                return False  # unknown column type: it may read anything
-            for key, rid in spec:
-                if cn not in _names_read(other, key):
-                    continue
-                if rid == "derived.expression":
-                    if not derived_uses_as_numbers(
-                        str(other.get(key)), cn, lambda name: is_number((tn, name))
-                    ):
-                        return False
-                elif not READERS[rid].safe:
+            if rid == "derived.expression":
+
+                def beside(name: str, table: str = reader_table) -> bool:
+                    return is_number((table, name))
+
+                if not derived_uses_as_numbers(str(other.get(option)), cn, beside):
                     return False
+            elif rid not in READERS or not READERS[rid].safe:
+                return False
         if m in in_pairs:
             for row in pairs:
                 if any(m in (p, c) for p, c in row) and not _pairs_agree(row):

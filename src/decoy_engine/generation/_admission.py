@@ -236,6 +236,9 @@ def classify_plan(
         return admit(table, col, parent_adm.arrow_type)
 
     def classify_windowed_date(table: str, col: dict[str, Any]) -> ColumnAdmission:
+        # The anchor is a parent row's column, reached by a lookup no batch can do.
+        if col.get("anchor_via") is not None:
+            return decline(table, col, "windowed_date_anchor_via")
         cols = tables[table]["generate_columns"]
         names = [c["name"] for c in cols]
         anchor_name = col.get("anchor")

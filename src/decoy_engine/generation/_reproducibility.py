@@ -3,7 +3,10 @@
 Reproducibility is asserted only over an explicit, complete input set (the envelope). A column is
 reproducibility-EXCLUDED when its output is not a deterministic function of that envelope, and the
 exclusion propagates over the dependency closure: a reference, formula, derived, aggregate or
-grouped column whose inputs include an excluded column is excluded too. The closure is computed on
+grouped column whose inputs include an excluded column is excluded too. A column's inputs are the
+resolved edges of `config.iter_generate_input_refs`, in its own table or another one (a date
+anchored to a parent column depends on that parent column and on its foreign key, never on a
+same-named column beside it), plus the parent column of a `reference`. The closure is computed on
 the plan's configuration alone, so it holds on every execution path (a column that runs on the
 legacy whole-table path is still excluded). Excluded columns are never re-frozen into a golden and
 carry no reproducibility or route-independence assertion.
@@ -53,9 +56,6 @@ _CLOCK_FAKER_EXACT = frozenset(
 )
 _CLOCK_FAKER_PREFIXES = ("date_time_this_", "date_this_", "past_", "future_")
 _FORMULA_CLOCK = re.compile(r"\b(now|today|days_from_now|months_from_now|years_from_now)\b")
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# Config keys that name a sibling column this column reads.
-_SIBLING_KEYS = ("group_by", "order_by", "column", "anchor", "condition_on", "references")
 
 REASON_FRESH = reasons.route.DETERMINISM_FRESH
 REASON_CUSTOM_PROVIDER = reasons.route.CUSTOM_PROVIDER_WITHOUT_DETERMINISTIC_CONTRACT
@@ -93,19 +93,6 @@ def _direct_reason(
     return None
 
 
-def _sibling_inputs(col: dict[str, Any], siblings: set[str]) -> set[str]:
-    names: set[str] = set()
-    for key in _SIBLING_KEYS:
-        value = col.get(key)
-        for item in value if isinstance(value, list) else [value]:
-            if isinstance(item, str) and item in siblings:
-                names.add(item)
-    expression = col.get("expression")
-    if isinstance(expression, str):
-        names |= set(_IDENTIFIER.findall(expression)) & siblings
-    return names
-
-
 def reproducibility_exclusions(
     config: dict[str, Any],
     *,
@@ -113,11 +100,12 @@ def reproducibility_exclusions(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> dict[tuple[str, str], str]:
     """`{(table, column): reason}` for every reproducibility-excluded generate column."""
+    from decoy_engine import config as config_api
+
     tables = {t["name"]: t for t in (config.get("tables") or []) if t.get("generate_columns")}
     excluded: dict[tuple[str, str], str] = {}
     inputs: dict[tuple[str, str], set[tuple[str, str]]] = {}
     for tname, table in tables.items():
-        siblings = {c["name"] for c in table["generate_columns"]}
         for col in table["generate_columns"]:
             key = (tname, col["name"])
             reason = _direct_reason(
@@ -125,7 +113,10 @@ def reproducibility_exclusions(
             )
             if reason is not None:
                 excluded[key] = reason
-            deps = {(tname, s) for s in _sibling_inputs(col, siblings - {col["name"]})}
+            deps = {
+                (edge.source_table, edge.source_column)
+                for edge in config_api.iter_generate_input_refs(table, col)
+            } - {key}
             if col.get("type") == "reference":
                 deps.add((str(col.get("reference_table")), str(col.get("reference_column"))))
             inputs[key] = deps

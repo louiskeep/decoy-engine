@@ -452,8 +452,10 @@ def test_ordinary_generation_is_untouched_by_pinned_mode(snap: str) -> None:
     assert a["zeta_customers"].equals(b["zeta_customers"])
 
     cols[2]["categories"] = ["2024-01-15", "now"]
-    with pytest.raises(WindowedDateError):
+    with pytest.raises(WindowedDateError) as exc:
         compile_and_generate(copy.deepcopy(cfg))
+    assert exc.value.code == "windowed_date_anchor_invalid"
+    assert exc.value.__cause__ is None and exc.value.__context__ is None
 
 
 GOLDEN_ORDINARY_NULL_STATISTICAL = (

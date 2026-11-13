@@ -150,12 +150,11 @@ def _generic(entry: Mapping[str, Any]) -> ColumnAccess:
 
 
 def _derived(entry: Mapping[str, Any]) -> ColumnAccess:
-    from decoy_engine.expressions import compile_expr
-    from decoy_engine.transforms.derived import _get_column_refs
+    from decoy_engine.expressions import column_refs, compile_expr
 
     expr = _provider_config(entry).get("expression")
     try:
-        refs = _get_column_refs(compile_expr(str(expr))) if expr else None
+        refs = column_refs(compile_expr(str(expr))) if expr else None
     except Exception:
         refs = None
     if refs is None:

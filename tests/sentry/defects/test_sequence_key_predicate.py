@@ -24,7 +24,7 @@ PREDICATE = "is_exact_sequence_key"
 OWNER = ("config/_generate_relational.py", PREDICATE)
 CALLERS = frozenset(
     {
-        ("config/_generate_relational.py", "_key_is_valid"),
+        ("config/_generate_relational.py", "parent_key_problem"),
         ("execution/_probe_scale.py", "_loosen_per_parent_bounds"),
         ("plan/checks/_generate_columns.py", "_check_reference_weights"),
     }

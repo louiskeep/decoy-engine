@@ -60,7 +60,7 @@ from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from decoy_engine.generation.pool._events import QualityWarning
 
@@ -189,6 +189,7 @@ def _generate_tables_from_config(
                     lookup_lists=lookup_lists,
                     reference_policy=policies.get((name, cname)),
                     on_warning=on_warning,
+                    siblings=gcols,
                 )
                 warn_on_unseen_parents(
                     col,
@@ -316,6 +317,7 @@ def _generate_column(
     lookup_lists: dict[tuple[str, str], LookupList] | None = None,
     reference_policy: str | None = None,
     on_warning: Callable[[QualityWarning], None] | None = None,
+    siblings: Sequence[Mapping[str, Any]] = (),
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -330,7 +332,8 @@ def _generate_column(
     here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to the ``faker`` branch
     only. ``reference_date`` (pinned execution only) anchors ``windowed_date`` ``now``/``today``.
     ``reference_policy`` is the orphan policy of the relationship covering a ``reference`` column;
-    with ``on_warning`` it decides what an empty parent does (see ``_reference``)."""
+    with ``on_warning`` it decides what an empty parent does (see ``_reference``).
+    ``siblings`` are the table's column configs, for a column that reads its parent's row."""
     col = with_table(col, table_name)
     kind = col.get("type")
     if kind == "sequence":
@@ -383,7 +386,7 @@ def _generate_column(
             values = _grouped_series_generate(col, n, seed, generated or {})
         elif kind == "windowed_date":
             values = _windowed_date_generate(
-                col, n, seed, generated or {}, reference_date=reference_date
+                col, n, seed, generated or {}, pools, siblings, reference_date=reference_date
             )
         else:
             values = _group_key_generate(col, n, seed, generated or {})

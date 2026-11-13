@@ -1,8 +1,13 @@
-"""Config-time checks for the cross-table options of generate `reference` columns.
+"""Cross-table generate options: their config-time checks and the resolver of column inputs.
 
-Pure functions over plain mappings, returning ``(location, reason code)`` pairs like
-`_generate_unique`. The pipeline validator calls them once the reference graph is known to be
-valid, so every parent named here exists.
+The checks are pure functions over plain mappings, returning ``(location, reason code)`` pairs
+like `_generate_unique`. The pipeline validator calls them once the reference graph is known to
+be valid, so every parent named here exists.
+
+`iter_generate_input_refs` resolves which column each option of a generate column reads. It
+holds no option name and no column type list: it walks the ``ref_kind`` descriptors of the one
+registry (`_generate_options.GENERATE_OPTIONS`) and follows a `reference` column to its table.
+The plan check, numeric typing and the reproducibility report consume its edges.
 
 A positive `min_per_parent` or `max_per_parent` asks for an exact shape, and each check refuses
 a config that cannot get it rather than letting the run drop the option. One column reports its
@@ -26,6 +31,11 @@ The draw is uniform over earlier rows with an optional `max_per_parent`; any oth
 a minimum, nulls or uniqueness would be dropped without a word, so each is refused. `root_count`
 must lie between 1 and the table's `row_count`, and is ignored for a table with no rows.
 
+A column that reads its parent's row (a `windowed_date` with `anchor_via`) needs a foreign key
+that reaches exactly one parent row. `parent_key_problem` is the one rule for such a key, built
+on `is_exact_sequence_key`. The lookup column must be a `reference` to another table: the rows
+of the table being drawn are not finished, so a lookup through a self-reference is refused.
+
 `is_exact_sequence_key` is the one test for a key column whose every row is a distinct value:
 a `sequence` with no positive `null_probability`. The self-reference key check, the capacity
 probe's bounds and the plan's weights-length check all read it. It fails closed: a rate that is
@@ -39,14 +49,21 @@ from __future__ import annotations
 
 import numbers
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from decoy_engine import _capacity, reasons
+from decoy_engine.config._generate_options import GENERATE_OPTIONS, OptionSpec
 from decoy_engine.config._tables import generate_columns_of
+from decoy_engine.expressions import column_refs, compile_expr
 
 __all__ = [
+    "GenerateInputRef",
     "is_exact_sequence_key",
     "is_self_reference",
+    "iter_generate_input_refs",
+    "parent_key_problem",
+    "parent_lookup_problems",
     "per_parent_bounds",
     "per_parent_problems",
     "self_reference_problems",
@@ -60,6 +77,8 @@ _NULL_CONFLICT = str(reasons.config.GENERATE_PER_PARENT_NULL_CONFLICT)
 _INFEASIBLE = str(reasons.config.GENERATE_PER_PARENT_INFEASIBLE)
 _KEY_INVALID = str(reasons.config.GENERATE_SELF_REFERENCE_KEY_INVALID)
 _OPTION_UNSUPPORTED = str(reasons.config.GENERATE_SELF_REFERENCE_OPTION_UNSUPPORTED)
+_LOOKUP_KEY = str(reasons.config.GENERATE_PARENT_LOOKUP_KEY_NOT_UNIQUE)
+_LOOKUP_SELF = str(reasons.config.GENERATE_PARENT_LOOKUP_SELF_REFERENCE)
 _RANGE = str(reasons.config.GENERATE_OPTION_RANGE)
 _UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
 
@@ -158,18 +177,32 @@ def _not_above_zero(rate: Any) -> bool:
     return not rate > 0
 
 
+def parent_key_problem(columns: Sequence[Any], key_name: Any, code: str) -> str | None:
+    """`code` unless `key_name` is a column of `columns` that `is_exact_sequence_key` accepts.
+
+    The one rule for a key that reaches exactly one row: distinct by construction and never
+    null. Each caller passes the columns the key may come from and its own reason code.
+    """
+    for candidate in columns:
+        if isinstance(candidate, Mapping) and candidate.get("name") == key_name:
+            return None if is_exact_sequence_key(candidate) else code
+    return code
+
+
 def _key_is_valid(columns: Sequence[Any], c_idx: int, key_name: Any) -> bool:
     """Whether `key_name` is an uncast `sequence` column declared before `c_idx` with no nulls."""
-    for earlier in columns[:c_idx]:
-        if isinstance(earlier, Mapping) and earlier.get("name") == key_name:
-            return is_exact_sequence_key(earlier) and "output_type" not in earlier
-    return False
+    earlier = columns[:c_idx]
+    if parent_key_problem(earlier, key_name, _KEY_INVALID):
+        return False
+    key = next(c for c in earlier if isinstance(c, Mapping) and c.get("name") == key_name)
+    return "output_type" not in key
 
 
 def _tree_problem(
     col: Mapping[str, Any], columns: Sequence[Any], c_idx: int, rows: int | None
 ) -> tuple[str, str] | None:
     """The first `(option, code)` problem of one self-reference column, or None."""
+    # A tree's key is read while the table is drawn, so only an earlier column can be one.
     if not _key_is_valid(columns, c_idx, col.get("reference_column")):
         return ("reference_column", _KEY_INVALID)
     if col.get("distribution") not in (None, "random"):
@@ -216,3 +249,145 @@ def self_reference_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem
             if found is not None:
                 problems.append(((*where, found[0]), found[1]))
     return problems
+
+
+def _via_target(columns: Sequence[Any], via_name: Any) -> tuple[str, str] | None:
+    """The parent table and key column that the lookup column `via_name` of `columns` leads to.
+
+    None when no column has that name, and two empty names when it is not a `reference` to a
+    named table. The one place a lookup column is followed: the resolver puts the answer on the
+    edge for the run, and the lookup check judges it.
+    """
+    for sibling in columns:
+        if isinstance(sibling, Mapping) and sibling.get("name") == via_name:
+            parent, key = sibling.get("reference_table"), sibling.get("reference_column")
+            if sibling.get("type") != "reference" or not isinstance(parent, str):
+                return "", ""
+            return parent, key if isinstance(key, str) else ""
+    return None
+
+
+def _lookup_problem(
+    target: tuple[str, str], table_name: Any, by_name: Mapping[Any, Mapping[str, Any]]
+) -> str | None:
+    """The reason code a lookup that leads to `target` from table `table_name` is refused with.
+
+    A column that is not a `reference` names no parent table, so it has no parent key either.
+    """
+    parent, key = target
+    if isinstance(table_name, str) and table_name and parent == table_name:
+        return _LOOKUP_SELF
+    found = by_name.get(parent) if parent else None
+    columns = generate_columns_of(found) if found is not None else []
+    return parent_key_problem(columns, key, _LOOKUP_KEY)
+
+
+def parent_lookup_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
+    """Parent-lookup problems of every generate column of `tables` that has `anchor_via`.
+
+    `tables` are the config's tables as mappings with `name` and `generate_columns`. A lookup
+    column that is missing is left alone: which column exists, and in what order, is the plan
+    check's rule over the resolved inputs.
+    """
+    by_name = {t.get("name"): t for t in tables}
+    problems: list[Problem] = []
+    for t_idx, table in enumerate(tables):
+        columns = [c for c in generate_columns_of(table) if isinstance(c, Mapping)]
+        for c_idx, col in enumerate(columns):
+            via_name = col.get("anchor_via")
+            target = _via_target(columns, via_name) if isinstance(via_name, str) else None
+            if target is None:
+                continue
+            code = _lookup_problem(target, table.get("name"), by_name)
+            if code is not None:
+                problems.append((("tables", t_idx, "generate_columns", c_idx, "anchor_via"), code))
+    return problems
+
+
+@dataclass(frozen=True)
+class GenerateInputRef:
+    """One resolved input: `option` of the consumer column reads the source column.
+
+    Resolved from the registry's ``ref_kind`` descriptors. An empty ``source_table`` means the
+    companion column leads to no table. ``source_key`` is set for an input read through a
+    foreign key: the parent key column whose row holds the source value, so a consumer finds
+    the parent row from the edge alone. It is empty for any other input, or when the companion
+    column names no key.
+    """
+
+    consumer_table: str
+    consumer_column: str
+    option: str
+    source_table: str
+    source_column: str
+    source_key: str
+    must_be_earlier: bool
+    phase: str
+
+
+def _named_columns(kind: str, value: Any) -> list[str]:
+    """The column names an option value holds; a derived expression that does not parse has none."""
+    if kind == "column_list":
+        return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+    if not isinstance(value, str):
+        return []
+    if kind != "expression":
+        return [value]
+    try:
+        compiled = compile_expr(value)
+    except Exception:
+        return []
+    # Sorted: a frozenset's order follows the hash seed, and the edges must not.
+    return sorted(column_refs(compiled))
+
+
+def _source_table(
+    table: Mapping[str, Any], option: OptionSpec, context: Any
+) -> tuple[str, str] | None:
+    """The table an option's columns live in and the parent key that finds the row.
+
+    "" when `context` leads to no table or names no key, None to skip the option.
+    """
+    if option.ref_kind == "column_in_named_table":
+        return (context, "") if isinstance(context, str) else None
+    return _via_target(generate_columns_of(table), context)
+
+
+def iter_generate_input_refs(
+    table: Mapping[str, Any], column: Mapping[str, Any]
+) -> tuple[GenerateInputRef, ...]:
+    """Every input of `column`, a generate column of `table`, resolved from the registry.
+
+    The one resolver of ``ref_kind``. It reads the config and judges nothing: whether a source
+    table or column exists and is ready is the plan check's rule alone. A missing companion
+    column yields no edge for the option that needs it; the companion's own edge is refused.
+    """
+    spec = GENERATE_OPTIONS.get(str(column.get("type")))
+    here = str(table.get("name"))
+    refs: dict[GenerateInputRef, None] = {}
+    for key, option in spec.keys.items() if spec is not None else ():
+        if option.ref_kind is None:
+            continue
+        context = column.get(option.ref_context_key) if option.ref_context_key else None
+        (source, source_key), phase = (here, ""), option.ref_phase
+        if option.ref_context_key and context is None:
+            phase = "inline"
+        elif option.ref_context_key:
+            found = _source_table(table, option, context)
+            if found is None:
+                continue
+            source, source_key = found
+        earlier = phase == "inline" and source == here
+        for name in _named_columns(option.ref_kind, column.get(key)):
+            ref = GenerateInputRef(
+                consumer_table=here,
+                consumer_column=str(column.get("name")),
+                option=key,
+                source_table=source,
+                source_column=name,
+                source_key=source_key,
+                must_be_earlier=earlier,
+                phase=phase,
+            )
+            refs[ref] = None
+    return tuple(refs)

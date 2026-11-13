@@ -44,8 +44,12 @@ from decoy_engine.config._generate_option_catalog import (
 )
 from decoy_engine.config._generate_options import refuse_unlisted_generate_families
 from decoy_engine.config._generate_relational import (
+    GenerateInputRef,
     is_exact_sequence_key,
     is_self_reference,
+    iter_generate_input_refs,
+    parent_key_problem,
+    parent_lookup_problems,
     per_parent_bounds,
     per_parent_problems,
     self_reference_problems,
@@ -137,6 +141,7 @@ __all__ = [
     "FixedWidthLayout",
     "GCSSource",
     "GCSTarget",
+    "GenerateInputRef",
     "GenerateTypeOptions",
     "GlobalSettings",
     "LimitOp",
@@ -166,7 +171,10 @@ __all__ = [
     "generate_option_catalog",
     "is_exact_sequence_key",
     "is_self_reference",
+    "iter_generate_input_refs",
     "override_sources",
+    "parent_key_problem",
+    "parent_lookup_problems",
     "parse_delivery_config",
     "parse_output_type",
     "parse_pipeline_config",

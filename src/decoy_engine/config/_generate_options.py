@@ -12,6 +12,11 @@ The public catalog and the editor-schema hook read it from ``_generate_option_ca
 
 Refusal text is the registered reason's fixed summary, so a submitted value never reaches a
 message. Check functions return ``(relative location, reason code)`` pairs.
+
+The registry is also the one place that says which columns an option reads (``OptionSpec.ref_kind``
+with ``ref_context_key`` and ``ref_phase``). ``iter_generate_input_refs`` resolves those
+descriptors to table and column edges; the plan check, numeric typing and the reproducibility
+report consume the edges and hold no option-key table of their own.
 """
 
 from __future__ import annotations
@@ -65,16 +70,22 @@ _OK: list[Problem] = []
 
 @dataclass(frozen=True)
 class OptionSpec:
-    """One option: a static check and whether the value names sibling columns.
+    """One option: a static check and which columns the value reads.
 
-    ``ref_kind`` is ``None``, ``column``, ``column_list`` or ``expression``. A key that names a
-    sibling column carries it, and the plan check refuses a name not generated earlier: a column
-    read before it exists is a null, an empty aggregate or a single group, never the value the
-    config meant.
+    ``ref_kind`` is ``None`` or how the value names columns: ``column``, ``column_list`` and
+    ``expression`` name columns of the same table. ``column_via_reference`` names a column of the
+    table that the `reference` column named by ``ref_context_key`` points at, and
+    ``column_in_named_table`` a column of the table that key names; without the companion key
+    both fall back to the same table. ``ref_phase`` is ``inline`` (read while the column is
+    drawn, so a same-table input must be generated earlier) or ``post_fill`` (read after the
+    source table is complete). The plan check refuses an input that is missing or not ready: a
+    column read before it exists is a null, an empty aggregate or a single group.
     """
 
     check: Check | None = None
     ref_kind: str | None = None
+    ref_context_key: str | None = None
+    ref_phase: str = "inline"
 
 
 @dataclass(frozen=True)
@@ -316,7 +327,7 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
     "formula": TypeOptions(
         {
             "formula": OptionSpec(_formula),
-            "references": OptionSpec(_str_list),
+            "references": OptionSpec(_str_list, ref_kind="column_list", ref_phase="post_fill"),
         },
         required=("formula",),
     ),
@@ -375,7 +386,11 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
     ),
     "windowed_date": TypeOptions(
         {
-            "anchor": OptionSpec(_str, ref_kind="column"),
+            "anchor": OptionSpec(
+                _str, ref_kind="column_via_reference", ref_context_key="anchor_via"
+            ),
+            # An earlier `reference` column of this table: `anchor` is then its parent's column.
+            "anchor_via": OptionSpec(_str, ref_kind="column"),
             "max_days": _I,
             "min_days": _I,
             "distribution": _S,

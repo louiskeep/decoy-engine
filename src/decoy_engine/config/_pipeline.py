@@ -47,6 +47,7 @@ from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._generate_options import problem_details
 from decoy_engine.config._generate_relational import (
     is_self_reference,
+    parent_lookup_problems,
     per_parent_bounds,
     per_parent_problems,
     self_reference_problems,
@@ -362,6 +363,32 @@ class PipelineConfig(BaseModel):
                     "name": t.name,
                     "row_count": t.row_count,
                     "unique_together": t.unique_together,
+                    "generate_columns": [
+                        {**(c.model_extra or {}), "name": c.name, "type": c.type}
+                        for c in t.generate_columns
+                    ],
+                }
+                for t in self.tables
+            ]
+        )
+        if problems:
+            raise ValidationError.from_exception_data("PipelineConfig", problem_details(problems))
+        return self
+
+    @model_validator(mode="after")
+    def _parent_lookups_valid(self) -> PipelineConfig:
+        """A column that reads its parent's row needs a foreign key that reaches exactly one.
+
+        Runs after the reference graph is known valid, so the parent table exists.
+        """
+        if not any(
+            "anchor_via" in (c.model_extra or {}) for t in self.tables for c in t.generate_columns
+        ):
+            return self
+        problems = parent_lookup_problems(
+            [
+                {
+                    "name": t.name,
                     "generate_columns": [
                         {**(c.model_extra or {}), "name": c.name, "type": c.type}
                         for c in t.generate_columns

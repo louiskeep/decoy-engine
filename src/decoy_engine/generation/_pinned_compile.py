@@ -132,9 +132,10 @@ def relational_option_unsupported(tname: str, col: dict[str, Any]) -> bool:
     """Whether ``col`` has a relational shape pinned mode cannot run: a pure test of the config.
 
     A self-reference reads its own table's rows; pinned execution draws a reference from a
-    finished parent table only. Compile and execute both ask this one question.
+    finished parent table only. A date anchored through ``anchor_via`` reads a parent row by
+    lookup, which pinned execution does not do. Compile and execute both ask this one question.
     """
-    return is_self_reference(tname, col)
+    return is_self_reference(tname, col) or col.get("anchor_via") is not None
 
 
 def _relational_refusal(tname: str, cname: str, at_execute: bool) -> DecoyError:

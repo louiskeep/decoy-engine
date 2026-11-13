@@ -1279,7 +1279,7 @@ take it.
 | `derived` | `expression` | `bounds`, `null_propagation`, `output_type` | |
 | `derived_aggregate` | `op`, `column` (at plan compile) | `output_type` | |
 | `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start`, `output_type` | |
-| `windowed_date` | `anchor`, `max_days` | `min_days`, `distribution`, `output_type` | |
+| `windowed_date` | `anchor`, `max_days` | `anchor_via`, `min_days`, `distribution`, `output_type` | |
 | `group_key` | `group_by` | `length`, `prefix` | |
 | `constant` | `value` | `output_type` | |
 | `distribution` | `family` | `low`, `high`, `min`, `max`, `output_type` | `low`, `high` if `family: uniform` |
@@ -1306,8 +1306,9 @@ same configs:
   (`generate_categories_mixed`), a key that names a column the table does not have
   (`derived_missing_column_ref`, `derived_aggregate_missing_column_ref`,
   `grouped_series_missing_group_by_ref`, `grouped_series_missing_order_by_ref`,
-  `windowed_date_missing_anchor_ref`, `group_key_missing_group_by_ref`), a column the table has
-  but generates later (`generate_column_forward_reference`), `group_by` equal to `order_by`
+  `group_key_missing_group_by_ref`), a column the table has but generates later, a
+  `windowed_date` anchor that is missing or generated later, and an `anchor_via` or parent
+  anchor that does not exist (`generate_column_forward_reference`), `group_by` equal to `order_by`
   (`grouped_series_group_by_equals_order_by`), the formula rules below, `weighted` reference
   weights whose length differs from a `sequence` parent's `row_count`
   (`reference_weights_length_mismatch`; any other parent is checked against its real keys at
@@ -1496,6 +1497,62 @@ still refused as a reference cycle. A self-reference runs on the whole-table rou
 admission declines it with `reference_to_own_table`). A capacity probe holds an explicit
 `root_count` to its scaled row count, so a config that validates at full size is never refused
 by its probe.
+
+#### Parent-anchored dates (`windowed_date` with `anchor_via`)
+
+A child date can follow a date of its parent row: a visit after the patient's birth date, an
+order after the customer's signup date.
+
+```yaml
+- name: customers
+  row_count: 100
+  generate_columns:
+    - {name: id, type: sequence, start: 1}
+    - {name: signup, type: faker, faker_type: date_of_birth}
+- name: orders
+  row_count: 500
+  generate_columns:
+    - {name: customer_id, type: reference, reference_table: customers, reference_column: id}
+    - name: ordered_on
+      type: windowed_date
+      anchor: signup            # a column of customers, not of orders
+      anchor_via: customer_id   # an earlier reference column of this table
+      min_days: 1
+      max_days: 365
+```
+
+- `anchor_via` names an earlier `reference` column of the same table. `anchor` is then a column
+  of the table that reference points at. A column of the child table with the same name is
+  never read, and the child does not need one.
+- Each date is the parent row's anchor plus an offset in `min_days` to `max_days`, drawn as for
+  a same-table anchor. The same seed gives the same dates.
+- A null foreign key gives a null date. A foreign key whose parent row has a null anchor is
+  refused, not nulled.
+- Without `anchor_via`, `anchor` is an earlier column of the same table, as before.
+
+| When | Refused | Code |
+| --- | --- | --- |
+| Validate | `anchor_via` is not a `reference` column, or the parent key it references is not a `sequence` column with no `null_probability` | `config.generate_parent_lookup_key_not_unique` |
+| Validate | `anchor_via` is a reference to the column's own table | `config.generate_parent_lookup_self_reference` |
+| Plan compile | `anchor_via` is missing or declared later, or `anchor` is not a column of the parent table | `plan.generate_column_forward_reference` |
+| Pinned compile | any `anchor_via` | `plan.pinned_relational_option_unsupported` |
+| Pinned execute | an `anchor_via` in a plan that did not come from pinned compile | `runtime.pinned_relational_option_unsupported` (a `GenerationError`) |
+| Run | a foreign key value with no parent row | `runtime.parent_lookup_key_missing` (a `GenerationError`) |
+| Run | a parent key value that occurs more than once | `runtime.parent_lookup_key_not_unique` (a `GenerationError`) |
+| Run | the parent row's anchor is null | `runtime.windowed_date_parent_anchor_null` |
+
+The date failures below apply to every `windowed_date`, generated or masked, with or without
+`anchor_via`. Each is a `WindowedDateError` whose message is the fixed summary: it holds no
+cell value, type name or row position.
+
+| Failure | Code |
+| --- | --- |
+| The anchor is not an ISO date or datetime without a timezone, is not a date type, or is not a real calendar date | `runtime.windowed_date_anchor_invalid` |
+| The anchor is outside 1700-01-01 to 2200-12-31 | `runtime.windowed_date_anchor_out_of_range` |
+| The anchor plus its offset is outside that range | `runtime.windowed_date_offset_out_of_range` |
+
+A column with `anchor_via` runs on the whole-table route: streaming admission declines it with
+`windowed_date_anchor_via`, and a windowed read does not serve its table.
 
 #### Fitted fan-out (`distribution: fitted`)
 
