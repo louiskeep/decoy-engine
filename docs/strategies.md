@@ -1044,10 +1044,10 @@ Computes a single aggregate scalar over a named source column in the same table
 and fills every row of the target column with that scalar (SP-10b /
 ISO/IEC 9075-1 set-function semantics).
 
-**Intra-table only.** Source and target must be columns in the same table. The
-FK-driven cross-table aggregate (parent.total = sum(child.amount), closing Gen
-Gap 4) is not yet built; it is deferred to SP-10c. Do not use this strategy
-expecting cross-table or parent-from-children aggregate behaviour.
+**Intra-table in mask mode.** A masked column aggregates a column of its own
+table. In generate mode a column can instead aggregate each parent row's own
+children (`parent.total = sum(child.amount)`) with `from_table` and `via`; see
+"Per-parent aggregates" under the generation strategies.
 
 Config keys:
 
@@ -1056,7 +1056,8 @@ Config keys:
   time before any DataFrame is touched.
 - `column` (str, required): name of the source column in the same table. A
   missing reference raises `PlanCompileError(derived_aggregate_missing_column_ref)`
-  at plan-compile time.
+  at plan-compile time for a masked column, and
+  `PlanCompileError(generate_column_forward_reference)` for a generated one.
 
 Works in both mask mode (`strategy: derived_aggregate` on a column with `op`
 and `column` under `provider_config:`) and generate mode (`type: derived_aggregate`
@@ -1277,7 +1278,7 @@ take it.
 | `formula` | `formula` | `references`, `output_type` | |
 | `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` | |
 | `derived` | `expression` | `bounds`, `null_propagation`, `output_type` | |
-| `derived_aggregate` | `op`, `column` (at plan compile) | `output_type` | |
+| `derived_aggregate` | `op`, `column` (at plan compile) | `from_table`, `via`, `output_type` | |
 | `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start`, `output_type` | |
 | `windowed_date` | `anchor`, `max_days` | `anchor_via`, `min_days`, `distribution`, `output_type` | |
 | `group_key` | `group_by` | `length`, `prefix` | |
@@ -1304,11 +1305,12 @@ same configs:
   type or faker keyword (`generate_locale_unknown`, `generate_faker_type_unknown`,
   `generate_faker_kwargs_unknown`), categories Arrow cannot put in one column
   (`generate_categories_mixed`), a key that names a column the table does not have
-  (`derived_missing_column_ref`, `derived_aggregate_missing_column_ref`,
-  `grouped_series_missing_group_by_ref`, `grouped_series_missing_order_by_ref`,
-  `group_key_missing_group_by_ref`), a column the table has but generates later, a
-  `windowed_date` anchor that is missing or generated later, and an `anchor_via` or parent
-  anchor that does not exist (`generate_column_forward_reference`), `group_by` equal to `order_by`
+  (`derived_missing_column_ref`, `grouped_series_missing_group_by_ref`,
+  `grouped_series_missing_order_by_ref`, `group_key_missing_group_by_ref`), a column the table
+  has but generates later, a `windowed_date` anchor or `derived_aggregate` input that is missing
+  or generated later, an `anchor_via` or parent anchor that does not exist, and a per-parent
+  aggregate's `column` or `via` that the child table does not have
+  (`generate_column_forward_reference`), `group_by` equal to `order_by`
   (`grouped_series_group_by_equals_order_by`), the formula rules below, `weighted` reference
   weights whose length differs from a `sequence` parent's `row_count`
   (`reference_weights_length_mismatch`; any other parent is checked against its real keys at
@@ -1553,6 +1555,69 @@ cell value, type name or row position.
 
 A column with `anchor_via` runs on the whole-table route: streaming admission declines it with
 `windowed_date_anchor_via`, and a windowed read does not serve its table.
+
+#### Per-parent aggregates (`derived_aggregate` with `from_table` and `via`)
+
+A parent column can aggregate its own children: an order total as the sum of its line items, a
+customer's order count.
+
+```yaml
+- name: orders
+  row_count: 100
+  generate_columns:
+    - {name: id, type: sequence, start: 1}
+    - name: total
+      type: derived_aggregate
+      op: sum
+      from_table: lines   # the child table
+      via: order_id       # the child's reference column back to this table
+      column: amount      # a column of lines, not of orders
+- name: lines
+  row_count: 400
+  generate_columns:
+    - {name: order_id, type: reference, reference_table: orders, reference_column: id}
+    - {name: amount, type: distribution, family: uniform, low: 1, high: 50}
+```
+
+- With `from_table`, `column` and `via` are columns of that child table, declared anywhere in
+  it. A column of the parent with the same name is never read, and the parent does not need
+  one. `via` must be a `reference` to this table whose key is an earlier `sequence` column with
+  no `null_probability`.
+- Each parent row gets `op` over the children whose `via` names it (SQL `GROUP BY` over the
+  child with a `LEFT JOIN` from the parent). Null values are skipped, as for the same-table
+  form, and a child with a null foreign key belongs to no parent.
+- A parent with no children gets 0 for `sum` and `count` and a null for `mean`, `min` and `max`,
+  never NaN.
+- Without an `output_type` the column's Arrow type follows the op and the child column, not the
+  values, even when no parent has children: `count` is `int64`, `mean` `float64`, and `sum`,
+  `min` and `max` take the child column's type (a `decimal(n)` child gives that decimal).
+- The column is filled after every table has been generated, and the returned parent table holds
+  the filled values. No other column can read it: a same-table reader, a child's `anchor`, a
+  reference, a formula or another aggregate that names it is refused at validate.
+- The child column must hold numbers when the aggregate reads it. Numeric typing keeps a
+  `sequence` or `faker` column text while an aggregate reads it, so such a column is refused at
+  validate, before any data is read, as is a text `categorical` or `constant` and a column whose
+  values the config does not type (`derived`, `formula`, `lookup`, ...). Aggregate a
+  `distribution`, a `categorical` or `constant` of numbers, a `reference` copying one, or give
+  the child column a numeric `output_type` (`int` or `decimal(n)`). The refusal names the child
+  table, the column and the aggregate. The same-table form is unchanged.
+- Without `from_table`, `column` is an earlier column of the same table, as before.
+
+| When | Refused | Code |
+| --- | --- | --- |
+| Validate | `via` is not a `reference` to this table, or the key it references is not an earlier `sequence` column with no `null_probability` | `config.generate_parent_lookup_key_not_unique` |
+| Validate | `via` is a reference to its own table (including `from_table` naming the parent itself) | `config.generate_parent_lookup_self_reference` |
+| Validate | `via` without `from_table` | `config.generate_option_unknown` |
+| Validate | `from_table` without `via` | `missing` |
+| Validate | `null_probability` on the aggregate | `config.generate_per_parent_null_conflict` |
+| Validate | any column input or reference that names the aggregate | `config.generate_aggregate_read_before_fill` |
+| Validate | the child `column` does not hold numbers (see above) | `config.generate_aggregate_input_not_numeric` |
+| Plan compile | `from_table` names no table, or `column` or `via` is not a column of it | `plan.generate_column_forward_reference` |
+| Pinned compile | any per-parent aggregate | `plan.pinned_relational_option_unsupported` |
+| Pinned execute | a per-parent aggregate in a plan that did not come from pinned compile | `runtime.pinned_relational_option_unsupported` (a `GenerationError`) |
+
+A config with a per-parent aggregate runs on the whole-table route: streaming admission
+declines every `derived_aggregate` column, and a windowed read does not serve its table.
 
 #### Fitted fan-out (`distribution: fitted`)
 

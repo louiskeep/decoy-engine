@@ -114,3 +114,13 @@ def test_an_unclassified_reader_keeps_the_column_it_reads_text(
     assert ("t", "id") in nt.numeric_plan(cfg)
     monkeypatch.delitem(nt.READERS, "grouped_series.order_by")
     assert nt.numeric_plan(cfg) == {}
+
+
+def test_the_per_parent_aggregate_inputs_are_classified() -> None:
+    """The child's value is aggregate input (text, as for a scalar aggregate); the foreign key
+    is matched to the parent key by equality, so both keep one planned type."""
+    assert nt.READERS["derived_aggregate.column"].safe is False
+    assert nt.READERS["derived_aggregate.via"].safe is True
+    table, column = _realistic("derived_aggregate", "via")
+    (edge,) = [e for e in iter_generate_input_refs(table, column) if e.option == "via"]
+    assert (edge.source_table, edge.source_column, edge.phase) == ("other", "src", "post_fill")

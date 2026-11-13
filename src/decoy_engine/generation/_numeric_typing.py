@@ -9,8 +9,8 @@ answer. A column is a candidate when its values provably fit (a sequence's first
 a faker int provider's declared bounds) and no custom provider overrides its name. It then stays
 numeric only while every reader of it is numeric-safe, per the closed ``READERS`` registry. Who
 reads which column comes resolved from ``config.iter_generate_input_refs``, so a reader in
-another table (a date anchored to a parent column) counts against the column it reads and not
-against a same-named column of its own table:
+another table (a date anchored to a parent column, a parent's aggregate over its children)
+counts against the column it reads and not against a same-named column of its own table:
 
 * formula references, aggregate input, group labels, window anchors and statistical conditioning
   read the cell as text, so they keep it text;
@@ -22,6 +22,10 @@ against a same-named column of its own table:
 
 Removing one column can make a reader of another unsafe, so the check repeats until nothing
 changes. A reader or column type missing from the registry keeps the column text.
+
+A column that is not a candidate has the type `config.generated_arrow_type` gives it (text for
+a `sequence` or `faker` column), unless it declares an `output_type`; validation reads the same
+two answers to refuse a per-parent aggregate over a column that does not hold numbers.
 
 Anything else stays text exactly as before. Rendered text is unchanged for numeric columns:
 ``str(int)`` and ``str(float)`` give back the cell text the coercion produced.
@@ -36,12 +40,9 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.config import generated_arrow_type, reference_root
 from decoy_engine.generation._numeric_derived import derived_uses_as_numbers
-from decoy_engine.generation.kinds import (
-    constant_arrow_type,
-    output_arrow_type,
-    parametric_arrow_type,
-)
+from decoy_engine.generation.kinds import output_arrow_type
 from decoy_engine.internal.pandas_compat import table_to_pandas_exact_ints
 
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
@@ -133,6 +134,9 @@ READERS: dict[str, Reader] = {
     "derived_aggregate.column": Reader(
         False, "aggregate input coercion is not verified for typed input"
     ),
+    "derived_aggregate.via": Reader(
+        True, "grouped and matched to the parent key by equality; both ends have one planned type"
+    ),
     "grouped_series.order_by": Reader(True, "orders by value, so numeric order is the correct one"),
     "grouped_series.group_by": Reader(False, "the group label is hashed from its text"),
     "group_key.group_by": Reader(False, "the group label is hashed from its text"),
@@ -177,21 +181,6 @@ def _readers(tables: Mapping[str, Any]) -> tuple[dict[Key, list[_Read]], set[str
     return readers, opaque
 
 
-def _reference_root(tables: Mapping[str, Any], key: Key) -> Key:
-    """Follow ``reference`` columns to the column that decides the type (cycles stop at the loop)."""
-    seen: set[Key] = set()
-    while key not in seen:
-        seen.add(key)
-        col = next(
-            (c for c in tables.get(key[0], {}).get("generate_columns", []) if c["name"] == key[1]),
-            None,
-        )
-        if col is None or col.get("type") != "reference":
-            return key
-        key = (str(col.get("reference_table")), str(col.get("reference_column")))
-    return key
-
-
 def numeric_plan(
     config: Mapping[str, Any],
     *,
@@ -204,7 +193,6 @@ def numeric_plan(
     it, is numeric-safe. Removing a column can make another reader unsafe, so this runs to a fixed
     point; it only ever removes, so it terminates.
     """
-    from decoy_engine.generation._admission import _categorical_type
     from decoy_engine.generation.synthesize import _get_default_faker
     from decoy_engine.internal.faker_setup import snapshot_custom_faker_providers
 
@@ -236,7 +224,7 @@ def numeric_plan(
 
     members: dict[Key, list[Key]] = {}
     for key in cols:
-        members.setdefault(_reference_root(tables, key), []).append(key)
+        members.setdefault(reference_root(tables, key), []).append(key)
     pairs: list[list[tuple[Key, Key]]] = []  # one entry per relationship column pair
     for rel in config.get("relationships") or []:
         parent = rel.get("parent") or {}
@@ -257,28 +245,17 @@ def numeric_plan(
 
     def planned(key: Key) -> pa.DataType | None:
         """The type the column is emitted as: its declared `output_type`, else the generated type."""
-        root = _reference_root(tables, key)
+        root = reference_root(tables, key)
         declared = output_arrow_type(cols[root]) if root in cols else None
         return declared or generated(key)
 
     def generated(key: Key) -> pa.DataType | None:
         """The type of the values the generator makes, which sibling readers see."""
-        root = _reference_root(tables, key)
+        root = reference_root(tables, key)
         if root in candidates:
             return base[root]
         col = cols.get(root)
-        if col is None:
-            return None
-        kind = col.get("type")
-        if kind in ("sequence", "faker"):
-            return pa.string()
-        if kind == "categorical":
-            return _categorical_type(dict(col))[0]
-        if kind == "constant":
-            return constant_arrow_type(dict(col))
-        if kind == "distribution":
-            return parametric_arrow_type(dict(col))
-        return None
+        return generated_arrow_type(col) if col is not None else None
 
     def is_number(key: Key) -> bool:
         dtype = generated(key) if key in cols else None

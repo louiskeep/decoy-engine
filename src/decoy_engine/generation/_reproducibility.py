@@ -5,8 +5,9 @@ reproducibility-EXCLUDED when its output is not a deterministic function of that
 exclusion propagates over the dependency closure: a reference, formula, derived, aggregate or
 grouped column whose inputs include an excluded column is excluded too. A column's inputs are the
 resolved edges of `config.iter_generate_input_refs`, in its own table or another one (a date
-anchored to a parent column depends on that parent column and on its foreign key, never on a
-same-named column beside it), plus the parent column of a `reference`. The closure is computed on
+anchored to a parent column depends on that parent column and on its foreign key, and a
+per-parent aggregate on its child's column and foreign key, never on a same-named column beside
+it), plus the parent column of a `reference`. The closure is computed on
 the plan's configuration alone, so it holds on every execution path (a column that runs on the
 legacy whole-table path is still excluded). Excluded columns are never re-frozen into a golden and
 carry no reproducibility or route-independence assertion.

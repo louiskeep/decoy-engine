@@ -22,7 +22,7 @@ from typing import Any
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine._reference_date import normalize_reference_date
-from decoy_engine.config import is_self_reference
+from decoy_engine.config import is_per_parent_aggregate, is_self_reference
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileAccess
 from decoy_engine.generation._pinned_plan import (
@@ -133,9 +133,14 @@ def relational_option_unsupported(tname: str, col: dict[str, Any]) -> bool:
 
     A self-reference reads its own table's rows; pinned execution draws a reference from a
     finished parent table only. A date anchored through ``anchor_via`` reads a parent row by
-    lookup, which pinned execution does not do. Compile and execute both ask this one question.
+    lookup, and a per-parent aggregate reads its child table after it is drawn; pinned
+    execution does neither. Compile and execute both ask this one question.
     """
-    return is_self_reference(tname, col) or col.get("anchor_via") is not None
+    return (
+        is_self_reference(tname, col)
+        or col.get("anchor_via") is not None
+        or is_per_parent_aggregate(col)
+    )
 
 
 def _relational_refusal(tname: str, cname: str, at_execute: bool) -> DecoyError:

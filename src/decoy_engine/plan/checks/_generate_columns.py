@@ -332,8 +332,9 @@ def _check_input_edges(
     whether the source table exists, the source column exists in it, and an input read while the
     column is drawn was generated earlier. The generators read siblings in declared order, so a
     later or missing name gives nulls, an empty aggregate, one group or a crash, never the
-    intended value. An input in another table is ready whenever it exists: that table is
-    generated first.
+    intended value. An input in another table, or one read after its table is filled (a
+    per-parent aggregate's child column), is ready whenever it exists: its table is finished
+    before the read.
     """
     from decoy_engine.config import generate_columns_of, iter_generate_input_refs
 

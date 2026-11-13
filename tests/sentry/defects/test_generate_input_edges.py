@@ -25,8 +25,9 @@ The parent table and key a lookup column leads to are found once, by `_via_targe
 resolver; the resolved edge carries both (`source_table`, `source_key`) to the run:
 
 8. no other generate-side function reads a `reference` column's table or key while it handles
-   a lookup (it holds a lookup key name such as `anchor_via`, or calls the parent lookup or the
-   lookup key rule), and `_via_target`'s callers are inventoried.
+   a lookup (it holds a lookup key name such as `anchor_via` or a per-parent aggregate's `via`,
+   or calls the parent lookup or the lookup key rule), and `_via_target`'s callers are
+   inventoried.
 
 The meta-tests seed one realistic bypass of each scan and require the scan to see it.
 """
@@ -93,6 +94,8 @@ RESOLVER_CALLERS = frozenset(
         ("generation/_numeric_typing.py", "_readers"),
         ("generation/_reproducibility.py", "reproducibility_exclusions"),
         ("generation/_grouped_windowed_generators.py", "_parent_anchor_cells"),
+        ("config/_generate_relational.py", "_reads_aggregate"),
+        ("generation/relational/_aggregate.py", "_per_parent_values"),
     }
 )
 # The per-consumer tables and resolvers the one registry replaced.
@@ -113,7 +116,11 @@ LOOKUP_CALLERS = frozenset({("generation/_grouped_windowed_generators.py", "_par
 POOL_NAMES = frozenset({"pools"})
 VIA_RESOLVER = "_via_target"
 VIA_CALLERS = frozenset(
-    {(RESOLVER_FILE, "_source_table"), (RESOLVER_FILE, "parent_lookup_problems")}
+    {
+        (RESOLVER_FILE, "_source_table"),
+        (RESOLVER_FILE, "parent_lookup_problems"),
+        (RESOLVER_FILE, "aggregate_via_target"),
+    }
 )
 # The option keys that name a lookup column, read from the registry.
 VIA_KEYS = frozenset(
@@ -122,6 +129,9 @@ VIA_KEYS = frozenset(
     for option in spec.keys.values()
     if option.ref_kind == "column_via_reference" and option.ref_context_key
 )
+# A per-parent aggregate's lookup column: a child's `reference` back to the aggregate's table. It
+# reads a column of a named table, so the registry gives it no lookup kind of its own.
+AGGREGATE_VIA = "via"
 REFERENCE_KEYS = frozenset({"reference_table", "reference_column"})
 LOOKUP_USES = frozenset({LOOKUP, "parent_key_problem"})
 
@@ -360,7 +370,7 @@ def _accepted(config: dict[str, Any]) -> bool:
     return True
 
 
-def _cells() -> dict[str, bool]:
+def _anchor_cells() -> dict[str, bool]:
     """The acceptance cells that hold only while the anchor is resolved across tables."""
     with_sibling = _config([COUNTER, FK, VISIT])
     return {
@@ -381,12 +391,92 @@ def _cells() -> dict[str, bool]:
     }
 
 
+ORDER_FK = {"name": "oid", "type": "reference", "reference_table": "p", "reference_column": "id"}
+LINE_AMOUNT = {"name": "amount", "type": "sequence", "start": 1}
+TOTAL = {
+    "name": "total",
+    "type": "derived_aggregate",
+    "op": "sum",
+    "column": "amount",
+    "from_table": "t",
+    "via": "oid",
+}
+
+
+def _orders(
+    parent: list[dict[str, Any]], kids: list[dict[str, Any]], total: dict[str, Any] = TOTAL
+) -> dict:
+    """`p` holds the per-parent aggregate over its child `t`."""
+    return {
+        "global_settings": {"seed": 1},
+        "tables": [
+            {"name": "p", "row_count": 3, "generate_columns": [*parent, total]},
+            {"name": "t", "row_count": 6, "generate_columns": kids},
+        ],
+    }
+
+
+ORDER_ID = {"name": "id", "type": "sequence", "start": 1}
+PARENT_AMOUNT = {"name": "amount", "type": "sequence", "start": 500}
+
+
+def _aggregate_column_cells() -> dict[str, bool]:
+    """The cells that hold only while the aggregate's `column` is resolved in `from_table`."""
+    return {
+        "a child column with no same-named parent column is accepted": _accepted(
+            _orders([ORDER_ID], [ORDER_FK, LINE_AMOUNT])
+        ),
+        "a column missing from the child is refused": not _accepted(
+            _orders([ORDER_ID, PARENT_AMOUNT], [ORDER_FK])
+        ),
+        "the unrelated parent column keeps its numeric type": numeric_plan(
+            _orders([ORDER_ID, PARENT_AMOUNT], [ORDER_FK, LINE_AMOUNT])
+        ).get(("p", "amount"))
+        == pa.int64(),
+        "the aggregate depends on the child column": reproducibility_exclusions(
+            _orders([ORDER_ID], [ORDER_FK, {**LINE_AMOUNT, "determinism": "fresh"}])
+        ).get(("p", "total"))
+        is not None,
+    }
+
+
+def _aggregate_via_cells() -> dict[str, bool]:
+    """The cells that hold only while the aggregate's `via` is resolved in `from_table`."""
+    parent_oid = {"name": "oid", "type": "sequence", "start": 1}
+    return {
+        "a child foreign key with no same-named parent column is accepted": _accepted(
+            _orders([ORDER_ID], [ORDER_FK, LINE_AMOUNT])
+        ),
+        "a foreign key missing from the child is refused": not _accepted(
+            _orders([ORDER_ID, parent_oid], [LINE_AMOUNT])
+        ),
+        "the aggregate depends on the child foreign key": reproducibility_exclusions(
+            _orders([ORDER_ID], [{**ORDER_FK, "determinism": "fresh"}, LINE_AMOUNT])
+        ).get(("p", "total"))
+        is not None,
+    }
+
+
+CELLS = {
+    ("derived_aggregate", "column"): _aggregate_column_cells,
+    ("derived_aggregate", "via"): _aggregate_via_cells,
+    ("windowed_date", "anchor"): _anchor_cells,
+}
+
+
 def test_the_cross_table_descriptors_are_the_ones_this_sentry_knows() -> None:
-    assert CROSS_TABLE == [("windowed_date", "anchor")]
+    assert CROSS_TABLE == [
+        ("derived_aggregate", "column"),
+        ("derived_aggregate", "via"),
+        ("windowed_date", "anchor"),
+    ]
+    assert sorted(CELLS) == CROSS_TABLE
 
 
-def test_the_acceptance_cells_hold_on_the_registered_descriptors() -> None:
-    assert _cells() == dict.fromkeys(_cells(), True)
+@pytest.mark.parametrize(("type_", "key"), CROSS_TABLE)
+def test_the_acceptance_cells_hold_on_the_registered_descriptors(type_: str, key: str) -> None:
+    cells = CELLS[(type_, key)]()
+    assert cells == dict.fromkeys(cells, True)
 
 
 @pytest.mark.parametrize(("type_", "key"), CROSS_TABLE)
@@ -403,7 +493,8 @@ def test_each_cross_table_descriptor_turned_back_to_column_fails_every_cell(
         one_of=spec.one_of,
     )
     monkeypatch.setitem(registry.GENERATE_OPTIONS, type_, mutated)  # type: ignore[index]
-    assert _cells() == dict.fromkeys(_cells(), False)
+    cells = CELLS[(type_, key)]()
+    assert cells == dict.fromkeys(cells, False)
 
 
 # ---- 5 and 6: one parent lookup ----------------------------------------------------------------
@@ -575,7 +666,7 @@ def via_resolutions(sources: dict[str, str]) -> list[str]:
                 continue
             strings = {n.value for n in nodes if isinstance(n, ast.Constant)}
             calls = {_callee(n) for n in nodes if isinstance(n, ast.Call)}
-            lookup = bool(strings & VIA_KEYS) or bool(calls & LOOKUP_USES)
+            lookup = bool(strings & (VIA_KEYS | {AGGREGATE_VIA})) or bool(calls & LOOKUP_USES)
             if lookup and strings & REFERENCE_KEYS:
                 line = min(getattr(n, "lineno", 0) or 10**9 for n in nodes)
                 found.append(f"{rel}:{line} {function}")
@@ -584,6 +675,11 @@ def via_resolutions(sources: dict[str, str]) -> list[str]:
 
 def test_the_lookup_keys_are_the_ones_this_sentry_knows() -> None:
     assert sorted(VIA_KEYS) == ["anchor_via"]
+
+
+def test_the_aggregate_lookup_key_is_a_child_column_of_the_named_table() -> None:
+    option = registry.GENERATE_OPTIONS["derived_aggregate"].keys[AGGREGATE_VIA]
+    assert (option.ref_kind, option.ref_context_key) == ("column_in_named_table", "from_table")
 
 
 def test_only_the_via_resolver_follows_a_lookup_column_to_its_parent() -> None:
@@ -611,6 +707,11 @@ SIBLING_REREADS = {
         "def problem(via, by_name):\n"
         "    parent = by_name.get(via.get('reference_table'))\n"
         "    return parent_key_problem(parent, via.get('reference_column'), 'c')\n"
+    ),
+    "a run re-reads the aggregate's key from the child's columns": (
+        "def values(col, child_columns):\n"
+        "    via = next(c for c in child_columns if c.get('name') == col.get('via'))\n"
+        "    return via.get('reference_column')\n"
     ),
     "a resolver follows the lookup column inline": (
         "def source(table, col):\n"

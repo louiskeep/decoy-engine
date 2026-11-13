@@ -28,7 +28,9 @@ def test_keys_checked_at_plan_compile_are_listed_as_required() -> None:
     assert entry.required == ("op", "column")
     assert entry.required_at_plan == ("op", "column")
     assert not set(entry.required_at_plan) & set(entry.optional)
-    assert entry.optional == ("output_type",)
+    # `via` is required with `from_table`, which no fixed selector value expresses, so the
+    # per-parent check (`config.aggregate_problems`) refuses its absence.
+    assert entry.optional == ("from_table", "via", "output_type")
 
 
 def test_the_record_is_frozen_names_only() -> None:

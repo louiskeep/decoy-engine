@@ -165,3 +165,48 @@ def dates_outside_parent_window(out: dict[str, pa.Table]) -> list[int]:
         if not low <= date.fromisoformat(visit) <= high:
             bad.append(row)
     return bad
+
+
+# The per-parent aggregate fixture: `orders(id, amount, total)` and `lines(lid, oid, amount)`.
+ORDER_ID = {"name": "id", "type": "sequence", "start": 1}
+# The parent's own `amount` is a plain counter, unrelated to the line amounts it totals.
+ORDER_AMOUNT = {"name": "amount", "type": "sequence", "start": 100}
+LINE_ID = {"name": "lid", "type": "sequence", "start": 1}
+LINE_AMOUNT = {
+    "name": "amount",
+    "type": "categorical",
+    "categories": [2, 3, 5, 7, 11],
+    "null_probability": 0.2,
+}
+AGGREGATE_OPS = ("sum", "count", "mean", "min", "max")
+
+
+def aggregate_column(op: str = "sum", **options: Any) -> dict[str, Any]:
+    """`orders.total`: `op` over `lines.amount` of each order's own lines, through `lines.oid`."""
+    return {
+        "name": "total",
+        "type": "derived_aggregate",
+        "op": op,
+        "column": "amount",
+        "from_table": "lines",
+        "via": "oid",
+        **options,
+    }
+
+
+def per_parent(
+    op: str = "sum",
+    *,
+    orders: int = 10,
+    lines: int = 14,
+    seed: int = SEED,
+    order_cols: list[dict[str, Any]] | None = None,
+    line_cols: list[dict[str, Any]] | None = None,
+    **options: Any,
+) -> dict[str, Any]:
+    """`orders` with a per-parent aggregate over `lines`, whose `oid` references `orders.id`."""
+    parents = order_cols if order_cols is not None else [ORDER_ID, ORDER_AMOUNT]
+    if order_cols is None:
+        parents = [*parents, aggregate_column(op, **options)]
+    kids = line_cols or [LINE_ID, ref("oid", "orders", null_probability=0.1), LINE_AMOUNT]
+    return cfg([table("orders", orders, parents), table("lines", lines, kids)], seed)
