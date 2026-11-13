@@ -18,18 +18,29 @@ hook catches that + writes a JobPostScanIntegrityReport with
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 
-from decoy_engine.profiling import passes_through
+from decoy_engine import fileaccess
+from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.verification.postmask._blocked import severity_counts
+from decoy_engine.verification.postmask._column_facts import ColumnFacts, column_facts
 from decoy_engine.verification.postmask._keys import KeyResult
+from decoy_engine.verification.postmask._stream_input import TableBatches, from_table
 from decoy_engine.verification.postmask.fk_preservation import fk_findings
-from decoy_engine.verification.postmask.policy_validation import check_policy_validation
-from decoy_engine.verification.postmask.residual_pii import check_residual_pii
+
+# The runner keeps its check names: callers and tests patch them here to fail one check.
+from decoy_engine.verification.postmask.policy_validation import (
+    policy_findings as check_policy_validation,
+)
+from decoy_engine.verification.postmask.residual_pii import (
+    residual_pii_findings as check_residual_pii,
+)
 from decoy_engine.verification.postmask.types import (
     SCHEMA_VERSION,
     FKPreservationFinding,
@@ -80,6 +91,56 @@ def run_post_mask(
     if not isinstance(config, dict):
         raise TypeError(f"run_post_mask: config must be a dict, got {type(config).__name__}")
 
+    with fileaccess.protected_scratch_dir(prefix="decoy-post-scan-columns-") as scratch:
+        return _assemble(
+            config,
+            lambda: _frame_tables(source_frames, output_frames),
+            lambda: fk_findings(config, source_frames, output_frames, keys),
+            scratch=scratch,
+            memory_limit=MEMORY_LIMIT,
+        )
+
+
+def run_post_mask_tables(
+    source_tables: Mapping[str, TableBatches],
+    output_tables: Mapping[str, TableBatches],
+    *,
+    config: Mapping[str, Any],
+    keys: Sequence[KeyResult],
+    scratch: Path,
+    memory_limit: str,
+) -> dict[str, Any]:
+    """`run_post_mask` over tables the run holds as batches. The caller counted the declared keys
+    (`check_keys`) and owns `scratch`; the column suite reads the tables in bounded batches."""
+    return _assemble(
+        dict(config),
+        lambda: (dict(source_tables), dict(output_tables)),
+        lambda: fk_findings(config, {}, {}, keys),
+        scratch=scratch,
+        memory_limit=memory_limit,
+    )
+
+
+def _frame_tables(
+    source_frames: dict[str, pd.DataFrame], output_frames: dict[str, pd.DataFrame]
+) -> tuple[dict[str, TableBatches], dict[str, TableBatches]]:
+    def tables(frames: dict[str, pd.DataFrame]) -> dict[str, TableBatches]:
+        return {
+            name: from_table(name, pa.Table.from_pandas(frame, preserve_index=False))
+            for name, frame in frames.items()
+        }
+
+    return tables(source_frames), tables(output_frames)
+
+
+def _assemble(
+    config: Mapping[str, Any],
+    get_tables: Callable[[], tuple[dict[str, TableBatches], dict[str, TableBatches]]],
+    get_fk: Callable[[], list[FKPreservationFinding]],
+    *,
+    scratch: Path,
+    memory_limit: str,
+) -> dict[str, Any]:
     residual_pii: list[ResidualPIIFinding] = []
     fk_preservation: list[FKPreservationFinding] = []
     policy_validation: list[PolicyValidationFinding] = []
@@ -97,8 +158,25 @@ def run_post_mask(
     # where the full exception text already lives at the catch site.
     # A coded engine error (a file-access or lazy-source refusal) is not a check failure: it
     # propagates unchanged through `passes_through`, the rule pre-scan applies too.
+    # The two column checks share one facts pass; if it fails, each reports that error's class name.
+    suite_exc: Exception | None = None
+    source_tables: dict[str, TableBatches] = {}
+    output_tables: dict[str, TableBatches] = {}
+    facts: dict[str, dict[str, ColumnFacts]] = {}
     try:
-        residual_pii = check_residual_pii(output_frames, config, source_frames=source_frames)
+        source_tables, output_tables = get_tables()
+        facts = _suite_facts(
+            source_tables, output_tables, scratch=scratch, memory_limit=memory_limit
+        )
+    except Exception as exc:
+        if passes_through(exc):
+            raise
+        suite_exc = exc
+
+    try:
+        if suite_exc is not None:
+            raise suite_exc
+        residual_pii = check_residual_pii(facts, config)
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -114,7 +192,7 @@ def run_post_mask(
         ]
 
     try:
-        fk_preservation = fk_findings(config, source_frames, output_frames, keys)
+        fk_preservation = get_fk()
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -133,7 +211,9 @@ def run_post_mask(
         ]
 
     try:
-        policy_validation = check_policy_validation(source_frames, output_frames, config)
+        if suite_exc is not None:
+            raise suite_exc
+        policy_validation = check_policy_validation(config, source_tables, output_tables, facts)
     except Exception as exc:
         if passes_through(exc):
             raise
@@ -172,6 +252,26 @@ def run_post_mask(
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
     return _report_to_dict(report)
+
+
+def _suite_facts(
+    source_tables: Mapping[str, TableBatches],
+    output_tables: Mapping[str, TableBatches],
+    *,
+    scratch: Path,
+    memory_limit: str,
+) -> dict[str, dict[str, ColumnFacts]]:
+    """Facts for every output column, per output table, against its source when it has one."""
+    return {
+        name: column_facts(
+            source_tables.get(name),
+            table,
+            table.schema.names,
+            scratch=scratch,
+            memory_limit=memory_limit,
+        )
+        for name, table in output_tables.items()
+    }
 
 
 def _report_to_dict(report: PostMaskReport) -> dict[str, Any]:

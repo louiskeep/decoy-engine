@@ -23,10 +23,13 @@ per the rules above.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
 
+from decoy_engine.verification.postmask._column_facts import ColumnFacts
+from decoy_engine.verification.postmask._stream_input import TableBatches
 from decoy_engine.verification.postmask.types import PolicyValidationFinding
 
 # Strategies that are EXPLICITLY allowed to produce identical output.
@@ -86,15 +89,8 @@ def _check_one_column(
 ) -> PolicyValidationFinding:
     """Compare source vs output for one column."""
     if column not in src_df.columns or column not in out_df.columns:
-        return PolicyValidationFinding(
-            table=table,
-            column=column,
-            strategy=strategy,
-            severity="error",
-            message=(
-                f"column {column!r} not present in source ({column in src_df.columns}) "
-                f"or output ({column in out_df.columns}); cannot validate."
-            ),
+        return _missing_column(
+            table, column, strategy, column in src_df.columns, column in out_df.columns
         )
 
     # QA-4 F6 (2026-06-01): reset_index on the source + output frames
@@ -117,20 +113,8 @@ def _check_one_column(
     # source as expected" alongside FAIL findings for byte-identical
     # columns, hiding the drop entirely.
     if len(src_col) != len(out_col):
-        return PolicyValidationFinding(
-            table=table,
-            column=column,
-            strategy=strategy,
-            severity="warning",
-            source_distinct=src_distinct,
-            output_distinct=out_distinct,
-            bytes_identical=False,
-            message=(
-                f"row count mismatch: source has {len(src_col)} rows, "
-                f"output has {len(out_col)} rows. The mask may have "
-                "dropped rows or duplicated them; investigate before "
-                "trusting downstream joins."
-            ),
+        return _row_count_mismatch(
+            table, column, strategy, len(src_col), len(out_col), src_distinct, out_distinct
         )
 
     # Equality check has to be careful about ordering + dtype. We compare
@@ -163,6 +147,59 @@ def _check_one_column(
             ),
         )
 
+    return _decide(table, column, strategy, src_distinct, out_distinct, bytes_identical)
+
+
+def _missing_column(
+    table: str, column: str, strategy: str, in_source: bool, in_output: bool
+) -> PolicyValidationFinding:
+    return PolicyValidationFinding(
+        table=table,
+        column=column,
+        strategy=strategy,
+        severity="error",
+        message=(
+            f"column {column!r} not present in source ({in_source}) "
+            f"or output ({in_output}); cannot validate."
+        ),
+    )
+
+
+def _row_count_mismatch(
+    table: str,
+    column: str,
+    strategy: str,
+    source_rows: int,
+    output_rows: int,
+    src_distinct: int,
+    out_distinct: int,
+) -> PolicyValidationFinding:
+    return PolicyValidationFinding(
+        table=table,
+        column=column,
+        strategy=strategy,
+        severity="warning",
+        source_distinct=src_distinct,
+        output_distinct=out_distinct,
+        bytes_identical=False,
+        message=(
+            f"row count mismatch: source has {source_rows} rows, "
+            f"output has {output_rows} rows. The mask may have "
+            "dropped rows or duplicated them; investigate before "
+            "trusting downstream joins."
+        ),
+    )
+
+
+def _decide(
+    table: str,
+    column: str,
+    strategy: str,
+    src_distinct: int,
+    out_distinct: int,
+    bytes_identical: bool,
+) -> PolicyValidationFinding:
+    """The decision table, shared by the frame check and the facts check."""
     if strategy in _NO_OP_BY_DESIGN:
         return PolicyValidationFinding(
             table=table,
@@ -219,3 +256,52 @@ def _check_one_column(
             "byte-identical to the source. The mask may not have fired."
         ),
     )
+
+
+def policy_findings(
+    config: Mapping[str, Any],
+    source_tables: Mapping[str, TableBatches],
+    output_tables: Mapping[str, TableBatches],
+    facts: Mapping[str, Mapping[str, ColumnFacts]],
+) -> list[PolicyValidationFinding]:
+    """`check_policy_validation` from column facts: one finding per configured column of a
+    table that both sides hold. `facts` is `{table: {column: ColumnFacts}}` over the output."""
+    findings: list[PolicyValidationFinding] = []
+    for table_cfg in config.get("tables") or []:
+        table = table_cfg.get("name")
+        if not isinstance(table, str) or table not in source_tables or table not in output_tables:
+            continue
+        src, out = source_tables[table], output_tables[table]
+        for col_cfg in table_cfg.get("columns") or []:
+            column, strategy = col_cfg.get("name"), col_cfg.get("strategy")
+            if not isinstance(column, str) or not isinstance(strategy, str):
+                continue
+            in_source, in_output = column in src.schema.names, column in out.schema.names
+            if not (in_source and in_output):
+                findings.append(_missing_column(table, column, strategy, in_source, in_output))
+                continue
+            fact = facts[table][column]
+            if fact.source_rows != fact.output_rows:
+                findings.append(
+                    _row_count_mismatch(
+                        table,
+                        column,
+                        strategy,
+                        fact.source_rows,
+                        fact.output_rows,
+                        fact.source_distinct,
+                        fact.output_distinct,
+                    )
+                )
+                continue
+            findings.append(
+                _decide(
+                    table,
+                    column,
+                    strategy,
+                    fact.source_distinct,
+                    fact.output_distinct,
+                    fact.bytes_identical,
+                )
+            )
+    return findings

@@ -43,11 +43,13 @@ mask provably did not move anything); constant-source columns
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
 
 from decoy_engine.detection.detectors import run_all_detectors
+from decoy_engine.verification.postmask._column_facts import ColumnFacts
 from decoy_engine.verification.postmask.types import ResidualPIIFinding, Severity
 
 # Strategies whose output is EXPECTED to look like real PII. A detector
@@ -396,3 +398,56 @@ def _classify(detector_id: str, configured: str | None) -> tuple[Severity, str]:
         "does not have a documented residual-PII expectation. Verify the "
         "output is acceptable.",
     )
+
+
+def residual_pii_findings(
+    output_facts: Mapping[str, Mapping[str, ColumnFacts]], config: Mapping[str, Any]
+) -> list[ResidualPIIFinding]:
+    """`check_residual_pii` from column facts: `{table: {column: ColumnFacts}}` over the output,
+    in column order. The decision tables are the ones the frame check uses."""
+    strategy_by_col = {
+        (table_cfg["name"], col_cfg["name"]): col_cfg["strategy"]
+        for table_cfg in config.get("tables") or []
+        if isinstance(table_cfg.get("name"), str)
+        for col_cfg in table_cfg.get("columns") or []
+        if isinstance(col_cfg.get("name"), str) and isinstance(col_cfg.get("strategy"), str)
+    }
+    findings: list[ResidualPIIFinding] = []
+    for table_name, columns in output_facts.items():
+        for col_name, fact in columns.items():
+            if not fact.detectors:
+                continue
+            top = fact.detectors[0]
+            configured = strategy_by_col.get((table_name, col_name))
+            severity, message = _classify(top.detector_id, configured)
+            # Identity needs comparable rows; none means no source column or a row-count mismatch.
+            compared = fact.comparable_rows > 0 and configured not in _NO_OP_BY_DESIGN
+            rate = fact.identical_rows / fact.comparable_rows if compared else None
+            if rate is not None:
+                override = _escalate(
+                    configured=configured,
+                    identity_rate=rate,
+                    identical_count=fact.identical_rows,
+                    src_distinct=fact.source_distinct,
+                    detector_confidence=top.confidence,
+                    detector_id=top.detector_id,
+                )
+                if override is not None and (
+                    _SEVERITY_ORDER[override[0]] > _SEVERITY_ORDER[severity]
+                ):
+                    severity, message = override
+            findings.append(
+                ResidualPIIFinding(
+                    table=table_name,
+                    column=col_name,
+                    detector_id=top.detector_id,
+                    match_rate=top.match_rate,
+                    severity=severity,
+                    configured_strategy=configured,
+                    sample_match_count=int(top.match_rate * fact.output_rows),
+                    message=message,
+                    source_identity_rate=rate,
+                    source_compared=rate is not None,
+                )
+            )
+    return findings
