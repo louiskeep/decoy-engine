@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+from decoy_engine.publication import PublicationRefused
 
 TABLE = pa.table({"a": [1, 2, 3]})
 
@@ -196,8 +197,14 @@ def test_nul_and_overlong_names_fail_at_write_not_at_validation(tmp_path: Path) 
     sink = ParquetTransactionalSink(tmp_path / "out")
     with pytest.raises(ValueError, match=r"embedded null (byte|character in path)"):
         sink.write("a\0b", TABLE)
-    with pytest.raises(OSError) as info:
+    # A failed write ends the attempt (sink state table, F22 plan 5.6), so the second name is
+    # tried on a fresh sink; the first is refused with the code the attempt ended with.
+    with pytest.raises(PublicationRefused, match="publication_failed"):
         sink.write("n" * 251, TABLE)
-    assert info.value.errno == errno.ENAMETOOLONG
     sink.abort()
+    other = ParquetTransactionalSink(tmp_path / "out")
+    with pytest.raises(OSError) as info:
+        other.write("n" * 251, TABLE)
+    assert info.value.errno == errno.ENAMETOOLONG
+    other.abort()
     assert os.listdir(tmp_path) == []

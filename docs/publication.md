@@ -4,7 +4,8 @@ How the engine creates, stages and binds an output directory, and what it promis
 result. This page grows with the F22 publication work (plan
 `docs/plans/2026-10-30-f22-publication-replan.md`); each section says what is in place today.
 Later parts add vault-before-output ordering and route every engine sink through
-`publish_unit`; until those sections exist here, the engine does not claim them.
+`publish_unit` (the sink's state table is in place, below); until those sections exist here,
+the engine does not claim them.
 
 Platforms: Linux and macOS, on both the ambient policy (`LocalFileAccess`, the CLI default) and
 the strict policies (`RootedFileAccess`, `PreopenedFileAccess`). Windows keeps its plain path
@@ -220,6 +221,52 @@ codes, errno names, digests and counts only: never a path, a file or table name,
 operating-system message text. Table names live only in the descriptor, which is data.
 
 The reason codes are in the `decoy` namespace of the reason registry (`docs/reasons.md`).
+
+## The reference sink's state table
+
+`ParquetTransactionalSink` (`execution/_transactional_sink.py`) is two parts:
+`StagedParquetWriter`, its write half, which only stages each table as `<table>.parquet` in an
+output stage (it never publishes, locks or writes a descriptor), and the sink itself, which owns
+the stage and moves every call through one state table (`publication/_sink_state.py`). The
+table is literal data: one cell per state and call, one per in-flight state and exit. A
+transition is taken under one lock; the write, rename or check it admits runs outside the lock,
+so a call that arrives while another is in flight answers at once.
+
+| State | `write` | `commit` | `reconcile` | `abort` |
+|---|---|---|---|---|
+| open | writing | committing | nothing, returns `None` | aborted, stage removed |
+| writing | busy, `publication_write_in_progress` | busy | busy | pending |
+| committing | busy, `publication_commit_in_progress` | busy | busy | pending |
+| recovering | busy, `publication_recovery_in_progress` | busy | busy | pending |
+| sealed | refused, `publication_attempt_sealed` | returns the sealed result | returns the sealed result | nothing |
+| uncertain | refused, `publication_commit_uncertain` | refused, `publication_commit_uncertain` | recovering | nothing |
+| refused, failed | refused with the code the attempt ended with | refused | refused | aborted, stage removed |
+| aborted | refused, `publication_attempt_aborted` | refused | refused | nothing |
+
+| In flight | Ends | State after |
+|---|---|---|
+| writing | normally | open |
+| writing | with an exception | failed (`publication_failed`) |
+| committing | published or already committed | sealed |
+| committing | operation conflict or refused | refused (the refusal's code) |
+| committing | commit uncertain | uncertain |
+| committing | any other error before the rename | failed (`publication_failed`) |
+| recovering | the destination holds this result and its chain is fsynced | sealed |
+| recovering | the destination holds this result, an fsync failed | uncertain |
+| recovering | absent, or a different result | refused, `publication_commit_not_visible` |
+
+A pending abort is applied when the in-flight call ends, unless it ends sealed or uncertain:
+then the result is bound and the abort does nothing. Busy and refused calls raise
+`PublicationRefused` with the registered code and a value-free receipt; a refusal changes
+nothing. `abort()` never raises. A table name that is not one path component is refused with
+`ValueError` before the state moves.
+
+What the sink does today: a commit still publishes the stage with the plain `table_sink` rename
+(the published unit holds only the Parquet files), so it ends sealed or failed, and a second
+`commit()` on a sealed sink returns without any I/O. After a failed write or commit every call
+but `abort()` is refused, and after an abort every call is. Routing the sink's commit through
+`publish_unit` (receipts, `already_committed` on a restart), `reconcile()` on the sink and
+the routes' receipts are a later part; until this section says so, the sink does not claim them.
 
 ## Named limits
 
