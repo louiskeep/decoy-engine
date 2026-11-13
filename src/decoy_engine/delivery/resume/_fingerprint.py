@@ -95,7 +95,7 @@ def build_fingerprint(
     given = [tuple(pair) for pair in components]
     if any(len(pair) != 2 or not all(type(part) is str for part in pair) for pair in given):
         raise TypeError("each component must be a (distribution, version) pair of strings")
-    pairs = tuple(sorted(given))
+    pairs = tuple(sorted((pair[0], pair[1]) for pair in given))
     if not pairs:
         raise ValueError("a resume fingerprint needs at least one component version")
     config_hash = pipeline_config_hash(config)
