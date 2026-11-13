@@ -192,6 +192,27 @@ the guard cannot recognise (a person name, an address) is the stated limit. The 
 cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
 the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
+`post-scan-integrity/v2` is the report `run_post_mask` returns. Recorded pre-GA semantic change
+(POSTSCAN-STREAM PS-4, 2026-11-12): each `fk_preservation[]` finding now derives from the declared
+keys' facts (`verification/postmask/_keys.py`) and no longer from an orphan rate. `fail` means the run
+introduced orphans; `warning` means every output orphan was already in the source, or the key carries
+only warning codes; `info` means no orphan; `error` means the key has no counts (an output that could
+not be read, a missing key column, or a type mismatch over a comparable source). The 0.1% and 1%
+thresholds and the `orphan_policy: skip` demotion are gone, so one introduced orphan in a large table
+now fails where it used to be `info`. A child tuple declared under several parents is counted once
+against their union, and each of its edges carries those counts. `parent_column` and `child_column`
+join composite names with `", "` (was `","`). Added optional fields: `parent_columns` and
+`child_columns` (the names one by one) and `source_orphan_count` (`null` when the source side was not
+counted). `run_post_mask` gains the keyword-only `keys=` (the facts a caller has already counted);
+without it the facts are counted from the two frame dicts, over the edges whose tables are all in the
+output frames, as before. A relationship entry that does not parse now raises
+`PipelineConfigError` (names only). An `error` finding carries `total_child_rows` 0, because a key
+with no counts has none. With `keys=`, an edge that has no key fact reads `error`. Without `keys=`, a
+float key column, NumPy or nullable `Float32`/`Float64`, whose non-null values are all whole numbers
+in the Int64 range (pandas' reading of a nullable integer column, such as a self-reference with a
+null root) is compared as an integer key; a column with any fraction stays float, so against an
+integer parent it is still a type mismatch. The tag stays `v2`; the field set only grew.
+
 **Rules:**
 
 - **Never mutate the shape under an existing tag.** If you change what
@@ -697,6 +718,19 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   an installed model only when it is an installed distribution that ships a spaCy `meta.json`; a
   plain importable module (`os`, `json`) is refused with `provider.ner_model_not_installed` and is
   never imported. `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
+  SCAN-ML M5 (2026-11) adds `PostScanRouteError` and one coordinated pre-GA break. The entries
+  that mask without running the post-scan, `run_sequential`, `run_fk_out_of_core`,
+  `run_mask_pipeline_chunked`, `run_mask_chunked` and `run_native_or_oracle_chunked`, now refuse a
+  config whose `post_scan.integrity` is true and whose `post_scan.detectors` holds a model detector
+  or whose `post_scan.ner_findings` is `fail`, before any source is read. The error carries
+  `route.post_scan_models_unsupported` (registry unreleased); `str(error)` and `message` are the fixed
+  registry summary, `route` and `setting` name the route and the config field, and the exception
+  chain is empty. Regex-only `integrity: true` behaves as before on these routes. `run_sequential`
+  and `run_fk_out_of_core` take a required keyword-only `config` (the raw pipeline config), as do
+  the wrappers that forward to them (`PandasExecutionAdapter.run_sequential`, the physical
+  `SequentialAdapter.run` and `OutOfCoreAdapter.run`); a caller that passed none must now pass
+  it. `run_pipeline` is unchanged: its resident auto-chunk lane calls guard-free cores and runs the
+  post-scan itself.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

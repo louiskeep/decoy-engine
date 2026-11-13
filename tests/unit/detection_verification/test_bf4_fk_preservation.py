@@ -1,14 +1,15 @@
 """BF4: FK-preservation check on masked output (pure-engine runner tests).
 
-Synthetic fixture tests that exercise ``check_fk_preservation`` as a
-standalone post-mask pass. The BF4 contract: after a masking job runs,
+Synthetic fixture tests that exercise the ``fk_preservation`` section of
+``run_post_mask``, derived from the declared keys' facts. The BF4 contract: after a masking job runs,
 the engine walks each declared FK relationship against the MASKED OUTPUT
 and verifies that child FK values still resolve to parent PK values.
 
 The most common BF4 failure mode is inconsistent masking: the parent PK
 was hashed in one job run and the child FK in another (e.g. a namespace
 collision, or the FK column was forgotten in the config). Orphaned
-child rows signal the breakage.
+child rows signal the breakage. A finding fails on orphans the run introduced, so each
+broken case masks a clean source.
 
 Scenario coverage:
   F1: Single-table parent/child - consistent masking keeps FKs intact
@@ -27,7 +28,6 @@ import hashlib
 
 import pandas as pd
 
-from decoy_engine.verification.postmask.fk_preservation import check_fk_preservation
 from decoy_engine.verification.postmask.runner import run_post_mask
 
 # ── Synthetic fixture helpers ─────────────────────────────────────────────────
@@ -60,6 +60,14 @@ def _make_orders(user_df: pd.DataFrame, n: int = 100) -> pd.DataFrame:
     )
 
 
+def _fk_findings(
+    output_frames: dict[str, pd.DataFrame], config: dict, source_frames: dict | None = None
+) -> list[dict]:
+    """The FK findings of one run; with no source given, the source equals the output."""
+    source = output_frames if source_frames is None else source_frames
+    return run_post_mask(source, output_frames, config=config)["fk_preservation"]
+
+
 def _single_fk_config(
     parent_table: str = "users",
     parent_col: str = "user_id",
@@ -67,14 +75,11 @@ def _single_fk_config(
     child_col: str = "user_id",
     *,
     namespace: str | None = None,
-    orphan_policy: str | None = None,
 ) -> dict:
-    child_cfg: dict = {"table": child_table, "columns": [child_col]}
-    if orphan_policy is not None:
-        child_cfg["orphan_policy"] = orphan_policy
     rel: dict = {
         "parent": {"table": parent_table, "columns": [parent_col]},
-        "children": [child_cfg],
+        "children": [{"table": child_table, "columns": [child_col]}],
+        "orphan_policy": "preserve",
     }
     if namespace is not None:
         rel["namespace"] = namespace
@@ -100,12 +105,12 @@ class TestF1ConsistentMaskingFksIntact:
         users = _make_users(50)
         orders = _make_orders(users, 100)
         config = _single_fk_config()
-        findings = check_fk_preservation({"users": users, "orders": orders}, config)
+        findings = _fk_findings({"users": users, "orders": orders}, config)
         assert len(findings) == 1
         f = findings[0]
-        assert f.severity == "info", f"expected info, got {f.severity!r}: {f.message}"
-        assert f.orphan_count == 0
-        assert f.total_child_rows == 100
+        assert f["severity"] == "info", f"expected info, got {f['severity']!r}: {f['message']}"
+        assert f["orphan_count"] == 0
+        assert f["total_child_rows"] == 100
 
     def test_consistently_hashed_fks_pass_via_runner(self):
         users = _make_users(50)
@@ -144,13 +149,14 @@ class TestF2InconsistentMaskingOrphans:
             }
         )
         config = _single_fk_config()
-        findings = check_fk_preservation({"users": users, "orders": orders}, config)
+        clean = {"users": users, "orders": _make_orders(users, 100)}
+        findings = _fk_findings({"users": users, "orders": orders}, config, clean)
         assert len(findings) == 1
         f = findings[0]
         # All 100 orders reference nonexistent parent IDs -> fail
-        assert f.orphan_count == 100
-        assert f.orphan_rate == 1.0
-        assert f.severity == "fail"
+        assert f["orphan_count"] == 100
+        assert f["orphan_rate"] == 1.0
+        assert f["severity"] == "fail"
 
     def test_partial_orphan_above_threshold_is_fail(self):
         """Only some child FKs are broken (e.g. 10% of orders reference
@@ -169,21 +175,23 @@ class TestF2InconsistentMaskingOrphans:
             }
         )
         config = _single_fk_config()
-        findings = check_fk_preservation({"users": users, "orders": orders}, config)
+        clean = {"users": users, "orders": _make_orders(users, 100)}
+        findings = _fk_findings({"users": users, "orders": orders}, config, clean)
         assert len(findings) == 1
         f = findings[0]
-        assert f.orphan_count == 10
-        assert f.total_child_rows == 100
-        assert f.orphan_rate == 0.1  # 10% > 1% fail threshold
-        assert f.severity == "fail"
+        assert f["orphan_count"] == 10
+        assert f["total_child_rows"] == 100
+        assert f["orphan_rate"] == 0.1  # 10% > 1% fail threshold
+        assert f["severity"] == "fail"
 
     def test_partial_orphan_via_runner_increments_fail_count(self):
         users = _make_users(10)
         bad_fks = [f"ghost_{i}" for i in range(20)]
         orders = pd.DataFrame({"order_id": range(20), "user_id": bad_fks})
+        clean = pd.DataFrame({"order_id": range(20), "user_id": users["user_id"].tolist() * 2})
         config = _single_fk_config()
         report = run_post_mask(
-            source_frames={"users": users, "orders": orders},
+            source_frames={"users": users, "orders": clean},
             output_frames={"users": users, "orders": orders},
             config=config,
         )
@@ -206,24 +214,27 @@ class TestF3NullFkValuesNotOrphans:
         fks = [users["user_id"].iloc[0]] * 5 + [None] * 5  # half null
         orders = pd.DataFrame({"order_id": range(10), "user_id": fks})
         config = _single_fk_config()
-        findings = check_fk_preservation({"users": users, "orders": orders}, config)
+        findings = _fk_findings({"users": users, "orders": orders}, config)
         assert len(findings) == 1
         f = findings[0]
         # total_child_rows should reflect only non-null FKs
-        assert f.total_child_rows == 5
-        assert f.orphan_count == 0
-        assert f.severity == "info"
+        assert f["total_child_rows"] == 5
+        assert f["orphan_count"] == 0
+        assert f["severity"] == "info"
 
     def test_all_null_fk_column_is_info_nothing_to_check(self):
         users = _make_users(10)
-        orders = pd.DataFrame({"order_id": range(5), "user_id": [None] * 5})
+        # Typed, as a run's output column is: an untyped all-None column carries no key type.
+        orders = pd.DataFrame(
+            {"order_id": range(5), "user_id": pd.Series([None] * 5, dtype="string")}
+        )
         config = _single_fk_config()
-        findings = check_fk_preservation({"users": users, "orders": orders}, config)
+        findings = _fk_findings({"users": users, "orders": orders}, config)
         assert len(findings) == 1
         f = findings[0]
-        assert f.total_child_rows == 0
-        assert f.severity == "info"
-        assert "nothing to check" in f.message.lower()
+        assert f["total_child_rows"] == 0
+        assert f["severity"] == "info"
+        assert "nothing to check" in f["message"].lower()
 
 
 # ── F4: Multiple children, each checked independently ────────────────────────
@@ -258,23 +269,25 @@ class TestF4MultipleChildren:
                         {"table": "orders", "columns": ["user_id"]},
                         {"table": "broken_orders", "columns": ["user_id"]},
                     ],
+                    "orphan_policy": "preserve",
                 }
             ],
         }
-        findings = check_fk_preservation(
+        findings = _fk_findings(
             {
                 "users": users,
                 "orders": valid_orders,
                 "broken_orders": broken_orders,
             },
             config,
+            {"users": users, "orders": valid_orders, "broken_orders": _make_orders(users, 10)},
         )
         assert len(findings) == 2
-        by_table = {f.child_table: f for f in findings}
-        assert by_table["orders"].severity == "info"
-        assert by_table["orders"].orphan_count == 0
-        assert by_table["broken_orders"].severity == "fail"
-        assert by_table["broken_orders"].orphan_count == 10
+        by_table = {f["child_table"]: f for f in findings}
+        assert by_table["orders"]["severity"] == "info"
+        assert by_table["orders"]["orphan_count"] == 0
+        assert by_table["broken_orders"]["severity"] == "fail"
+        assert by_table["broken_orders"]["orphan_count"] == 10
 
 
 # ── F5: Namespace annotation propagated to finding ───────────────────────────
@@ -290,19 +303,20 @@ class TestF5NamespaceAnnotation:
         users = _make_users(10)
         orders = _make_orders(users, 20)
         config = _single_fk_config(namespace="patient_ns")
-        findings = check_fk_preservation({"users": users, "orders": orders}, config)
+        findings = _fk_findings({"users": users, "orders": orders}, config)
         assert len(findings) == 1
-        assert findings[0].namespace == "patient_ns"
-        assert findings[0].orphan_count == 0
+        assert findings[0]["namespace"] == "patient_ns"
+        assert findings[0]["orphan_count"] == 0
 
     def test_namespace_on_broken_relationship_appears_in_finding(self):
         users = _make_users(10)
         broken = pd.DataFrame({"order_id": range(5), "user_id": [f"bad_{i}" for i in range(5)]})
         config = _single_fk_config(namespace="patient_ns")
-        findings = check_fk_preservation({"users": users, "orders": broken}, config)
+        clean = {"users": users, "orders": _make_orders(users, 5)}
+        findings = _fk_findings({"users": users, "orders": broken}, config, clean)
         assert len(findings) == 1
-        assert findings[0].namespace == "patient_ns"
-        assert findings[0].severity == "fail"
+        assert findings[0]["namespace"] == "patient_ns"
+        assert findings[0]["severity"] == "fail"
 
 
 # ── F6: Composite FK - tuple-wise check ──────────────────────────────────────
@@ -325,6 +339,7 @@ class TestF6CompositeFkTupleCheck:
                     "children": [
                         {"table": "child", "columns": ["fk_a", "fk_b"]},
                     ],
+                    "orphan_policy": "preserve",
                 }
             ]
         }
@@ -334,26 +349,24 @@ class TestF6CompositeFkTupleCheck:
         # values individually exist in parent but the TUPLE does not.
         parent = pd.DataFrame({"pk_a": [1, 2], "pk_b": [1, 99]})
         child = pd.DataFrame({"fk_a": [1], "fk_b": [99]})
-        findings = check_fk_preservation(
-            {"parent": parent, "child": child}, self._composite_config()
-        )
+        clean = {"parent": parent, "child": pd.DataFrame({"fk_a": [1], "fk_b": [1]})}
+        findings = _fk_findings({"parent": parent, "child": child}, self._composite_config(), clean)
         assert len(findings) == 1
         f = findings[0]
-        assert f.severity == "fail"
-        assert f.orphan_count == 1
-        # Composite columns represented as comma-joined strings
-        assert f.parent_column == "pk_a,pk_b"
-        assert f.child_column == "fk_a,fk_b"
+        assert f["severity"] == "fail"
+        assert f["orphan_count"] == 1
+        # Composite columns: the names joined for display, and the tuples.
+        assert f["parent_column"] == "pk_a, pk_b"
+        assert f["child_column"] == "fk_a, fk_b"
+        assert (f["parent_columns"], f["child_columns"]) == (("pk_a", "pk_b"), ("fk_a", "fk_b"))
 
     def test_composite_valid_tuples_pass(self):
         parent = pd.DataFrame({"pk_a": [1, 2], "pk_b": [1, 99]})
         child = pd.DataFrame({"fk_a": [1, 2], "fk_b": [1, 99]})
-        findings = check_fk_preservation(
-            {"parent": parent, "child": child}, self._composite_config()
-        )
+        findings = _fk_findings({"parent": parent, "child": child}, self._composite_config())
         assert len(findings) == 1
-        assert findings[0].orphan_count == 0
-        assert findings[0].severity == "info"
+        assert findings[0]["orphan_count"] == 0
+        assert findings[0]["severity"] == "info"
 
 
 # ── F7: Missing parent table produces error finding ───────────────────────────
@@ -370,13 +383,13 @@ class TestF7MissingParentTable:
         # orders exists but users (the parent) is missing from output
         orders = pd.DataFrame({"order_id": range(5), "user_id": range(5)})
         config = _single_fk_config()
-        findings = check_fk_preservation({"orders": orders}, config)
+        findings = _fk_findings({"orders": orders}, config)
         # The parent table is absent -> the relationship is silently skipped.
         # No crash, no erroneous finding.
         assert isinstance(findings, list)
         # No orphan findings should appear because we couldn't even walk the edge.
         for f in findings:
-            assert f.parent_table != "users" or f.child_table != "orders"
+            assert f["parent_table"] != "users" or f["child_table"] != "orders"
 
 
 # ── F8: Security - no raw FK values in findings ───────────────────────────────
@@ -397,7 +410,7 @@ class TestF8SecurityNoRawKeyValues:
         parent = pd.DataFrame({"user_id": [_hash_id(i) for i in range(5)]})
         child = pd.DataFrame({"user_id": [self._CANARY_ID] * 20})
         config = _single_fk_config()
-        findings = check_fk_preservation({"users": parent, "orders": child}, config)
+        findings = _fk_findings({"users": parent, "orders": child}, config)
         finding_str = str([f.__dict__ if hasattr(f, "__dict__") else f for f in findings])
         assert self._CANARY_ID not in finding_str, (
             f"raw FK value {self._CANARY_ID!r} leaked into FK findings: {finding_str[:400]!r}"

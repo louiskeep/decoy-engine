@@ -30,7 +30,6 @@ Status = Literal["checked", "key_type_mismatch", "key_column_missing", "error"]
 Baseline = Literal[
     "measured", "no_source", "key_column_missing", "key_type_mismatch", "error", "not_run"
 ]
-_COUNTED = ("measured", "no_source")
 _End = tuple[str, tuple[str, ...]]
 
 __all__ = ["Baseline", "KeyCounts", "KeyResult", "Status", "check_keys", "key_codes", "keys_report"]
@@ -62,7 +61,8 @@ class KeyResult:
     status: Status
     bounded: bool
     codes: tuple[ReasonCode, ...]
-    source: KeyCounts
+    # None unless the baseline was counted, so no reader can take an unmeasured zero as measured.
+    source: KeyCounts | None
     output: KeyCounts
     baseline: Baseline
     error_class: str | None = None
@@ -78,8 +78,7 @@ class KeyResult:
             "bounded": self.bounded,
             "baseline": self.baseline,
             "codes": [reason_ref_payload(c.spec.ref) for c in self.codes],
-            # A zero from an uncounted source is not a measured zero, so it is reported as null.
-            "source": self.source.as_dict(self.kind) if self.baseline in _COUNTED else None,
+            "source": None if self.source is None else self.source.as_dict(self.kind),
             "output": self.output.as_dict(self.kind),
         }
         if self.error_class is not None:
@@ -147,7 +146,7 @@ class _Run:
                 status="error",
                 bounded=True,
                 codes=(reasons.post_scan.CHECK_ERROR,),
-                source=KeyCounts(),
+                source=None,
                 output=KeyCounts(),
                 baseline="not_run",
                 error_class=_class_of(exc),
@@ -169,23 +168,25 @@ class _Run:
 
     def _baseline(
         self, end: _End, parents: tuple[_End, ...], out_status: Status
-    ) -> tuple[Baseline, KeyCounts, str | None]:
+    ) -> tuple[Baseline, KeyCounts | None, str | None]:
         if out_status == "key_column_missing":
-            return "not_run", KeyCounts(), None
+            return "not_run", None, None
         got = self._resolve("source", end, parents)
+        if got == "no_source":
+            return "no_source", KeyCounts(), None
         if isinstance(got, str):
-            return ("no_source" if got == "no_source" else "key_column_missing"), KeyCounts(), None
+            return "key_column_missing", None, None
         own, found = got
         if parents and not keys_comparable(found[0], [*found[1:], own]):
-            return "key_type_mismatch", KeyCounts(), None
+            return "key_type_mismatch", None, None
         if out_status == "key_type_mismatch":
-            return "not_run", KeyCounts(), None
+            return "not_run", None, None
         try:
             counts = self._measure("source", end, parents)[2]
         except Exception as exc:
             if passes_through(exc):
                 raise
-            return "error", KeyCounts(), _class_of(exc)
+            return "error", None, _class_of(exc)
         return "measured", counts, None
 
     def _lookup(self, side: str, end: _End) -> KeyBatches | str:
@@ -257,7 +258,7 @@ def _union(parts: Sequence[KeyBatches]) -> KeyBatches:
 
 
 def key_codes(
-    status: Status, kind: Kind, baseline: Baseline, base: KeyCounts, out: KeyCounts
+    status: Status, kind: Kind, baseline: Baseline, base: KeyCounts | None, out: KeyCounts
 ) -> tuple[ReasonCode, ...]:
     p = reasons.post_scan
     if status == "key_column_missing":
@@ -265,7 +266,9 @@ def key_codes(
     if status == "key_type_mismatch":
         return (p.KEY_TYPE_MISMATCH,)
     # A source side that could not be counted rides on the key as a code the verdict only warns
-    # on; `base` is zero then, so any output count above it still blocks.
+    # on; output counts are then compared with zero, so any output count above it still blocks.
+    if base is None:
+        base = KeyCounts()
     found: list[ReasonCode] = []
     if baseline == "error":
         found.append(p.CHECK_ERROR)

@@ -99,6 +99,7 @@ from decoy_engine.execution.native._route_decline_codes import (
 from decoy_engine.execution.native._when_admission import first_when_decline
 from decoy_engine.generation.pool import PoolCache
 from decoy_engine.profile import DeclarationRequest
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 RouteTag = Literal["native_kernel", "native_pool", "oracle"]
 
@@ -638,8 +639,10 @@ def run_native_or_oracle_chunked(
 
     A table that declares transforms raises `per_table_transforms_present`
     before any chunk is read: this entry masks raw chunks, so the ops would be
-    dropped silently.
+    dropped silently. This route runs no post-scan, so a model post-scan config is refused
+    first (`PostScanRouteError`).
     """
+    refuse_unchecked_route(config, "native_or_oracle_chunked")
     # Before `_run_chunked` touches `chunks`: a rejected job must not consume a
     # chunk, and this entry keeps its own route name in the message.
     refuse_unapplied_subset(config)

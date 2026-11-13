@@ -306,6 +306,7 @@ def _run_sequential(cfg: dict[str, Any], sources: dict[str, pa.Table], sink: Any
     return PandasExecutionAdapter().run_sequential(
         plan,
         lambda t: sources[t],
+        config={},
         registry=registry,
         relationship_graph=graph,
         namespace_registry=ns,

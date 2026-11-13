@@ -17,7 +17,7 @@ import pytest
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution import _chunked_output_sink as output_sink
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
-from decoy_engine.execution.native import _chunked_entry
+from decoy_engine.execution.native.chunked import _core as _native_core
 from tests.parity._f2_mixed_support import (
     CHILD,
     PARENT,
@@ -120,7 +120,7 @@ def test_the_real_sink_publishes_nothing_when_the_mask_stream_fails_midway(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config, child = _job(tmp_path)
-    real = _chunked_entry.run_mask_chunked
+    real = _native_core.mask_chunked
 
     def failing(*args, **kwargs):
         for index, chunk in enumerate(real(*args, **kwargs)):
@@ -128,7 +128,7 @@ def test_the_real_sink_publishes_nothing_when_the_mask_stream_fails_midway(
                 raise RuntimeError("mask stream failed on the second chunk")
             yield chunk
 
-    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", failing)
+    monkeypatch.setattr(_native_core, "mask_chunked", failing)
     target = tmp_path / "published"
     with pytest.raises(RuntimeError, match="second chunk"):
         run(config, {CHILD: child}, sink=ParquetTransactionalSink(target))

@@ -114,6 +114,7 @@ def _run_ooc(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph):
     return run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         key_provider=THROWAWAY_KEY_PROVIDER,
