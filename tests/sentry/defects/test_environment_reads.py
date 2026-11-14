@@ -119,19 +119,27 @@ def _is_flag_read(node: ast.AST) -> bool:
 
 
 def _feeds_decoder(read: ast.AST, parents: dict[ast.AST, ast.AST], decoders: set[str]) -> bool:
-    """True when ``read`` is, possibly inside wrapping calls such as ``str(...)``, the second
-    argument of ``env_flag``."""
+    """True when ``read`` is exactly the second argument of ``env_flag``, or ``str(read)``.
+
+    Nothing else may wrap it: a ``.strip()``, ``.lower()``, ``bool(...)`` or ``int(...)`` there is
+    a second decoding rule beside the registry.
+    """
     child = read
     parent = parents.get(child)
-    while isinstance(parent, (ast.Call, ast.Attribute)):
-        if isinstance(parent, ast.Call) and len(parent.args) >= 2 and parent.args[1] is child:
-            func = parent.func
-            if (isinstance(func, ast.Name) and func.id in decoders) or (
-                isinstance(func, ast.Attribute) and func.attr in decoders
-            ):
-                return True
+    if (
+        isinstance(parent, ast.Call)
+        and isinstance(parent.func, ast.Name)
+        and parent.func.id == "str"
+        and parent.args == [child]
+        and not parent.keywords
+    ):
         child, parent = parent, parents.get(parent)
-    return False
+    if not (isinstance(parent, ast.Call) and len(parent.args) >= 2 and parent.args[1] is child):
+        return False
+    func = parent.func
+    return (isinstance(func, ast.Name) and func.id in decoders) or (
+        isinstance(func, ast.Attribute) and func.attr in decoders
+    )
 
 
 def flag_reads(tree: ast.AST, rel: str) -> list[str]:
@@ -225,6 +233,13 @@ def test_the_owner_module_exists() -> None:
         'if m.get("VAULT_SKIP_VERIFY"):\n    pass\n',
         'x = bool(m.pop("DECOY_INSIDE_ISOLATED_WORKER", None))\n',
         'from m import env_flag\nx = env_flag("VAULT_SKIP_VERIFY", m.get("VAULT_SKIP_VERIFY") or "")\n',
+        'from m import env_flag\nx = env_flag("DECOY_ML_DISABLED", m.get("DECOY_ML_DISABLED").strip())\n',
+        'from m import env_flag\nx = env_flag("DECOY_ML_DISABLED", m.get("DECOY_ML_DISABLED").lower())\n',
+        "from m import env_flag\n"
+        'x = env_flag("DECOY_ML_DISABLED", m.get("DECOY_ML_DISABLED").strip().lower())\n',
+        'from m import env_flag\nx = env_flag("DECOY_ML_DISABLED", bool(m.get("DECOY_ML_DISABLED")))\n',
+        'from m import env_flag\nx = env_flag("DECOY_ML_DISABLED", int(m.get("DECOY_ML_DISABLED")))\n',
+        'from m import env_flag\nx = env_flag("DECOY_ML_DISABLED", str(m.get("DECOY_ML_DISABLED")).strip())\n',
     ],
 )
 def test_a_flag_shaped_read_is_a_hit(source: str) -> None:
