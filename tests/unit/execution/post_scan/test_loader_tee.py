@@ -15,13 +15,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from decoy_engine import run_pipeline
+from decoy_engine import fileaccess, run_pipeline
 from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution.pipeline import _post_scan
+from decoy_engine.fileaccess import RootedFileAccess
 from decoy_engine.profile import LazySource
 from decoy_engine.verification.postmask import PostScanBlockedError
 from tests._declared_schema import declare_rest, file_schemas
 from tests.unit.execution._transform_testkit import ENGINE_VERSION, fk_config, fk_tables
+from tests.unit.execution.post_scan.test_staged_gate import _cast_job, _keys_by_table
 
 DUPLICATES = "post_scan.primary_key_duplicates_introduced"
 FILTER_PARENTS = [{"op": "filter", "expression": "n >= 2"}]
@@ -235,3 +237,118 @@ def test_at33_a_key_the_run_breaks_still_blocks_after_a_transform(tmp_path: Path
         )
     )
     assert exc.reason == DUPLICATES
+
+
+# ----- the tee's scratch --------------------------------------------------------------------
+
+
+@pytest.fixture
+def teed_files(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, int]]:
+    """Each tee file's directory and mode, taken right after it is written."""
+    seen: list[tuple[Path, int]] = []
+    real = _post_scan.PostScanGate._tee
+
+    def spy(self: Any, name: str, table: pa.Table, columns: tuple[str, ...]) -> None:
+        real(self, name, table, columns)
+        path = self._teed[name].path
+        seen.append((path, path.stat().st_mode & 0o777))
+
+    monkeypatch.setattr(_post_scan.PostScanGate, "_tee", spy)
+    return seen
+
+
+def test_the_tee_files_are_private_and_removed_after_a_pass(
+    tmp_path: Path, teed_files: list[tuple[Path, int]]
+) -> None:
+    cfg, _, _ = _job(tmp_path)
+    _loaded(cfg)
+    assert len(teed_files) == 2
+    assert {mode for _, mode in teed_files} == {0o600}
+    assert not any(path.parent.exists() for path, _ in teed_files)
+
+
+def test_the_tee_directory_is_removed_after_a_block(
+    tmp_path: Path, teed_files: list[tuple[Path, int]]
+) -> None:
+    cfg, _, _ = _job(tmp_path)
+    _break_parents(cfg)
+    _blocked(lambda: _loaded(cfg))
+    assert teed_files
+    assert not any(path.parent.exists() for path, _ in teed_files)
+
+
+def test_a_loader_run_completes_under_a_strict_file_policy(tmp_path: Path) -> None:
+    """The tee writes into the engine's own scratch directory, which every policy allows."""
+    cfg, parent, child = _job(tmp_path)
+    tables = {"parent": parent, "child": child}
+    schemas = {name: table.schema for name, table in tables.items()}
+    cfg.pop("sources")  # a file descriptor would be a read the strict policy denies
+    cfg.pop("targets")
+    routes = _Routes()
+    with fileaccess.scope(RootedFileAccess([], allow_portable_fallback=True)):
+        result = run_pipeline(
+            cfg,
+            {},
+            engine_version=ENGINE_VERSION,
+            execution_mode="sequential",
+            source_loader=lambda name: tables[name],
+            source_loader_schemas=schemas,
+            progress=routes,
+        )
+    assert routes.seen == ["sequential"]
+    assert "post_scan_gate_deferred" not in result.quality_metrics
+    assert result.quality_metrics["post_scan_integrity"]["verdict"]["blocking"] is False
+
+
+# ----- one decision on what the route read ----------------------------------------------------
+
+
+def test_a_loader_that_disagrees_with_sources_is_baselined_as_the_route_read_it(
+    tmp_path: Path,
+) -> None:
+    """The route reads the loader, not `sources`; the baseline must be the loader's table."""
+    cfg, parent, child = _job(tmp_path)
+    dup_ids = parent.column("id").to_pylist()
+    dup_ids[1] = dup_ids[0]
+    served = parent.set_column(0, "id", pa.array(dup_ids))
+
+    def loader(name: str) -> pa.Table:
+        return served if name == "parent" else child
+
+    routes = _Routes()
+    result = run_pipeline(
+        cfg,
+        {"parent": parent, "child": child},
+        engine_version=ENGINE_VERSION,
+        execution_mode="sequential",
+        source_loader=loader,
+        source_loader_schemas={"parent": served.schema, "child": child.schema},
+        progress=routes,
+    )
+    assert routes.seen == ["sequential"]
+    (pk,) = (k for k in _keys(result) if k["kind"] == "primary")
+    assert pk["source"]["duplicate_excess"] == 1  # the loader's copy, not the caller's
+    assert result.quality_metrics["post_scan_integrity"]["verdict"]["blocking"] is False
+
+
+# ----- a declared cast on a teed key ------------------------------------------------------------
+
+
+def test_a_cast_key_column_is_teed_raw_and_cast_on_the_re_read(tmp_path: Path) -> None:
+    from tests.acceptance._f06_support import run
+
+    cfg, data = _cast_job(tmp_path)
+    resident = run(cfg, data, execution_mode="full_frame")
+    teed = run(
+        cfg,
+        {},
+        execution_mode="sequential",
+        source_loader=lambda name: data[name],
+        source_loader_schemas={n: t.schema for n, t in data.items()},
+    )
+    assert "post_scan_gate_deferred" not in teed.quality_metrics
+    want, got = _keys_by_table(resident), _keys_by_table(teed)
+    for table in ("parent", "child"):
+        assert got[table]["baseline"] == want[table]["baseline"] == "measured"
+        assert got[table]["source"] == want[table]["source"]
+    assert got["parent"]["source"]["duplicate_excess"] == 1  # "01" and "1" are one key

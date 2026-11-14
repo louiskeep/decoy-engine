@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import (
@@ -38,8 +37,7 @@ from decoy_engine.execution._chunked_input import SourceFacts, capture_source_fa
 from decoy_engine.execution._pipeline_sources import materialize_source
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
-from decoy_engine.execution.out_of_core._scratch import scratch_access_for
-from decoy_engine.fileaccess import FileRequest, FileRole
+from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.internal.memory_limit import require_megabytes
 from decoy_engine.profile import LazySource
@@ -73,7 +71,7 @@ __all__ = [
     "bind_gate",
     "note_quarantined",
     "settle",
-    "tee_loader",
+    "tee_reader",
 ]
 
 # `pass_failed_with` when the commit is reached and a required gate never ran.
@@ -196,37 +194,25 @@ class PostScanGate:
         if error is not None:
             raise error
 
-    def tee_loader(self, loader: Callable[[str], pa.Table]) -> Callable[[str], pa.Table]:
-        """`loader` that also copies the key and cast columns of each declared key table, as the
-        route reads it, into scratch. The route's own read is the baseline: the loader is never
-        called a second time, and a table transformed on load is baselined after its transforms."""
+    def tee_reader(self) -> Callable[[str, pa.Table], None] | None:
+        """The callback the route's loader resolution tells each read it takes from a loader or
+        through transforms. It copies the key and cast columns of each declared key table, as
+        the route read them, into scratch, so the gate's baseline is what the route masked and
+        no read is repeated. `None` when no check will use it."""
         if not self.required or self.deferred:
-            return loader
+            return None
         try:
             wanted = _key_columns(self._relationships())
         except Exception as exc:
             if passes_through(exc):
                 raise
-            return loader  # an unreadable relationship is the check's to report
+            return None  # an unreadable relationship is the check's to report
 
-        def teed(name: str) -> pa.Table:
-            table = loader(name)
-            if name in wanted and name not in self._teed and self._unreadable(name):
+        def tee(name: str, table: pa.Table) -> None:
+            if name in wanted and name not in self._teed:
                 self._tee(name, table, wanted[name])
-            return table
 
-        return teed
-
-    def _unreadable(self, name: str) -> bool:
-        """Whether the gate cannot re-read `name` itself: the loader supplies it, or its lazy
-        file is transformed as it loads. Any other input is re-read under the identity check, so
-        a file that changed after the route read it is still caught."""
-        source = self._sources.get(name)
-        if source is None:
-            return True
-        return isinstance(source, LazySource) and name in transform_bearing_mask_tables(
-            self._config
-        )
+        return tee
 
     def _tee(self, name: str, table: pa.Table, columns: tuple[str, ...]) -> None:
         cast = self._cast_run
@@ -238,16 +224,15 @@ class PostScanGate:
                 fileaccess.protected_scratch_dir(prefix="decoy-post-scan-tee-")
             )
         path = self._scratch_root / f"t{len(self._teed):04d}.parquet"
-        # Serialized in memory and written by `write_private`: 0600 from creation, one rename.
-        buffer = pa.BufferOutputStream()
-        pq.write_table(kept, buffer)
-        fileaccess.write_private(
-            FileRequest(FileRole.CONFIG, "write", str(path), "engine.scratch"),
-            buffer.getvalue().to_pybytes(),
-        )
-        self._teed[name] = LazySource(
-            path, access=scratch_access_for(self._scratch_root), field_key="engine.scratch"
-        )
+        # The out-of-core key stager is the engine's one narrow-column scratch writer: 0600 files
+        # under the engine-issued scratch root, read back through its own scratch reader.
+        stager = MaskedKeyStager(path, columns=tuple(kept.column_names), fixed_schema=kept.schema)
+        try:
+            for batch in kept.to_batches():
+                stager.add(batch, batch)
+        finally:
+            stager.close()
+        self._teed[name] = stager.source()
 
     def close(self) -> None:
         """Remove the tee's scratch files."""
@@ -461,11 +446,11 @@ def bind_gate(ctx: PipelineRunContext, route: str | None = None) -> Iterator[Pos
         gate.close()
 
 
-def tee_loader(loader: Callable[[str], pa.Table]) -> Callable[[str], pa.Table]:
-    """The route's loader, wrapped so the run's gate takes its baseline from the route's own read.
-    Outside `bind_gate` there is no gate and the loader is returned as it is."""
+def tee_reader() -> Callable[[str, pa.Table], None] | None:
+    """The run's gate baseline tee, for the route's loader resolution. Outside `bind_gate` there
+    is no gate and nothing to tee."""
     gate = active_gate()
-    return loader if gate is None else gate.tee_loader(loader)
+    return None if gate is None else gate.tee_reader()
 
 
 def attach_cast_run(cast_run: Any) -> None:

@@ -130,6 +130,7 @@ def resolve_sequential_loader(
     *,
     config: Mapping[str, Any] | None = None,
     prepared: frozenset[str] = frozenset(),
+    tee: Callable[[str, pa.Table], None] | None = None,
 ) -> Callable[[str], pa.Table]:
     """Build the per-table loader `run_sequential_route` calls.
 
@@ -146,10 +147,17 @@ def resolve_sequential_loader(
     when it is in `prepared`, is served as it is. A lazy or loader-supplied table is
     schema-checked and transformed once as it loads. With neither a source nor a
     loader there is nothing to load, which is a coded error rather than a `KeyError`.
+
+    `tee` is told each table the route takes from the loader or through its transforms, as the
+    route reads it: the reads nothing else can repeat (the post-scan gate's baseline).
     """
     bearing = transform_bearing_mask_tables(config) if config is not None else frozenset()
     if source_loader is not None:
-        raw_loader = source_loader
+        loader = source_loader
+
+        def raw_loader(t: str) -> pa.Table:
+            return _told(tee, t, loader(t))
+
     else:
 
         def raw_loader(t: str) -> pa.Table:
@@ -170,14 +178,20 @@ def resolve_sequential_loader(
                 )
             return prepared_table
         if t in caller_sources:
-            return transform_resolved_source(resolved_config, t, caller_sources[t])
+            return _told(tee, t, transform_resolved_source(resolved_config, t, caller_sources[t]))
         if source_loader is None:
             raise ExecutionError(
                 code=reasons.runtime.TRANSFORM_SOURCE_MISSING, message=_MISSING % t
             )
-        return transform_resolved_source(resolved_config, t, source_loader(t))
+        return _told(tee, t, transform_resolved_source(resolved_config, t, source_loader(t)))
 
     return load
+
+
+def _told(tee: Callable[[str, pa.Table], None] | None, name: str, table: pa.Table) -> pa.Table:
+    if tee is not None:
+        tee(name, table)
+    return table
 
 
 _MISSING = (
