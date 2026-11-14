@@ -20,6 +20,7 @@ from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
 from decoy_engine.execution.out_of_core._duckdb import bind_duckdb_run, current_duckdb_run
+from decoy_engine.execution.pipeline._post_scan import attach_cast_run
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
@@ -46,7 +47,7 @@ def execute_route(
     # block lists every connection the run opened.
     with (
         bind_duckdb_run(ctx.out_of_core_threads) as recorder,
-        bind_gate(ctx, decision.route) as gate,
+        bind_gate(ctx) as gate,
     ):
         if ctx.has_mask_table and decision.route == "sequential":
             result = execute_sequential_route(ctx, decision)
@@ -56,7 +57,7 @@ def execute_route(
             result = execute_mixed_route(ctx, decision)
         else:
             result = _pipeline_full_frame.run_full_frame_route(ctx, decision)
-        settle(gate, ctx, result)
+        result = settle(gate, ctx, result)
         block = result.quality_metrics.get("resources", {}).get("out_of_core")
         if block is not None:
             block["applied"] = [asdict(pair) for pair in recorder.applied()]
@@ -70,6 +71,7 @@ def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -
         ctx.source_loader, ctx.caller_sources, config=ctx.config, prepared=ctx.prepared.prepared
     )
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    attach_cast_run(cast_run)
     try:
         sequential_result = _sequential_route(ctx, decision, loader, cast_run)
     except BaseException as failure:
@@ -110,6 +112,7 @@ def execute_out_of_core_route(ctx: PipelineRunContext, decision: RouteDecision) 
     """Run the out-of-core route. `caller_sources` feeds the runner directly (TB-1: a
     `LazySource` streams natively there, no materialization)."""
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    attach_cast_run(cast_run)
     try:
         return _out_of_core_route(ctx, decision, cast_run)
     except BaseException as failure:

@@ -9,6 +9,7 @@ backend from the lane's own per-column evidence, so a label alone cannot pass.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -267,7 +268,13 @@ def test_streamed_warn_policy_still_emits_one_edge_warning(tmp_path: Path) -> No
     sink = RecordingSink()
     got = run(config, {CHILD: child}, sink=sink)
     assert [w.code for w in got.warnings].count("orphan_fk") == 1
-    assert warning_signature(got) == warning_signature(want)
+    # A foreign sink also draws the gate's own deferral warning (plan AT-28); the route's edge
+    # warnings are compared without it, in order.
+    assert [w.code for w in got.warnings].count("post_scan_output_unreadable") == 1
+    route_warnings = [w for w in got.warnings if w.code != "post_scan_output_unreadable"]
+    assert warning_signature(replace(got, warnings=tuple(route_warnings))) == warning_signature(
+        want
+    )
     assert_outputs_identical(sink.published or {}, want.outputs)
 
 

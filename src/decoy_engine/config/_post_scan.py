@@ -159,12 +159,34 @@ def post_scan_model_setting(config: Mapping[str, Any]) -> str | None:
     return "post_scan.ner_findings" if block.get("ner_findings") == "fail" else None
 
 
+NO_SINK_KIND = "None"
+# The one sink class whose staged output the gate may read back. Any other class, including a
+# subclass, is a foreign producer: its files are never trusted, so it keeps its route and the gate is deferred.
+_READABLE_SINK_KINDS = frozenset(
+    {NO_SINK_KIND, "decoy_engine.execution._transactional_sink.ParquetTransactionalSink"}
+)
+
+
+def post_scan_sink_kind(sink: object | None) -> str:
+    """The class token of a sink (`"None"` for no sink): what readability is decided on."""
+    if sink is None:
+        return NO_SINK_KIND
+    cls = type(sink)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def post_scan_output_readable(sink_kind: str) -> bool:
+    """Whether the gate can read this sink's output back before it commits. No sink is readable:
+    the routes that write none hand their outputs back resident."""
+    return sink_kind in _READABLE_SINK_KINDS
+
+
 def post_scan_resident_reason(config: Mapping[str, Any]) -> ReasonCode | None:
     """Why a job must stay on the resident route for the post-scan gate, or `None`.
 
     `post_scan.integrity` needs the whole output (the column suite is not streamed yet). Declared
-    keys alone never move a route: where the gate cannot read a route's inputs or output yet,
-    it defers and says so on the result."""
+    keys never move a route: a sink the gate cannot read keeps the route it takes on main and the
+    gate is deferred for it, because a resident run never writes a sink (plan, Foreign sinks)."""
     if post_scan_integrity_requested(config):
         return reasons.route.POST_SCAN_INTEGRITY_REQUESTED
     return None
