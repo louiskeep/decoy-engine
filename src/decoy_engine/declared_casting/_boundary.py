@@ -203,6 +203,10 @@ class DeclaredCastRun:
     def tables(self) -> frozenset[str]:
         return frozenset(self._tables)
 
+    def declared_columns(self, table: str) -> tuple[str, ...]:
+        """The columns of `table` this run casts (a re-read must carry them all)."""
+        return tuple(c.name for c in self._tables[table])
+
     def format_tables(self) -> frozenset[str]:
         """Tables with at least one output format, i.e. those that need a post-mask stage."""
         return frozenset(t for t, cols in self._tables.items() if any(c.fmt for c in cols))

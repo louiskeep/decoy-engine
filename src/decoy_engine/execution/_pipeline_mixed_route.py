@@ -58,6 +58,7 @@ from decoy_engine.execution._mixed_fk_bridge import resolve_generate_parent_fk_c
 from decoy_engine.execution._mixed_static import MixedStaticPlan, write_order
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
+from decoy_engine.execution.pipeline._post_scan import attach_cast_run
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -164,6 +165,7 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
     if declined is not None:
         return _fall_back(ctx, decision, generate_outputs, generate_warnings, declined)
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    attach_cast_run(cast_run)
     try:
         return _run_admitted(ctx, decision, static, generate_outputs, generate_warnings, cast_run)
     except BaseException as failure:

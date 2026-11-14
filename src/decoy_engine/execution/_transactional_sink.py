@@ -29,8 +29,9 @@ See GNU Coreutils mv(1), POSIX.1-2008 rename(2), and Python os.replace docs.
 
 from __future__ import annotations
 
+import functools
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -205,6 +206,7 @@ class ParquetTransactionalSink:
             self._out = target_dir
             self._target = Path(target_dir.locator)
         self._txn: OutputTxn | None = None
+        self._staged: dict[str, str] = {}
         self.publication_evidence = PublicationEvidence()
 
     def write(self, table: str, data: pa.Table) -> None:
@@ -304,6 +306,7 @@ class ParquetTransactionalSink:
 
         The size comes from the staged component's own descriptor: the stage has no path under
         a strict policy, and a name-based stat would race the publish rename."""
+        self._staged[table] = component
         try:
             fd = txn.open_file(component)
         except OSError:
@@ -318,6 +321,18 @@ class ParquetTransactionalSink:
         channel = get_active_channel()
         if channel.active:
             channel.publish_stored(table, size)
+
+    def staged_tables(self) -> Mapping[str, Callable[[], int]]:
+        """Each table staged so far, before commit, with an opener that returns a new read-only
+        descriptor of its staged Parquet file (the caller closes it). Empty once the stage is
+        published or discarded. The post-scan gate reads the output back through these."""
+        txn = self._txn
+        if txn is None:
+            return {}
+        return {
+            table: functools.partial(txn.open_file, component)
+            for table, component in self._staged.items()
+        }
 
     @property
     def spill_parent(self) -> Path:
@@ -403,6 +418,7 @@ class ParquetTransactionalSink:
             raise
         # Rename succeeded: staging is now the target directory; clear state.
         self._txn = None
+        self._staged = {}
         evidence.state = PublicationState.PUBLISHED
         evidence.cleanup = CleanupState.NOT_NEEDED
 
@@ -416,6 +432,7 @@ class ParquetTransactionalSink:
     def _cleanup_staging(self) -> None:
         evidence = self.publication_evidence
         txn, self._txn = self._txn, None
+        self._staged = {}
         if txn is None:
             return
         # Confirm by looking where there is a path to look at (the ambient policy). A strict

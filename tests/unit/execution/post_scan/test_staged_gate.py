@@ -37,7 +37,6 @@ from tests.unit.execution.post_scan.test_wiring import (
 )
 
 STAGED_ROUTES = [pytest.param("sequential", id="sequential"), pytest.param("out_of_core", id="ooc")]
-ORPHANS = "post_scan.foreign_key_orphans_introduced"
 READABLE = "decoy_engine.execution._transactional_sink.ParquetTransactionalSink"
 
 
@@ -117,8 +116,7 @@ def test_at16_a_streamed_publish_session_is_gated_at_its_commit(tmp_path: Path) 
         "orphan_policy": "preserve",
     }
     sources = {"parent": pa.table({"id": ["a", "b", "c"]}), "child": pa.table({"pid": ["a"]})}
-    kinds = {"parent": "mask", "child": "mask"}
-    gate = PostScanGate({"relationships": [rel]}, sources=sources, table_kinds=kinds)
+    gate = PostScanGate({"relationships": [rel]}, sources=sources)
     publish = OutputPublish(sink, True, False)
     publish.open()
     sink.write("parent", pa.table({"id": ["a", "a", "b"]}))
@@ -158,17 +156,22 @@ def test_at20_a_staged_run_is_gated_once_and_carries_the_report(
     }
 
 
-def test_at20_an_orphan_the_run_introduced_blocks_a_staged_run(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    child = next(t for t in config["tables"] if t["name"] == "child")
-    # A foreign key hashed outside the parent's namespace no longer matches any parent key.
-    child["columns"] = [
-        {**c, "namespace": "elsewhere"} if c["name"] == "parent_id" else c for c in child["columns"]
-    ]
+def test_at20_an_orphan_the_run_introduced_blocks_the_staged_commit(tmp_path: Path) -> None:
     out = tmp_path / "published"
-    exc = _blocked(lambda: _run(config, "sequential", sink=ParquetTransactionalSink(out)))
-    assert exc.reason == ORPHANS
-    assert not out.exists()
+    sink = ParquetTransactionalSink(out)
+    sink.write("parent", pa.table({"id": ["a", "b"]}))
+    sink.write("child", pa.table({"pid": ["z"]}))
+    rel = {
+        "parent": {"table": "parent", "columns": ["id"]},
+        "children": [{"table": "child", "columns": ["pid"]}],
+        "orphan_policy": "preserve",
+    }
+    sources = {"parent": pa.table({"id": ["a", "b"]}), "child": pa.table({"pid": ["a"]})}
+    gate = PostScanGate({"relationships": [rel]}, sources=sources)
+    exc = _blocked(lambda: gate.before_commit(sink))
+    assert exc.reason == "post_scan.foreign_key_orphans_introduced"
+    sink.abort()
+    assert not out.exists() and _no_stage_left(tmp_path)
 
 
 def test_at20_a_mixed_job_with_a_staged_sink_is_gated(tmp_path: Path) -> None:
@@ -236,6 +239,7 @@ def test_at15_the_gate_reads_staged_output_by_row_group_never_whole(
     assert limits and all(require_megabytes(m) <= 512 for m in limits)
 
 
+@pytest.mark.serial
 def test_at15_a_staged_read_holds_a_few_batches_not_the_file(tmp_path: Path) -> None:
     path = tmp_path / "t.parquet"
     rows, batch = 40_000, 1_000
@@ -320,10 +324,10 @@ def test_at28_a_callable_sink_with_keys_stays_resident_and_blocks_before_commit(
     control: list[str] = []
     result, routes = _run(_config(tmp_path), "auto", sink=_callable_sink(control))
     assert routes == ["full_frame"]
-    assert result.quality_metrics["execution"]["route_reason"] == (
-        reasons.route.POST_SCAN_KEYS_RESIDENT.spec.ref.code
-    )
-    assert sorted(control) == ["child", "parent"]
+    # The same job into a sink the gate can read takes the bounded route.
+    _, readable = _run(_config(tmp_path), "auto", sink=ParquetTransactionalSink(tmp_path / "ok"))
+    assert readable != ["full_frame"]
+    assert control == [] and set(result.outputs) == {"child", "parent"}
     assert "post_scan_gate_deferred" not in result.quality_metrics
 
 
@@ -394,6 +398,7 @@ def _cast_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
                 "parent": {"table": "parent", "columns": ["id"]},
                 "children": [{"table": "child", "columns": ["pid"]}],
                 "orphan_policy": "preserve",
+                "namespace": "ns",
             }
         ],
         "namespaces": {},

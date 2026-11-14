@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pyarrow as pa
@@ -32,6 +33,22 @@ def iter_batches(
     """`ParquetFile.iter_batches`, each step guarded under a strict handle."""
     source = guarded(handle.display, _strict(handle), parquet_file.iter_batches, **kwargs)
     return guarded_iter(handle.display, _strict(handle), source)
+
+
+@contextmanager
+def staged_parquet(fd: int) -> Iterator[pq.ParquetFile]:
+    """A staged output file, opened from a descriptor the stage issued; closes it on exit."""
+    fh = os.fdopen(fd, "rb")
+    try:
+        yield guarded("output", True, pq.ParquetFile, fh)
+    finally:
+        fh.close()
+
+
+def iter_staged_batches(parquet_file: pq.ParquetFile, **kwargs: Any) -> Iterator[pa.RecordBatch]:
+    """`ParquetFile.iter_batches` over a staged file: one row group at a time, each step guarded."""
+    source = guarded("output", True, parquet_file.iter_batches, **kwargs)
+    return guarded_iter("output", True, source)
 
 
 def read_metadata(handle: FileHandle) -> pq.FileMetaData:

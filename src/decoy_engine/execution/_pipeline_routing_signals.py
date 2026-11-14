@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess
+from decoy_engine.config import post_scan_sink_kind
 from decoy_engine.execution._mem_estimate_arrow import (  # noqa: F401 - read here by tests
     column_arrow_types as _column_arrow_types,
 )
@@ -520,6 +521,7 @@ def resolve_execution_route(
     engine_version: str,
     prepared_tables: frozenset[str] = frozenset(),
     mixed_admitted: bool = False,
+    sink: Any = None,
 ) -> tuple[str, str]:
     """`run_pipeline`'s single call site bundling every routing SIGNAL in this
     module (out-of-core admission + size, the B1b byte estimate, the B2
@@ -576,7 +578,7 @@ def resolve_execution_route(
         validators=validators,
         fidelity_report=fidelity_report,
         post_validation=post_validation,
-        post_scan_resident=post_scan_resident_for(config),
+        post_scan_resident=post_scan_resident_for(config, sink_kind=post_scan_sink_kind(sink)),
         vault_writer=vault_writer,
         execution_mode=execution_mode,
         graph=graph,

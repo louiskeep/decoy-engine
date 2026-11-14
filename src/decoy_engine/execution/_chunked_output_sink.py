@@ -37,6 +37,7 @@ import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine._lexeme import lexeme_columns_by_table
+from decoy_engine.config import post_scan_sink_kind
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._publication_observer import observed_abort, observed_commit
@@ -122,7 +123,7 @@ def decide_output_mode(
     if post_validation:
         return "resident", reasons.route.POST_VALIDATION
     # The post-scan gate reads `result.outputs`, which a streamed run leaves empty.
-    if post_scan_resident_for(config) is not None:
+    if post_scan_resident_for(config, sink_kind=post_scan_sink_kind(sink)) is not None:
         return "resident", reasons.route.POST_SCAN_INTEGRITY
     return "streamed", REASON_ELIGIBLE
 

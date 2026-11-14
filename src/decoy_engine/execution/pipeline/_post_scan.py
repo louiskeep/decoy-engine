@@ -23,12 +23,13 @@ from typing import TYPE_CHECKING, Any, Final
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine._lexeme import lexeme_columns_by_table
 from decoy_engine.config import (
     RelationshipConfig,
     parse_relationship_config,
     post_scan_gate_applies,
     post_scan_integrity_requested,
+    post_scan_output_readable,
+    post_scan_sink_kind,
 )
 from decoy_engine.execution._chunked_input import SourceFacts, capture_source_facts, check_opened
 from decoy_engine.execution._pipeline_sources import materialize_source
@@ -46,10 +47,12 @@ from decoy_engine.verification.postmask import (
     blocked_error,
     check_keys,
     from_lazy,
+    from_staged,
     from_table,
     keys_report,
     post_scan_verdict,
     run_post_mask,
+    with_cast,
 )
 
 if TYPE_CHECKING:
@@ -57,7 +60,14 @@ if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_context import PipelineRunContext
     from decoy_engine.verification.postmask import TableBatches
 
-__all__ = ["PostScanGate", "active_gate", "bind_gate", "note_quarantined", "settle"]
+__all__ = [
+    "PostScanGate",
+    "active_gate",
+    "attach_cast_run",
+    "bind_gate",
+    "note_quarantined",
+    "settle",
+]
 
 # `pass_failed_with` when the commit is reached and a required gate never ran.
 _NOT_RUN: Final = "PostScanGateNotRun"
@@ -79,6 +89,7 @@ class PostScanGate:
         budget_bytes: int | None = None,
         source_facts: Mapping[str, SourceFacts] | None = None,
         deferred: bool = False,
+        sources: Mapping[str, pa.Table | LazySource] | None = None,
     ) -> None:
         self.required = post_scan_gate_applies(config)
         # True on a route whose inputs or output the gate cannot read back yet: the run is then
@@ -95,6 +106,10 @@ class PostScanGate:
         # Footer facts of each lazy input, taken before any route read it: a re-read refuses a
         # file that changed in between.
         self._source_facts = source_facts or {}
+        # The run's inputs, as the caller gave them: a commit with no resident output reads
+        # them back to compare. Declared casting is applied to them on that re-read.
+        self._sources = sources or {}
+        self._cast_run: Any = None
         # Writes that carry row values (the quarantine file), held until the verdict passes.
         self._held: list[Callable[[], None]] = []
 
@@ -111,28 +126,47 @@ class PostScanGate:
         outputs: Mapping[str, pa.Table],
         sources: Mapping[str, pa.Table | LazySource],
         table_kinds: Mapping[str, str],
+        *,
+        raw_sources: bool = False,
     ) -> None:
         """Check resident outputs against their sources (resident or lazy, re-read in batches);
-        raise if the verdict blocks."""
+        raise if the verdict blocks. `raw_sources` says the sources are the caller's own, before
+        any declared cast, so the re-read casts them as the route did."""
         if self.ran or not self.required:
             return
-        if not self.deferred and not _resident(outputs, table_kinds):
-            self.deferred = True  # the route wrote its output to a sink; nothing is left to read
         if self.deferred:
             self._report_only(outputs, sources, table_kinds)
             return
+        if not _resident(outputs, table_kinds):
+            return  # the route wrote to a sink as it went; the commit reads the staged files
+        suite = None
+        if post_scan_integrity_requested(self._config):
+
+            def suite(keys: tuple[KeyResult, ...]) -> dict[str, Any]:
+                return self._column_suite(outputs, sources, table_kinds, keys)
+
+        views = {name: from_table(name, table) for name, table in outputs.items()}
+        self._decide(views, sources, raw_sources, suite)
+
+    def _decide(
+        self,
+        outputs: Mapping[str, TableBatches],
+        sources: Mapping[str, pa.Table | LazySource],
+        raw_sources: bool,
+        suite: Callable[[tuple[KeyResult, ...]], dict[str, Any]] | None,
+    ) -> None:
         failed: str | None = None
         keys: tuple[KeyResult, ...] = ()
         try:
-            keys = self._keys(outputs, sources)
+            keys = self._keys(outputs, sources, raw_sources)
         except Exception as exc:
             if passes_through(exc):
                 raise
             failed = safe_error_class(type(exc).__name__)
         report: dict[str, Any] = {"schema_version": SCHEMA_VERSION}
-        if post_scan_integrity_requested(self._config):
+        if suite is not None:
             try:
-                report = self._column_suite(outputs, sources, table_kinds, keys)
+                report = suite(keys)
             except Exception as exc:
                 if passes_through(exc):
                     raise
@@ -146,6 +180,10 @@ class PostScanGate:
         error = blocked_error(report, verdict)
         if error is not None:
             raise error
+
+    def attach_cast_run(self, cast_run: Any) -> None:
+        """The run's declared casting, so a re-read of the raw inputs types them as the route did."""
+        self._cast_run = cast_run
 
     def _report_only(
         self,
@@ -191,31 +229,52 @@ class PostScanGate:
         ]
 
     def before_commit(self, sink: Any) -> None:
-        """A required gate that has not run when a sink commits has no resident output to read:
-        the route wrote it to the sink as it went. That run is deferred, not refused. With no sink
-        (the post-condition after the route) a gate that never ran is a wiring fault and refuses."""
+        """A required gate that has not run when a sink commits reads the sink's staged files
+        back and judges them before anything is published. A sink it cannot read, or a run whose
+        column suite needs the whole output, is refused: fail closed. With no sink (the
+        post-condition after the route) a gate that never ran is a wiring fault and refuses."""
         if self.ran or not self.required or self.deferred:
             return
-        if sink is not None:
-            self.deferred = True
+        openers = _staged_openers(sink)
+        if openers is not None and not post_scan_integrity_requested(self._config):
+            staged = {name: from_staged(name, opener) for name, opener in openers.items()}
+            self._decide(staged, self._sources, True, None)
             return
         report = {"schema_version": SCHEMA_VERSION, "pass_failed_with": _NOT_RUN}
         error = blocked_error(report, post_scan_verdict(report))
         if error is not None:
             raise error
 
-    def _source(self, name: str, source: pa.Table | LazySource) -> TableBatches:
+    def _source(self, name: str, source: pa.Table | LazySource, raw: bool) -> TableBatches:
         if not isinstance(source, LazySource):
-            return from_table(name, source)
-        expected = self._source_facts.get(name)
-        if expected is None:
-            return from_lazy(name, source)
-        return from_lazy(
-            name, source, on_open=lambda opened: check_opened(opened, expected, table=name)
+            base = from_table(name, source)
+        else:
+            expected = self._source_facts.get(name)
+            if expected is None:
+                base = from_lazy(name, source)
+            else:
+                base = from_lazy(
+                    name, source, on_open=lambda opened: check_opened(opened, expected, table=name)
+                )
+        cast = self._cast_run
+        if not raw or cast is None or name not in cast.tables():
+            return base
+        typed = cast.cast_batch(name, base.schema.empty_table(), record=False).table.schema
+        # `record=False`: the route already counted this pass; the re-read must not count again.
+        return with_cast(
+            base,
+            needs=cast.declared_columns(name),
+            schema=typed,
+            cast=lambda table, offset: (
+                cast.cast_batch(name, table, offset=offset, record=False).table
+            ),
         )
 
     def _keys(
-        self, outputs: Mapping[str, pa.Table], sources: Mapping[str, pa.Table | LazySource]
+        self,
+        outputs: Mapping[str, TableBatches],
+        sources: Mapping[str, pa.Table | LazySource],
+        raw_sources: bool,
     ) -> tuple[KeyResult, ...]:
         rels = self._relationships()
         if not rels:
@@ -225,8 +284,8 @@ class PostScanGate:
         with fileaccess.protected_scratch_dir(prefix="decoy-post-scan-gate-") as scratch:
             return check_keys(
                 rels,
-                {name: self._source(name, source) for name, source in sources.items()},
-                {name: from_table(name, table) for name, table in outputs.items()},
+                {name: self._source(name, src, raw_sources) for name, src in sources.items()},
+                dict(outputs),
                 scratch=scratch,
                 memory_limit=self.memory_limit,
                 quarantined=self._quarantined,
@@ -262,26 +321,30 @@ def _resident(outputs: Mapping[str, pa.Table], table_kinds: Mapping[str, str]) -
     return all(name in outputs for name in table_kinds)
 
 
-def _deferred(ctx: PipelineRunContext, route: str) -> bool:
+def _staged_openers(sink: Any) -> Mapping[str, Callable[[], int]] | None:
+    """The staged files of a sink the gate may read back, or `None` for no sink or a sink class
+    it does not trust (a foreign producer's files are never read)."""
+    if sink is None or not post_scan_output_readable(post_scan_sink_kind(sink)):
+        return None
+    staged = getattr(sink, "staged_tables", None)
+    return staged() if callable(staged) else None
+
+
+def _deferred(ctx: PipelineRunContext) -> bool:
     """Whether this run's inputs cannot be read back by the gate before the route runs: a loader
-    supplies tables nothing can re-read, a lazy table that declares transforms is transformed
-    inside the route, and a bounded route casts declared columns per chunk. Outputs that are not
-    resident are found later, when the gate is asked to run."""
+    supplies tables nothing can re-read, and a lazy table that declares transforms is
+    transformed inside the route. Outputs that are not resident are read at commit."""
     lazy_transformed = any(
         isinstance(ctx.caller_sources.get(name), LazySource)
         for name in transform_bearing_mask_tables(ctx.config)
     )
-    return (
-        ctx.source_loader is not None
-        or lazy_transformed
-        or (route != "full_frame" and bool(lexeme_columns_by_table(ctx.config)))
-    )
+    return ctx.source_loader is not None or lazy_transformed
 
 
 @contextmanager
-def bind_gate(ctx: PipelineRunContext, route: str) -> Iterator[PostScanGate]:
+def bind_gate(ctx: PipelineRunContext) -> Iterator[PostScanGate]:
     """Bind one gate for the run. Its lazy-input snapshot is taken here, before any route reads."""
-    deferred = _deferred(ctx, route)
+    deferred = _deferred(ctx)
     facts = (
         capture_source_facts(ctx.caller_sources, ctx.table_kinds)
         if post_scan_gate_applies(ctx.config) and not deferred
@@ -292,12 +355,20 @@ def bind_gate(ctx: PipelineRunContext, route: str) -> Iterator[PostScanGate]:
         budget_bytes=ctx.out_of_core_budget_bytes,
         source_facts=facts,
         deferred=deferred,
+        sources=ctx.caller_sources,
     )
     token = _ACTIVE.set(gate)
     try:
         yield gate
     finally:
         _ACTIVE.reset(token)
+
+
+def attach_cast_run(cast_run: Any) -> None:
+    """Tell the run's gate about the declared casting a route opened. Outside `bind_gate`, or
+    with no cast run, there is nothing to attach."""
+    if cast_run is not None and (gate := active_gate()) is not None:
+        gate.attach_cast_run(cast_run)
 
 
 def note_quarantined(
@@ -326,7 +397,7 @@ def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult)
     """After a route returns: run the gate over the outputs when no route did, refuse a required
     gate that still has not run, publish what waited on the verdict, and stamp the report."""
     if not gate.ran:
-        gate.run_resident(result.outputs, ctx.caller_sources, ctx.table_kinds)
+        gate.run_resident(result.outputs, ctx.caller_sources, ctx.table_kinds, raw_sources=True)
     if gate.required and not gate.ran:
         gate.before_commit(None)
     held, gate._held = gate._held, []

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.profiling import KEY_BATCH_ROWS, KeyBatches
 
 if TYPE_CHECKING:
@@ -78,6 +79,52 @@ def from_lazy(
         return batches(list(columns), batch_rows)
 
     return TableBatches(name, facts.schema, facts.num_rows, read)
+
+
+def from_staged(name: str, opener: Callable[[], int]) -> TableBatches:
+    """A table staged by a sink: `opener` returns a new read-only descriptor of its Parquet file.
+    Schema and row count come from the footer; a read walks the file one row group at a time."""
+    with arrow_adapter.staged_parquet(opener()) as footer:
+        schema, num_rows = footer.schema_arrow, footer.metadata.num_rows
+
+    def batches(columns: list[str], batch_rows: int) -> Iterator[pa.RecordBatch]:
+        with arrow_adapter.staged_parquet(opener()) as staged:
+            yield from arrow_adapter.iter_staged_batches(
+                staged, batch_size=batch_rows, columns=columns
+            )
+
+    def read(columns: Sequence[str], batch_rows: int) -> Iterator[pa.RecordBatch]:
+        _require_columns(columns)
+        return batches(list(columns), batch_rows)
+
+    return TableBatches(name, schema, num_rows, read)
+
+
+def with_cast(
+    table: TableBatches,
+    *,
+    needs: Sequence[str],
+    schema: pa.Schema,
+    cast: Callable[[pa.Table, int], pa.Table],
+) -> TableBatches:
+    """`table` as a declared cast reads it: each batch is cast (`cast` takes the batch and the
+    absolute row of its first row, and may drop rows) before the named columns are taken. `needs`
+    are the columns the cast reads, `schema` the cast table's schema."""
+
+    def read(columns: Sequence[str], batch_rows: int) -> Iterator[pa.RecordBatch]:
+        _require_columns(columns)
+        wanted = list(dict.fromkeys([*columns, *needs]))
+
+        def batches() -> Iterator[pa.RecordBatch]:
+            offset = 0
+            for batch in table.read(wanted, batch_rows):
+                typed = cast(pa.Table.from_batches([batch]), offset)
+                offset += batch.num_rows
+                yield from typed.select(list(columns)).to_batches()
+
+        return batches()
+
+    return TableBatches(table.name, schema, table.num_rows, read, table.bounded)
 
 
 def missing_columns(table: TableBatches, columns: Sequence[str]) -> tuple[str, ...]:

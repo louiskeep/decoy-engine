@@ -76,13 +76,26 @@ def _unified(tmp_path: Path, tag: str) -> dict[str, Any]:
 
 
 def _sequential(tmp_path: Path, tag: str) -> dict[str, Any]:
-    from tests.parity._f2_mixed_support import RecordingSink
+    from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 
     return {
         "raw": parity._fk_cfg(tmp_path, endpoints=True, policy="quarantine"),
         "sources": parity._fk_sources(),
-        "kwargs": {"execution_mode": "sequential", "sink": RecordingSink(fail_on="commit")},
+        "kwargs": {
+            "execution_mode": "sequential",
+            "sink": ParquetTransactionalSink(tmp_path / "sink"),
+        },
     }
+
+
+def _fail_the_sink_commit(mp: pytest.MonkeyPatch) -> None:
+    """The gate reads only the engine's own sink, so the commit failure is injected into it."""
+    from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+
+    def commit(self: Any) -> None:
+        raise RuntimeError("injected sink failure")
+
+    mp.setattr(ParquetTransactionalSink, "commit", commit)
 
 
 ROUTES: dict[
@@ -91,7 +104,7 @@ ROUTES: dict[
     "full_frame": (_full_frame, _fail_after_seal_in_publish, "injected failure after the seal"),
     "chunked": (_chunked, _fail_after_seal_in_publish, "injected failure after the seal"),
     "unified_slice": (_unified, _fail_token_issue, "injected failure after the seal"),
-    "sequential": (_sequential, lambda mp: None, "injected sink failure"),
+    "sequential": (_sequential, _fail_the_sink_commit, "injected sink failure"),
 }
 
 

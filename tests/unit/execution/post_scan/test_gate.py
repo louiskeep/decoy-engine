@@ -117,10 +117,11 @@ def test_before_commit_after_a_run_lets_the_commit_through() -> None:
     assert gate.ran
 
 
-def test_before_commit_with_a_sink_on_an_unrun_gate_defers_it() -> None:
+def test_before_commit_with_a_sink_it_cannot_read_refuses_an_unrun_gate() -> None:
     gate = PostScanGate(KEYS)
-    gate.before_commit(object())
-    assert gate.deferred and not gate.ran
+    exc = blocked(lambda: gate.before_commit(object()))
+    assert exc.reason == "post_scan.check_error"
+    assert not gate.ran and not gate.deferred
 
 
 def test_before_commit_with_no_sink_on_a_required_unrun_gate_refuses() -> None:
@@ -131,10 +132,10 @@ def test_before_commit_with_no_sink_on_a_required_unrun_gate_refuses() -> None:
     assert not gate.ran and not gate.deferred
 
 
-def test_a_gate_whose_outputs_are_not_resident_defers_and_is_not_blocked() -> None:
+def test_a_gate_whose_outputs_are_not_resident_waits_for_the_commit() -> None:
     gate = PostScanGate(KEYS)
     gate.run_resident({}, SOURCES, KINDS)
-    assert gate.deferred and gate.ran and gate.report is None
+    assert not gate.deferred and not gate.ran and gate.report is None
 
 
 def test_a_blocking_verdict_raises_with_an_empty_chain() -> None:
@@ -220,17 +221,14 @@ def _ctx(loader: object | None = None) -> Any:
 
 
 def test_a_loader_supplied_input_defers_on_every_route(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {})
-    for route in ("full_frame", "sequential", "out_of_core"):
-        assert _post_scan._deferred(_ctx(object()), route) is True
-        assert _post_scan._deferred(_ctx(None), route) is False
+    assert _post_scan._deferred(_ctx(object())) is True
+    assert _post_scan._deferred(_ctx(None)) is False
 
 
-def test_declared_casting_defers_on_a_bounded_route_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {"t": ["c"]})
-    assert _post_scan._deferred(_ctx(), "full_frame") is False
-    assert _post_scan._deferred(_ctx(), "sequential") is True
-    assert _post_scan._deferred(_ctx(), "out_of_core") is True
+def test_declared_casting_no_longer_defers_on_any_route() -> None:
+    ctx = _ctx()
+    ctx.config = {"tables": [{"name": "t", "columns": [{"name": "c", "logical_type": "integer"}]}]}
+    assert _post_scan._deferred(ctx) is False
 
 
 def test_a_lazy_table_that_declares_transforms_defers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -239,9 +237,8 @@ def test_a_lazy_table_that_declares_transforms_defers(monkeypatch: pytest.Monkey
     from decoy_engine.profile import LazySource
 
     lazy = LazySource.__new__(LazySource)
-    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {})
     monkeypatch.setattr(_post_scan, "transform_bearing_mask_tables", lambda config: {"t"})
     held = SimpleNamespace(source_loader=None, config={}, caller_sources={"t": lazy})
     resident = SimpleNamespace(source_loader=None, config={}, caller_sources={"t": pa.table({})})
-    assert _post_scan._deferred(held, "sequential") is True
-    assert _post_scan._deferred(resident, "sequential") is False
+    assert _post_scan._deferred(held) is True
+    assert _post_scan._deferred(resident) is False

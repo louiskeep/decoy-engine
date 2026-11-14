@@ -717,10 +717,17 @@ def _sealed(root: Path) -> list[Path]:
     return [p for p in root.rglob("*.dqa")] if root.exists() else []
 
 
-def test_sequential_sink_commit_failure_discards_the_sealed_quarantine(tmp_path: Path) -> None:
-    from tests.parity._f2_mixed_support import RecordingSink
+def test_sequential_sink_commit_failure_discards_the_sealed_quarantine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 
-    sink = RecordingSink(fail_on="commit")
+    def commit(self: Any) -> None:
+        raise RuntimeError("injected sink failure")
+
+    # The gate reads only the engine's own sink, so the failure is injected into it.
+    monkeypatch.setattr(ParquetTransactionalSink, "commit", commit)
+    sink = ParquetTransactionalSink(tmp_path / "sink")
     with pytest.raises(RuntimeError, match="injected sink failure"):
         run(
             _fk_cfg(tmp_path, endpoints=True, policy="quarantine"),
@@ -729,7 +736,7 @@ def test_sequential_sink_commit_failure_discards_the_sealed_quarantine(tmp_path:
             sink=sink,
             **_kwargs("quarantine", tmp_path, "commit-fail"),
         )
-    assert sink.aborted == 1
+    assert not (tmp_path / "sink").exists() and not list(tmp_path.glob("_decoy_stage_*"))
     assert _sealed(tmp_path / "q-commit-fail") == []
 
 
