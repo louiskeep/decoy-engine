@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive, resolve_seed
+from decoy_engine.determinism import COMPOSITE_SEED_WIDTHS, derive, resolve_seed, seed_bytes_to_int
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -135,7 +135,7 @@ class CompositeNameEmail:
         first_arr, last_arr = self._name_pools(spec)
         domains = self._resolve_domains(spec)
         fmt = str(spec.extra.get("email_format", _DEFAULT_EMAIL_FORMAT))
-        rng = np.random.default_rng(int.from_bytes(chosen, "big"))
+        rng = np.random.default_rng(seed_bytes_to_int(chosen, widths=COMPOSITE_SEED_WIDTHS))
         fi = rng.integers(0, len(first_arr), size=n)
         li = rng.integers(0, len(last_arr), size=n)
         di = rng.integers(0, len(domains), size=n)

@@ -32,17 +32,6 @@ SRC = Path(__file__).resolve().parents[3] / "src" / "decoy_engine"
 
 _CONSTRUCTORS = ("default_rng", "Random", "RandomState", "PCG64", "MT19937", "Philox", "SFC64")
 
-# The five composite builds whose seed passes through `resolve_seed`.
-_COMPOSITE_BUILDS = frozenset(
-    {
-        ("generation/composite/_address.py", "CompositeAddress.build_pool"),
-        ("generation/composite/_custom.py", "CompositeCustom.build_pool"),
-        ("generation/composite/_name_email.py", "CompositeNameEmail.build_pool"),
-        ("generation/composite/_person.py", "CompositePerson.build_pool"),
-        ("generation/composite/_provider.py", "CompositeProvider.build_pool"),
-    }
-)
-
 # Zero-seed literals that are not seeds (none today); a new entry needs a reason here.
 _ZERO_LITERAL_ALLOWED: frozenset[tuple[str, str]] = frozenset()
 
@@ -227,20 +216,9 @@ def _real_sites() -> tuple[set[tuple[str, str]], set[tuple[str, str]], dict[str,
 # ----- the real tree ------------------------------------------------------------------------
 
 
-def test_no_generator_is_seeded_from_raw_bytes_outside_the_composite_builds() -> None:
+def test_no_generator_is_seeded_from_raw_bytes() -> None:
     raw, _, _ = _real_sites()
-    stray = sorted(raw - _COMPOSITE_BUILDS)
-    assert not stray, f"seed generators through determinism.seed_bytes_to_int: {stray}"
-
-
-def test_every_composite_exception_is_a_real_site_that_resolves_its_seed() -> None:
-    raw, _, trees = _real_sites()
-    stale = sorted(_COMPOSITE_BUILDS - raw)
-    assert not stale, f"allowlist entries that no longer match a raw-byte seed: {stale}"
-    unresolved = sorted(
-        (rel, qual) for rel, qual in _COMPOSITE_BUILDS if not _calls_resolve_seed(trees[rel], qual)
-    )
-    assert not unresolved, f"composite builds that skip resolve_seed: {unresolved}"
+    assert not raw, f"seed generators through determinism.seed_bytes_to_int: {sorted(raw)}"
 
 
 def test_no_all_zero_eight_byte_seed_literal_remains() -> None:

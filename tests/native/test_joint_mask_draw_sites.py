@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from decoy_engine.determinism import derive
+from decoy_engine.determinism import derive, seed_bytes_to_int
 from decoy_engine.execution.native import _determinism_protocol as protocol
 from decoy_engine.execution.native._determinism_protocol import (
     DrawSiteProtocolError,
@@ -96,17 +96,21 @@ def test_the_provider_reproduces_the_seed_the_transform_draws(
     apply_joint_mask(frame, config, mode=mode, job_seed=_KEY, namespace="ns/a", table="patients")
     provider: Any = provider_for(site_id)
     derived = derive(_KEY, "ns/a", provider.source("patients", _REF, columns))
-    assert seen == [provider.seed_int(derived)]
+    assert seen == [seed_bytes_to_int(derived[:8])]
 
 
 def test_the_composite_build_pool_mirror_refuses_a_missing_or_empty_seed() -> None:
-    """AT-E2-4: the native mirror needs a resolved 8-byte seed."""
+    """AT-E2-4: the native mirror needs a resolved seed of 8 or 32 bytes, as the Python build."""
     provider: Any = provider_for("gen.composite_build_pool")
-    for bad in (None, b"", b"\x01" * 7, b"\x01" * 32):
+    for bad in (None, b"", b"\x01" * 7, b"\x01" * 16):
         with pytest.raises(ValueError):
             provider.generator(bad)
     assert provider.generator(b"\x00" * 6 + b"\x09\x08").random() == pytest.approx(
         np.random.default_rng(0x0908).random()
+    )
+    wide = bytes(range(1, 33))
+    assert provider.generator(wide).random() == pytest.approx(
+        np.random.default_rng(int.from_bytes(wide, "big")).random()
     )
 
 

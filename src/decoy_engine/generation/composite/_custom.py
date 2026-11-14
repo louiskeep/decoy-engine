@@ -62,7 +62,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive, resolve_seed
+from decoy_engine.determinism import COMPOSITE_SEED_WIDTHS, derive, resolve_seed, seed_bytes_to_int
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -207,7 +207,7 @@ class CompositeCustom:
         spec = dataclasses.replace(spec, seed=chosen)
         n = size if size is not None else self._pool_size
         pools = self._build_pools(spec)
-        rng = np.random.default_rng(int.from_bytes(chosen, "big"))
+        rng = np.random.default_rng(seed_bytes_to_int(chosen, widths=COMPOSITE_SEED_WIDTHS))
         # One uniform draw per slot to form n coherent tuples.
         slot_indices = [rng.integers(0, len(pools[s]), size=n) for s in range(len(pools))]
         values = np.empty(n, dtype=object)

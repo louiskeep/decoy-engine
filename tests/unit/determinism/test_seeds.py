@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from decoy_engine.determinism import fresh_seed, resolve_seed, seed_bytes_to_int
+from decoy_engine import reasons
+from decoy_engine.determinism import (
+    COMPOSITE_SEED_WIDTHS,
+    fresh_seed,
+    resolve_seed,
+    seed_bytes_to_int,
+)
 
 
 @pytest.mark.parametrize("width", [0, 7, 9, 32])
@@ -49,3 +55,58 @@ def test_resolve_seed_draws_one_fresh_eight_byte_seed_for_none() -> None:
 def test_fresh_seed_is_eight_bytes_of_entropy() -> None:
     assert len(fresh_seed()) == 8
     assert fresh_seed() != fresh_seed()
+
+
+@pytest.mark.parametrize("width", [8, 32])
+def test_seed_bytes_to_int_composite_widths_equals_the_old_raw_expression(width: int) -> None:
+    for raw in (bytes(range(1, width + 1)), b"\xff" * width, b"\x00" * (width - 1) + b"\x05"):
+        assert seed_bytes_to_int(raw, widths=COMPOSITE_SEED_WIDTHS) == int.from_bytes(raw, "big")
+
+
+@pytest.mark.parametrize("width", [0, 7, 9, 16, 31, 33])
+def test_seed_bytes_to_int_composite_widths_refuses_every_other_width(width: int) -> None:
+    raw = bytes(range(1, width + 1))
+    with pytest.raises(ValueError) as exc:
+        seed_bytes_to_int(raw, widths=COMPOSITE_SEED_WIDTHS)
+    assert not raw or raw.hex() not in str(exc.value)
+
+
+def test_seed_bytes_to_int_composite_widths_refuses_a_non_bytes_value() -> None:
+    with pytest.raises(ValueError):
+        seed_bytes_to_int(None, widths=COMPOSITE_SEED_WIDTHS)  # type: ignore[arg-type]
+
+
+def test_seed_width_errors_carry_the_coded_reason() -> None:
+    with pytest.raises(ValueError) as exc:
+        seed_bytes_to_int(b"\x01" * 5)
+    assert getattr(exc.value, "code", None) == reasons.runtime.INVALID_SEED_LENGTH
+
+
+@pytest.mark.parametrize("width", [8, 32])
+def test_native_composite_mirror_accepts_the_python_build_widths(width: int) -> None:
+    import numpy as np
+
+    from decoy_engine.execution.native._determinism_protocol import provider_for
+
+    raw = bytes(range(1, width + 1))
+    mirror = provider_for("gen.composite_build_pool").generator(raw)
+    old = np.random.default_rng(int.from_bytes(raw, "big"))
+    assert mirror.integers(0, 10**9, size=16).tolist() == old.integers(0, 10**9, size=16).tolist()
+
+
+@pytest.mark.parametrize("width", [7, 16])
+def test_native_composite_mirror_refuses_other_widths(width: int) -> None:
+    from decoy_engine.execution.native._determinism_protocol import provider_for
+
+    with pytest.raises(ValueError):
+        provider_for("gen.composite_build_pool").generator(b"\x01" * width)
+
+
+@pytest.mark.parametrize("site", ["gen.pool_nondeterministic", "gen.faker_pool_selection"])
+def test_the_other_seeded_providers_stay_eight_bytes(site: str) -> None:
+    from decoy_engine.execution.native._determinism_protocol import provider_for
+
+    provider = provider_for(site)
+    assert provider.seed_widths == (8,)
+    with pytest.raises(ValueError):
+        provider.generator(b"\x01" * 32)

@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 
-from decoy_engine.determinism import derive, seed_bytes_to_int
+from decoy_engine.determinism import derive
 from decoy_engine.execution.native.protocol.providers_base import DrawSiteProvider
 
 # ---------------------------------------------------------------------------
@@ -195,8 +195,8 @@ class _JointMaskStreamProvider(DrawSiteProvider):
     Shipped seed (``transforms/joint_mask.py``): ``default_rng(seed_bytes_to_int(derive(mask_key,
     namespace or "joint_mask", source)[:8]))`` where ``source`` is the stream label then the
     length-prefixed UTF-8 of the table, the reference and the ``\\x1f``-joined target columns.
-    The provider reproduces the source bytes and the integer a derived key turns into; the
-    ``derive`` call itself stays with the caller, so no key is bound here. Whole-column or
+    The provider reproduces the source bytes; the caller runs ``derive`` and
+    ``seed_bytes_to_int(derived[:8])`` itself, so no key is bound here. Whole-column or
     per-null-row stream positions advance one generator, so NON-partitionable.
     """
 
@@ -214,10 +214,6 @@ class _JointMaskStreamProvider(DrawSiteProvider):
             + self._length_prefixed(reference)
             + self._length_prefixed("\x1f".join(columns))
         )
-
-    def seed_int(self, derived: bytes) -> int:
-        """The generator seed from a ``derive(...)`` output: its first 8 bytes, big-endian."""
-        return seed_bytes_to_int(derived[:8])
 
 
 class JointMaskNullFallbackProvider(_JointMaskStreamProvider):

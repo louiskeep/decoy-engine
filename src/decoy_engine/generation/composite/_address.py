@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive, resolve_seed
+from decoy_engine.determinism import COMPOSITE_SEED_WIDTHS, derive, resolve_seed, seed_bytes_to_int
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._city_state_zip import load_locality_table
 from decoy_engine.generation.composite._errors import CompositeError
@@ -98,7 +98,7 @@ class CompositeAddress:
         spec = dataclasses.replace(spec, seed=chosen)
         n = size if size is not None else self._pool_size
         streets = self._street_pool(spec)
-        rng = np.random.default_rng(int.from_bytes(chosen, "big"))
+        rng = np.random.default_rng(seed_bytes_to_int(chosen, widths=COMPOSITE_SEED_WIDTHS))
         si = rng.integers(0, len(streets), size=n)
         li = rng.integers(0, len(self._locality), size=n)
         values = np.empty(n, dtype=object)

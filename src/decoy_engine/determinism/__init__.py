@@ -15,6 +15,7 @@ Public API:
         fresh_seed,
         resolve_seed,
         seed_bytes_to_int,
+        COMPOSITE_SEED_WIDTHS,
         Domain,
         IdentityDomain,
         SEED_PROTOCOL_VERSION,
@@ -45,9 +46,15 @@ from decoy_engine.determinism._derive import (
     derive_index,
     derive_value,
 )
-from decoy_engine.determinism._seeds import fresh_seed, resolve_seed, seed_bytes_to_int
+from decoy_engine.determinism._seeds import (
+    COMPOSITE_SEED_WIDTHS,
+    fresh_seed,
+    resolve_seed,
+    seed_bytes_to_int,
+)
 
 __all__ = [
+    "COMPOSITE_SEED_WIDTHS",
     "SEED_PROTOCOL_VERSION",
     "DeterminismError",
     "Domain",

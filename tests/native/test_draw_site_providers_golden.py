@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from decoy_engine.determinism import IdentityDomain, derive
+from decoy_engine.determinism import IdentityDomain, derive, seed_bytes_to_int
 from decoy_engine.execution.native._determinism_protocol import (
     DrawSiteProtocolError,
     all_providers,
@@ -57,7 +57,7 @@ def _np(gen: Any) -> list[float]:
 def _joint_mask_stream(site: str) -> Any:
     provider = provider_for(site)
     source = provider.source("patients", "us_zip5_city_state", ("zip", "city", "state"))
-    return (source.hex(), provider.seed_int(derive(_MK, _NS, source)))
+    return (source.hex(), seed_bytes_to_int(derive(_MK, _NS, source)[:8]))
 
 
 def _faker_run(site: str) -> Any:
