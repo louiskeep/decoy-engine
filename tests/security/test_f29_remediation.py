@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from decoy_engine import reasons
+from decoy_engine.config import post_scan_resident_reason
 from decoy_engine.progress import (
     CheckpointEvent,
     PhaseEvent,
@@ -204,6 +205,9 @@ class _Profile:
     relationships = (object(),)
 
 
+_MODEL_ASK = {"post_scan": {"integrity": True, "detectors": ["regex", "ner"]}}
+
+
 def _decide(**overrides: Any) -> tuple[str, str]:
     from decoy_engine.execution._pipeline_routing import decide_execution_route
     from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -247,8 +251,8 @@ def _decide(**overrides: Any) -> tuple[str, str]:
     [
         ({"post_validation": True}, "post_validation_requested"),
         (
-            {"post_scan_resident": reasons.route.POST_SCAN_INTEGRITY_REQUESTED},
-            "post_scan_integrity_requested",
+            {"post_scan_resident": post_scan_resident_reason(_MODEL_ASK)},
+            "post_scan_models_resident",
         ),
     ],
 )

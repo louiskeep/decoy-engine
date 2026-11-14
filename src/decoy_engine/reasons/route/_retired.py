@@ -9,8 +9,10 @@ and the pinned manifest).
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
+    "POST_SCAN_INTEGRITY_REQUESTED",
     "RUN_STORM",
     "RUN_STORM_REQUESTED",
 ]
@@ -28,4 +30,11 @@ RUN_STORM = _catalog.route("decoy_engine.execution._chunked_output_sink")(
     "Resident output required by the requested STORM post-mask checks.",
     deprecated_in="1.0.0",
     replaced_by=("route", "post_scan_integrity"),
+)
+# Regex-only integrity no longer keeps a run resident; only a model ask does.
+POST_SCAN_INTEGRITY_REQUESTED = _catalog.route("decoy_engine.execution._pipeline_routing")(
+    "post_scan_integrity_requested",
+    "The Post-scan integrity checks need the full frame resident.",
+    deprecated_in=UNRELEASED,
+    replaced_by=("route", "post_scan_models_resident"),
 )

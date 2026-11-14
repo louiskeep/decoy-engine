@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 import pytest
 
+from tests.sentry.post_scan import _route_coverage as coverage
 from tests.sentry.post_scan import _scan as scan
 
 SENTRIES: dict[str, Callable[[], list[str]]] = {
@@ -24,6 +25,7 @@ SENTRIES: dict[str, Callable[[], list[str]]] = {
     "post-scan-commit": scan.commit_sites,
     "post-scan-model-predicate": scan.model_sites,
     "post-scan-readability": scan.readability_sites,
+    "post-scan-route-coverage": coverage.coverage_sites,
 }
 
 
@@ -304,3 +306,35 @@ def test_an_atomic_commit_added_to_the_blocked_outcome_path_is_flagged(rel: str)
     assert f"decoy_engine/{rel}::_blocked_path::atomic-commit::0" not in _baseline(
         "post-scan-commit"
     )
+
+
+# ----- every route has a gate cell --------------------------------------------------------
+
+
+def test_every_route_names_a_cell_that_proves_the_gate() -> None:
+    assert set(coverage.GATE_TESTS) == {*coverage.ROUTES, *coverage.EXTRA_ROUTES}
+    assert coverage.coverage_sites() == []
+
+
+def test_dropping_the_mixed_entry_is_flagged() -> None:
+    kept = {r: t for r, t in coverage.GATE_TESTS.items() if r != "mixed"}
+    assert coverage.coverage_sites(kept) == ["route-coverage::mixed::missing-entry::0"]
+
+
+def test_a_new_route_without_a_cell_is_flagged() -> None:
+    found = coverage.coverage_sites(routes=(*coverage.ROUTES, "streamed_native"))
+    assert "route-coverage::streamed_native::missing-entry::0" in found
+
+
+def test_an_entry_naming_a_missing_test_is_flagged() -> None:
+    gone = {**coverage.GATE_TESTS, "stream": coverage.CELLS.replace("test_gate_cell", "nope")}
+    assert coverage.coverage_sites(gone) == ["route-coverage::stream::no-gate-proof::0"]
+
+
+def test_dropping_a_cells_key_from_the_cell_module_is_flagged() -> None:
+    path = coverage.CELLS.partition("::")[0]
+    text = (scan.ROOT / path).read_text(encoding="utf-8")
+    assert '    "mixed": (' in text
+    planted = text.replace('    "mixed": (', '    "mixed_gone": (', 1)
+    found = coverage.coverage_sites(sources={path: planted})
+    assert found == ["route-coverage::mixed::no-gate-proof::0"]

@@ -51,7 +51,7 @@ import pyarrow as pa
 
 from decoy_engine._field_names import repeated_names
 from decoy_engine._lexeme import integer_columns_by_table
-from decoy_engine.config import post_scan_integrity_requested
+from decoy_engine.config import post_scan_model_setting
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._guards import (
@@ -253,7 +253,7 @@ def cheap_admission(
     if (
         config.get("validators")
         or config.get("quarantine")
-        or post_scan_integrity_requested(config)
+        or post_scan_model_setting(config) is not None
     ):
         return None
     if profile.relationships:

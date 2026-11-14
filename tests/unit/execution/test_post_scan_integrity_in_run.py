@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pyarrow as pa
+import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
@@ -56,7 +57,9 @@ def test_a_passthrough_column_is_reported_and_does_not_withhold_the_run(tmp_path
     assert result.outputs["t"].num_rows == 6
 
 
-def test_fk_job_with_post_scan_integrity_takes_the_full_frame_branch(tmp_path) -> None:
+def test_fk_job_with_post_scan_integrity_takes_a_bounded_route_and_gets_the_report(
+    tmp_path,
+) -> None:
     customers = pd.DataFrame({"id": [f"C{i}" for i in range(4)]})
     orders = pd.DataFrame({"customer_id": ["C1", "C2", "C1"]})
     cp, op = tmp_path / "c.csv", tmp_path / "o.csv"
@@ -107,18 +110,53 @@ def test_fk_job_with_post_scan_integrity_takes_the_full_frame_branch(tmp_path) -
 
     result = run_pipeline(cfg, sources=sources, engine_version=_V, progress=Sink())
     assert "post_scan_integrity" in result.quality_metrics
-    assert routes == ["full_frame"]
+    assert routes == ["out_of_core"]  # regex integrity no longer forces the resident route
 
 
 def test_post_scan_integrity_on_a_chunked_sink_job_still_produces_the_report(tmp_path) -> None:
-    # Codex HIGH (parity E3b): a `post_scan_integrity: true` job on the streamed chunked sink
-    # route silently skipped the Post-scan integrity report. The streamed output leaves
-    # `result.outputs` empty, so `compute_post_scan_integrity` saw no mask tables and
-    # stamped nothing -- a silent no-op of the requested check. `decide_output_mode`
-    # now declines streaming for post_scan_integrity (like the other whole-output consumers:
-    # validators, quarantine, fidelity, post_validation), keeping the output resident
-    # so the report is produced. Masked values are chunk-invariant, so the resident
-    # chunked output is Post-scan-correct.
+    # Codex HIGH (parity E3b): a streamed run once skipped the report silently because its
+    # `result.outputs` was empty. The gate now reads the staged output back at commit, so the
+    # job streams and the report is still produced.
+    from tests.unit.execution import _auto_chunk_support as support
+    from tests.unit.execution.run_stream import _support as rs
+
+    src = pa.table(
+        {
+            "h": pa.array([f"u{i}@x.example" for i in range(support.ROWS)]),
+            "r": pa.array([f"s{i}" for i in range(support.ROWS)]),
+        }
+    )
+    path = support.write_source(src, tmp_path / "s.parquet")
+    raw = {
+        "version": 2,
+        "global_settings": {"seed": 42},
+        "post_scan": {"integrity": True},
+        "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
+        "tables": [{"name": "t", "columns": [support.hash_col("h"), support.redact_col("r")]}],
+        "targets": {"t": {"type": "file", "format": "parquet", "path": "/dev/null"}},
+    }
+    cfg = PipelineConfig.model_validate(raw).model_dump()
+    sink, target = rs.engine_sink(tmp_path)
+    result = run_pipeline(
+        cfg,
+        sources={"t": src},
+        sink=sink,
+        engine_version=_V,
+        auto_chunk_threshold_rows=1,
+        chunk_size_rows=2,
+    )
+
+    report = result.quality_metrics.get("post_scan_integrity")
+    assert isinstance(report, dict) and "fail_count" in report
+    assert result.quality_metrics["execution"]["outputs_streamed"] is True
+    assert (target / "t.parquet").exists()
+    assert result.outputs == {}
+
+
+def test_post_scan_integrity_on_a_foreign_sink_job_refuses_instead_of_skipping(tmp_path) -> None:
+    # The same silent skip, for a sink the gate cannot read back: the explicit check refuses
+    # before the sink is touched rather than delivering unchecked output.
+    from decoy_engine.execution import ExecutionError
     from tests.unit.execution import _auto_chunk_support as support
     from tests.unit.execution import _b6a_support as b6a
 
@@ -139,26 +177,17 @@ def test_post_scan_integrity_on_a_chunked_sink_job_still_produces_the_report(tmp
     }
     cfg = PipelineConfig.model_validate(raw).model_dump()
     sink = b6a.RecordingSink()
-    result = b6a.run_streamed(cfg, src, sink, auto_chunk_threshold_rows=1, chunk_size_rows=2)
-
-    # The whole point: the requested check ran, instead of a silent no-op.
-    report = result.quality_metrics.get("post_scan_integrity")
-    assert isinstance(report, dict) and "fail_count" in report
-    # Root cause: streaming is declined for post_scan_integrity, so the run stays resident.
-    assert result.quality_metrics["auto_chunk"]["output"] == {
-        "mode": "resident",
-        "reason": "post_scan_integrity",
-    }
-    assert result.quality_metrics["execution"]["outputs_streamed"] is False
-    assert sink.calls == []  # a resident run never touches the streaming sink
-    assert set(result.outputs) == {"t"}
+    with pytest.raises(ExecutionError) as caught:
+        b6a.run_streamed(cfg, src, sink, auto_chunk_threshold_rows=1, chunk_size_rows=2)
+    assert str(caught.value.code) == "post_scan_integrity_sink_unreadable"
+    assert sink.calls == []
 
 
-def test_generate_mask_job_with_post_scan_integrity_declines_the_mixed_route(tmp_path) -> None:
-    # A generate+mask job mixed-admitted under `auto` routes to the chunked "mixed"
-    # lane, which never runs the post-mask Post-scan integrity report. With `post_scan_integrity: true` it
-    # must decline mixed and take full-frame instead, exactly as the sequential and
-    # out-of-core routes decline (review finding, parity E2a).
+def test_generate_mask_job_with_post_scan_integrity_keeps_the_mixed_route_and_reports(
+    tmp_path,
+) -> None:
+    # The mixed route now runs the gate over its stitched outputs, so regex integrity no longer
+    # declines it; the report is stamped as on every other route.
     import pyarrow as _pa
 
     from tests.parity._f2_mixed_support import CHILD, child_table, run
@@ -184,7 +213,7 @@ def test_generate_mask_job_with_post_scan_integrity_declines_the_mixed_route(tmp
     integrity_cfg = {**base_cfg, "post_scan": {"integrity": True}}
     integrity_cfg = PipelineConfig.model_validate(integrity_cfg).model_dump()
     with_routes, integrity_result = routes_for(integrity_cfg)
-    assert "mixed" not in with_routes, with_routes
+    assert "mixed" in with_routes, with_routes
     assert "post_scan_integrity" in integrity_result.quality_metrics
 
 

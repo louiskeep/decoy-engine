@@ -16,7 +16,7 @@ result.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
@@ -35,6 +35,7 @@ from decoy_engine.config import (
     post_scan_sink_kind,
 )
 from decoy_engine.execution._chunked_input import SourceFacts, capture_source_facts, check_opened
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline_sources import materialize_source
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import MaskedKeyStager, resolve_ooc_memory_limit
@@ -57,6 +58,7 @@ from decoy_engine.verification.postmask import (
     keys_report,
     post_scan_verdict,
     run_post_mask,
+    run_post_mask_tables,
     with_cast,
 )
 
@@ -254,7 +256,7 @@ class PostScanGate:
         self.ran = True
         if not post_scan_integrity_requested(self._config):
             return
-        masked = [n for n in outputs if table_kinds.get(n, "mask") == "mask" and n in sources]
+        masked = _suite_tables(outputs, sources, table_kinds)
         if masked:
             self.report = run_post_mask(
                 {n: materialize_source(sources[n]).to_pandas() for n in masked},
@@ -290,9 +292,8 @@ class PostScanGate:
         """A required gate that has not run when a sink commits reads the sink's staged files
         back and judges them before anything is published. A sink it cannot read (a foreign
         class, never trusted) is deferred: the run delivers through it and the result says the
-        output went unchecked. A run whose column suite needs the whole output is refused, fail
-        closed. With no sink (the post-condition after the route) a gate that never ran is a
-        wiring fault and refuses."""
+        output went unchecked. With no sink (the post-condition after the route) a gate that never
+        ran is a wiring fault and refuses."""
         if self.ran or not self.required:
             return
         if sink is not None and not post_scan_output_readable(post_scan_sink_kind(sink)):
@@ -303,14 +304,48 @@ class PostScanGate:
         if self.deferred:
             return
         openers = _staged_openers(sink)
-        if openers is not None and not post_scan_integrity_requested(self._config):
+        if openers is not None:
+            if post_scan_integrity_requested(self._config) and transform_bearing_mask_tables(
+                self._config
+            ):
+                # The suite compares output with the raw source, and a transformed table's rows
+                # no longer line up with it. Refused before the commit, so nothing is published.
+                raise ExecutionError(
+                    code=reasons.runtime.POST_SCAN_INTEGRITY_TRANSFORMS_UNSUPPORTED,
+                    message=reasons.get(
+                        "runtime", reasons.runtime.POST_SCAN_INTEGRITY_TRANSFORMS_UNSUPPORTED
+                    ).summary,
+                )
             staged = {name: from_staged(name, opener) for name, opener in openers.items()}
-            self._decide(staged, self._sources, True, None)
+            suite = (
+                self._staged_suite(staged) if post_scan_integrity_requested(self._config) else None
+            )
+            self._decide(staged, self._sources, True, suite)
             return
         report = {"schema_version": SCHEMA_VERSION, "pass_failed_with": _NOT_RUN}
         error = blocked_error(report, post_scan_verdict(report))
         if error is not None:
             raise error
+
+    def _staged_suite(
+        self, staged: Mapping[str, TableBatches]
+    ) -> Callable[[tuple[KeyResult, ...]], dict[str, Any]]:
+        """The column suite over staged output, in batches. A table the route transformed has no
+        raw baseline to compare against, so `before_commit` refuses that case before it gets here."""
+        masked = _suite_tables(staged, self._sources)
+
+        def suite(keys: tuple[KeyResult, ...]) -> dict[str, Any]:
+            with fileaccess.protected_scratch_dir(prefix="decoy-post-scan-columns-") as scratch:
+                return run_post_mask_tables(
+                    {n: self._source(n, self._sources[n], True) for n in masked},
+                    {n: staged[n] for n in masked},
+                    config=self._config,
+                    keys=keys,
+                    scratch=scratch,
+                    memory_limit=self.memory_limit,
+                )
+
+        return suite
 
     def _source(self, name: str, source: pa.Table | LazySource, raw: bool) -> TableBatches:
         if not isinstance(source, LazySource):
@@ -370,13 +405,27 @@ class PostScanGate:
         keys: tuple[KeyResult, ...],
     ) -> dict[str, Any]:
         # Generated tables have no source to compare against, as in the report-only suite.
-        masked = [n for n in outputs if table_kinds.get(n, "mask") == "mask" and n in sources]
+        masked = _suite_tables(outputs, sources, table_kinds)
         return run_post_mask(
             {n: materialize_source(sources[n]).to_pandas() for n in masked},
             {n: outputs[n].to_pandas() for n in masked},
             config=dict(self._config),
             keys=keys,
         )
+
+
+def _suite_tables(
+    names: Iterable[str],
+    sources: Mapping[str, Any],
+    table_kinds: Mapping[str, str] | None = None,
+) -> list[str]:
+    """The tables the column suite compares: those the run masked that also have a source. A
+    generated table has no source to compare against."""
+    return [
+        n
+        for n in names
+        if n in sources and (table_kinds is None or table_kinds.get(n, "mask") == "mask")
+    ]
 
 
 _ACTIVE: ContextVar[PostScanGate | None] = ContextVar("decoy_post_scan_gate", default=None)

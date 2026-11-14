@@ -794,7 +794,7 @@ No `SEED_PROTOCOL_VERSION` change.
   or whose `post_scan.ner_findings` is `fail`, before any source is read. The error carries
   `route.post_scan_models_unsupported` (registry unreleased); `str(error)` and `message` are the fixed
   registry summary, `route` and `setting` name the route and the config field, and the exception
-  chain is empty. Regex-only `integrity: true` behaves as before on these routes. `run_sequential`
+  chain is empty. Regex-only `integrity: true` is not refused on these routes; `run_pipeline` judges it from the staged output (POSTSCAN-STREAM PS-12). `run_sequential`
   and `run_fk_out_of_core` take a required keyword-only `config` (the raw pipeline config), as do
   the wrappers that forward to them (`PandasExecutionAdapter.run_sequential`, the physical
   `SequentialAdapter.run` and `OutOfCoreAdapter.run`); a caller that passed none must now pass

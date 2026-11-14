@@ -230,7 +230,10 @@ def _resident_case(name: str, tmp_path: Path) -> tuple[dict[str, Any], dict[str,
     elif name == "post_validation":
         kwargs["post_validation"] = True
     elif name == "post_scan_integrity":
-        extra["post_scan"] = {"integrity": True}
+        # Only a model ask needs the whole output resident; regex integrity streams.
+        extra["post_scan"] = {"integrity": True, "detectors": ["regex", "ner"]}
+        # A foreign sink refuses an explicit integrity check, so this case uses the engine's own.
+        sink = ParquetTransactionalSink(tmp_path / "published")
     elif name == "streaming_disabled":
         kwargs["stream_chunked_output"] = False
     elif name == "no_sink":

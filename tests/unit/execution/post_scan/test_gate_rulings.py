@@ -10,11 +10,11 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine import run_pipeline
+from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.execution.pipeline import _post_scan
 from decoy_engine.execution.pipeline._post_scan import PostScanGate
 from decoy_engine.verification.postmask import SCHEMA_VERSION, PostScanBlockedError
 from tests.unit.execution import _subset_run_support as subset_sup
-from tests.unit.execution._b6a_support import RecordingSink
 from tests.unit.execution.post_scan.test_wiring import _blocked, _config, _run
 from tests.unit.execution.test_post_scan_integrity_in_run import _cfg
 
@@ -250,9 +250,11 @@ def test_m1_integrity_withholds_a_run_on_a_failing_column_finding(
 
     monkeypatch.setattr(_post_scan, "run_post_mask", failing_suite)
     cfg, sources = _cfg(tmp_path, post_scan_integrity=True)
-    sink = RecordingSink()
+    out = tmp_path / "sink"
     with pytest.raises(PostScanBlockedError) as caught:
-        run_pipeline(cfg, sources=sources, engine_version="ps8-m1", sink=sink)
+        run_pipeline(
+            cfg, sources=sources, engine_version="ps8-m1", sink=ParquetTransactionalSink(out)
+        )
     assert caught.value.reason == "post_scan.finding_blocked"
-    assert sink.calls == []
+    assert not out.exists()
     assert not Path(cfg["targets"]["t"]["path"]).exists()

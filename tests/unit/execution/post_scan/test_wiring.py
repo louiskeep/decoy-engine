@@ -20,6 +20,7 @@ import pytest
 from decoy_engine import reasons, run_pipeline
 from decoy_engine.execution._chunked_input import capture_source_facts
 from decoy_engine.execution._publication_observer import observed_commit
+from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.execution.pipeline import _post_scan
 from decoy_engine.execution.pipeline._post_scan import PostScanGate
 from decoy_engine.reason_adapter import reason_from_exception
@@ -146,17 +147,30 @@ FAIL = {"severity": "fail"}
 
 @pytest.mark.parametrize(
     ("mode", "integrity"),
-    [("full_frame", False), ("auto", True)],
-    ids=["keys-full_frame", "integrity-auto"],
+    [("full_frame", False), ("full_frame", True)],
+    ids=["keys-full_frame", "integrity-full_frame"],
 )
 def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
     tmp_path: Path, mode: str, integrity: bool
 ) -> None:
-    sink = RecordingSink()
+    out = tmp_path / "sink"
     config = _config(tmp_path, broken=True, integrity=integrity)
-    exc = _blocked(lambda: _run(config, mode, sink=sink))
+    exc = _blocked(lambda: _run(config, mode, sink=ParquetTransactionalSink(out)))
     assert exc.reason == DUPLICATES
+    assert not out.exists()
+    assert not list(tmp_path.glob("_decoy_stage_*"))
+
+
+def test_at16_integrity_with_a_sink_the_gate_cannot_read_refuses_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """An explicit integrity check is never deferred: the run refuses before the sink is used."""
+    sink = RecordingSink()
+    with pytest.raises(Exception) as caught:
+        _run(_config(tmp_path, broken=True, integrity=True), "auto", sink=sink)
+    assert str(getattr(caught.value, "code", "")) == "post_scan_integrity_sink_unreadable"
     assert sink.calls == []
+    assert not list(tmp_path.glob("_decoy_stage_*"))
 
 
 @pytest.mark.parametrize("route", ["sequential", "out_of_core"])
@@ -181,12 +195,13 @@ def test_at16_integrity_with_a_sink_and_lazy_inputs_still_withholds_on_a_failing
     cfg, _, lazy = subset_sup.job(tmp_path)
     cfg["subset"] = None
     cfg["post_scan"] = {"integrity": True}
-    sink = RecordingSink()
+    out = tmp_path / "sink"
+    sink = ParquetTransactionalSink(out)
     exc = _blocked(
         lambda: run_pipeline(cfg, lazy, engine_version=V, sink=sink, execution_mode="full_frame")
     )
     assert exc.reason == "post_scan.finding_blocked"
-    assert sink.calls == []
+    assert not out.exists()
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -222,8 +237,8 @@ def test_at20_a_job_with_no_keys_and_no_integrity_gets_no_report(tmp_path: Path)
 
 
 def test_at20_integrity_adds_the_column_suite_to_the_same_report(tmp_path: Path) -> None:
-    result, routes = _run(_config(tmp_path, integrity=True))
-    assert routes == ["full_frame"]  # the column suite needs the whole output
+    result, routes = _run(_config(tmp_path, integrity=True), "full_frame")
+    assert routes == ["full_frame"]
     report = result.quality_metrics["post_scan_integrity"]
     assert {"keys", "verdict", "residual_pii", "fk_preservation"} <= set(report)
 
