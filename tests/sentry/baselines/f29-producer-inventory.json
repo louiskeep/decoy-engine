@@ -638,9 +638,6 @@
   "execution/_strategies/_text_mask.py::TextMaskHandler.run::kw::'fpe_unencryptable_domain'": {
    "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
   },
-  "execution/_strategies/_text_mask.py::TextMaskHandler.run::kw::'ner_model_version_mismatch'": {
-   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
-  },
   "execution/_strategies/_text_mask.py::TextMaskHandler.run::kw::'text_mask_sub_floor_span_handled'": {
    "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
   },
@@ -1374,9 +1371,6 @@
    "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
   },
   "execution/out_of_core/_mask_group_c.py::_text_mask_array::kw::'fpe_unencryptable_domain'": {
-   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
-  },
-  "execution/out_of_core/_mask_group_c.py::_text_mask_ner::kw::'ner_model_version_mismatch'": {
    "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
   },
   "execution/out_of_core/_mask_group_c.py::group_c_array::kw::'out_of_core_strategy_unsupported'": {

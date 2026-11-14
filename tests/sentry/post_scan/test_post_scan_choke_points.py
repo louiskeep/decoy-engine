@@ -281,3 +281,26 @@ def test_a_residency_decision_outside_the_helper_is_flagged() -> None:
     source = "def f(c):\n    return post_scan_resident_reason(c)\n"
     found = _keys(scan.readability_label, source, "execution/x.py")
     assert [k.split("::")[2] for k in found] == ["decision-call"]
+
+
+def test_the_isolated_parent_commits_only_from_its_two_named_sites() -> None:
+    entries = _baseline("post-scan-commit")
+    commits = {k.split("::", 3)[1] for k in entries if "::atomic-commit::" in k}
+    assert commits == {"_run_in_process", "_commit"}
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "execution/_isolated_run.py",
+        "execution/_isolated_reason.py",
+        "execution/_isolated_worker.py",
+    ],
+)
+def test_an_atomic_commit_added_to_the_blocked_outcome_path_is_flagged(rel: str) -> None:
+    planted = _real(rel) + "\n\ndef _blocked_path(a, b):\n    atomic_commit(a, b)\n"
+    found = _keys(scan.commit_label, planted, rel)
+    assert f"decoy_engine/{rel}::_blocked_path::atomic-commit::0" in found
+    assert f"decoy_engine/{rel}::_blocked_path::atomic-commit::0" not in _baseline(
+        "post-scan-commit"
+    )
