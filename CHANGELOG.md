@@ -17,6 +17,7 @@ minimum engine version it was tested against via its
 - a column that leaves out a setting its strategy needs (a namespace for `hash`, `fpe`, `date_shift`, `bucket_perturb`, `categorical`, `tokenize` and `shuffle` with `deterministic: true`, or `provider_config.strategy` and `target` for `nested`) is now refused at validation and compile; add the setting.
 - `derived` and `formula` now treat `Decimal('NaN')`, numpy NaN scalars, `pd.NaT`, `numpy.datetime64('NaT')` and `pd.NA` as missing, so a `derived` column that references a null parquet timestamp writes a null cell where it used to write a value such as `0`.
 - a vault writer is refused with a sink or a chunked entry, a `TokenVaultWriter` needs `derivation_scope`, tokenize output changes, and an existing vault file is refused instead of overwritten; see the entry.
+- with relationships declared, a run whose output gains primary key duplicates or nulls, or foreign key orphans the inputs did not have, now fails with `PostScanBlockedError` and publishes nothing; `decide_execution_route` takes `post_scan_resident` in place of `post_scan_integrity`, and `compute_post_scan_integrity` is removed; see the PS-8 entry.
 
 ### Changed (post-scan gate wired into run_pipeline, POSTSCAN-STREAM PS-8, 2026-11-13)
 
