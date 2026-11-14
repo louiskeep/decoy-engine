@@ -189,7 +189,7 @@ class GovernorTripRecord:
     error: str | None
 
 
-GovernorOutcome = Literal["completed", "exhausted"]
+GovernorOutcome = Literal["completed", "exhausted", "blocked"]
 
 
 @dataclass(frozen=True)
@@ -204,6 +204,8 @@ class GovernorResult:
     (`use_runtime_governor=False`) exhausted path has no trip history, so
     it carries the ONE rung's own `IsolatedRunResult` here instead --
     callers keep its `outcome`/`peak_rss_mb`/`error` rather than losing it.
+    `blocked` is terminal: the post-scan gate withheld the output on `final_route`, `result`
+    keeps the report, and no further route is tried.
     """
 
     outcome: GovernorOutcome
@@ -357,6 +359,13 @@ def run_job_with_governor(
                 outcome="completed", final_route=route, result=result, trips=tuple(trips)
             )
 
+        if result.outcome == "blocked":
+            # The post-scan gate withheld the output. Another route runs the same data into the
+            # same verdict, so there is nothing to reroute; the report rides on `result`.
+            return GovernorResult(
+                outcome="blocked", final_route=route, result=result, trips=tuple(trips)
+            )
+
         next_route = _next_rung(ladder, index)
 
         if _is_route_ineligible(route, result):
@@ -395,9 +404,9 @@ def run_job_with_governor(
             )
         else:
             if result.outcome != "oom_killed":
-                # IsolatedRunOutcome is a 3-value Literal ("completed",
-                # "oom_killed", "crashed"); both other values are handled
-                # above, so this branch is unreachable in practice -- a
+                # IsolatedRunOutcome is a 4-value Literal ("completed",
+                # "oom_killed", "crashed", "blocked"); the other values are
+                # handled above, so this branch is unreachable in practice -- a
                 # raised error (not a bare `assert`, which `python -O`
                 # strips) if a future outcome value is ever added without
                 # updating this function.
@@ -536,6 +545,8 @@ def _run_flag_off(
     result = run_pipeline_isolated(config, sources, execution_mode=route, **isolated_kwargs)
     if result.outcome == "completed":
         return GovernorResult(outcome="completed", final_route=route, result=result, trips=())
+    if result.outcome == "blocked":
+        return GovernorResult(outcome="blocked", final_route=route, result=result, trips=())
     return GovernorResult(
         outcome="exhausted",
         final_route=None,

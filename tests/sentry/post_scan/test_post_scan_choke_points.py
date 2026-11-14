@@ -290,10 +290,17 @@ def test_the_isolated_parent_commits_only_from_its_two_named_sites() -> None:
 
 
 @pytest.mark.parametrize(
-    "rel", ["execution/_isolated_run.py", "execution/_isolated_reason.py", "execution/_isolated_worker.py"]
+    "rel",
+    [
+        "execution/_isolated_run.py",
+        "execution/_isolated_reason.py",
+        "execution/_isolated_worker.py",
+    ],
 )
 def test_an_atomic_commit_added_to_the_blocked_outcome_path_is_flagged(rel: str) -> None:
     planted = _real(rel) + "\n\ndef _blocked_path(a, b):\n    atomic_commit(a, b)\n"
     found = _keys(scan.commit_label, planted, rel)
     assert f"decoy_engine/{rel}::_blocked_path::atomic-commit::0" in found
-    assert f"decoy_engine/{rel}::_blocked_path::atomic-commit::0" not in _baseline("post-scan-commit")
+    assert f"decoy_engine/{rel}::_blocked_path::atomic-commit::0" not in _baseline(
+        "post-scan-commit"
+    )

@@ -43,10 +43,10 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 __all__ = [
+    "ISOLATED_OUTCOMES",
     "ISOLATED_WORKER_ENV",
     "RESULT_FILENAME",
     "RLIMIT_KINDS",
-    "ISOLATED_OUTCOMES",
     "IsolatedRunOutcome",
     "IsolatedRunResult",
     "abnormal_exit_text",
@@ -84,7 +84,7 @@ ISOLATED_WORKER_ENV = "DECOY_INSIDE_ISOLATED_WORKER"
 # parent directory).
 RESULT_FILENAME = "result.json"
 
-IsolatedRunOutcome = Literal["completed", "oom_killed", "crashed"]
+IsolatedRunOutcome = Literal["completed", "oom_killed", "crashed", "blocked"]
 # The envelope outcomes a driver accepts; anything else (a bool, a new token) is a dead child.
 ISOLATED_OUTCOMES: tuple[str, ...] = get_args(IsolatedRunOutcome)
 
