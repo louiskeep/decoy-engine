@@ -240,11 +240,14 @@ class PostScanGate:
         output went unchecked. A run whose column suite needs the whole output is refused, fail
         closed. With no sink (the post-condition after the route) a gate that never ran is a
         wiring fault and refuses."""
-        if self.ran or not self.required or self.deferred:
+        if self.ran or not self.required:
             return
         if sink is not None and not post_scan_output_readable(post_scan_sink_kind(sink)):
+            # Flagged even when the route already deferred the gate, so the warning is not lost.
             self.output_unreadable = True
-            self.ran = True
+            self.ran = not self.deferred  # a deferred gate still owes its report-only check
+            return
+        if self.deferred:
             return
         openers = _staged_openers(sink)
         if openers is not None and not post_scan_integrity_requested(self._config):

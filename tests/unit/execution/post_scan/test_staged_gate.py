@@ -1,7 +1,7 @@
 """AT-15, AT-16, AT-20, AT-27, AT-28 and AT-29: the gate reads a staged sink back before commit.
 
 A route that streams its tables into a `ParquetTransactionalSink` is judged from the staged files
-at commit: a blocking verdict commits nothing, an unreadable sink keeps the run resident, and the
+at commit: a blocking verdict commits nothing, a foreign sink keeps its route and the gate is deferred, and the
 inputs are re-read in batches under the bind-time identity check. All values are made up.
 """
 
@@ -356,6 +356,49 @@ def test_at28_a_readable_sink_is_not_deferred(tmp_path: Path) -> None:
     result, _ = _run(_config(tmp_path), "auto", sink=ParquetTransactionalSink(tmp_path / "ok"))
     assert "post_scan_gate_deferred" not in result.quality_metrics
     assert _unreadable_warnings(result) == []
+
+
+def test_at28_a_subclass_of_the_engine_sink_is_foreign(tmp_path: Path) -> None:
+    commits: list[str] = []
+
+    class Subclassed(ParquetTransactionalSink):
+        def commit(self) -> None:
+            commits.append("commit")
+            super().commit()
+
+    out = tmp_path / "published"
+    result, routes = _run(_config(tmp_path), "auto", sink=Subclassed(out))
+    assert routes != ["full_frame"]
+    assert commits == ["commit"]
+    assert _published(out) == ["child.parquet", "parent.parquet"]
+    assert "post_scan_gate_deferred" in result.quality_metrics
+    assert len(_unreadable_warnings(result)) == 1
+
+
+def test_at28_a_loader_run_with_a_foreign_sink_also_gets_the_warning(tmp_path: Path) -> None:
+    from tests.unit.execution.post_scan.test_wiring import _parent_child_tables
+
+    parent, child = _parent_child_tables()
+    tables = {"parent": parent, "child": child}
+    sink = RecordingSink()
+    result, routes = _run(
+        _config(tmp_path),
+        "sequential",
+        sources={},
+        source_loader=lambda name: tables[name],
+        source_loader_schemas={n: t.schema for n, t in tables.items()},
+        sink=sink,
+    )
+    assert routes == ["sequential"]
+    assert [c for c in sink.calls if c[0] == "commit"] == [("commit",)]
+    assert "post_scan_gate_deferred" in result.quality_metrics
+    assert len(_unreadable_warnings(result)) == 1
+
+
+def test_at28_a_deferred_gate_still_flags_a_foreign_commit() -> None:
+    gate = PostScanGate({"relationships": [{"x": 1}]}, deferred=True)
+    gate.before_commit(RecordingSink())
+    assert gate.output_unreadable and gate.deferred and not gate.ran
 
 
 def test_at28_the_resident_reason_ignores_the_sink() -> None:

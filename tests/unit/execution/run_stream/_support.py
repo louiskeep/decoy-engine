@@ -93,8 +93,8 @@ def real_sink(tmp_path: Path, name: str = "out") -> tuple[b6a.RecordingSink, Pat
 
 def engine_sink(tmp_path: Path, name: str = "out") -> tuple[ParquetTransactionalSink, Path]:
     """The engine's own sink class, unwrapped. A keyed run reads its staged output back only from
-    this exact class; `real_sink` wraps it, which is a foreign producer and keeps the run
-    resident."""
+    this exact class; `real_sink` wraps it, which is a foreign producer: it keeps its route
+    and the gate is deferred."""
     target = tmp_path / name
     return ParquetTransactionalSink(target), target
 

@@ -161,7 +161,7 @@ def post_scan_model_setting(config: Mapping[str, Any]) -> str | None:
 
 NO_SINK_KIND = "None"
 # The one sink class whose staged output the gate may read back. Any other class, including a
-# subclass, is a foreign producer: its files are never trusted, so the run stays resident.
+# subclass, is a foreign producer: its files are never trusted, so it keeps its route and the gate is deferred.
 _READABLE_SINK_KINDS = frozenset(
     {NO_SINK_KIND, "decoy_engine.execution._transactional_sink.ParquetTransactionalSink"}
 )

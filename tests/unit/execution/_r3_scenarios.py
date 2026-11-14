@@ -598,8 +598,8 @@ def traced_engine_sink(
 ) -> ParquetTransactionalSink:
     """The engine's own sink with every call recorded in order, and an optional failure on the
     Nth write. It patches the instance, not the class: the post-scan gate reads staged output
-    only from the exact engine sink class (a wrapper or subclass is a foreign producer and keeps
-    a keyed run resident), and this trace is of the bounded routes. `sink.calls` is the log."""
+    only from the exact engine sink class (a wrapper or subclass is a foreign producer: it keeps
+    its route and the gate is deferred), and this trace is of the bounded routes. `sink.calls` is the log."""
     sink = inner
     calls: list[str] = []
     writes = [0]

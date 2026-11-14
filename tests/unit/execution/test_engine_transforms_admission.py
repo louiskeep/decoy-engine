@@ -15,7 +15,6 @@ from decoy_engine import run_pipeline
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution import _transforms, _transforms_table
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.vault import VaultWriter
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
@@ -458,21 +457,6 @@ class TestLazySources:
     def test_loader_only_failure_after_an_earlier_table_is_the_documented_limit(self, tmp_path):
         cfg, sources = _job(tmp_path, child=[{"op": "sort", "by": ["nope"]}])
         held: list[str] = []
-        # The engine's own sink class, recorded on the instance: a keyed run reads staged output
-        # only from that class, and any other sink keeps the job off the sequential route.
-        sink = ParquetTransactionalSink(tmp_path / "held_out")
-        real_write, real_batches = sink.write, sink.write_batches
-
-        def write(name: str, data: pa.Table) -> None:
-            held.append(name)
-            real_write(name, data)
-
-        def write_batches(name: str, batches: Any, *, schema: pa.Schema) -> None:
-            held.append(name)
-            real_batches(name, batches, schema=schema)
-
-        sink.write = write  # type: ignore[method-assign]
-        sink.write_batches = write_batches  # type: ignore[method-assign]
         with pytest.raises(_transforms.TransformError):
             _run(
                 cfg,
@@ -480,7 +464,7 @@ class TestLazySources:
                 execution_mode="sequential",
                 source_loader=lambda name: sources[name],
                 source_loader_schemas={n: t.schema for n, t in sources.items()},
-                sink=sink,
+                sink=lambda name, data: held.append(name),
             )
         assert held == ["parent"]
 
