@@ -1,12 +1,17 @@
 """Regenerate the SCAN-MULTI S3-engine.1 parity fixtures.
 
-    python tests/fixtures/scan_multi/capture_cli_inference.py --cli-src PATH
+    python tests/fixtures/scan_multi/capture_cli_inference.py --cli-src PATH \
+        --replace-word OLD=NEW
+
+``--replace-word`` (or the env var ``CAPTURE_REPLACE_WORD``, same ``OLD=NEW`` form): the CLI
+copy at 8fba6af uses a product word the repo no longer ships; pass it here so the fixture
+records 'The scan'. The word itself is not written in any tracked file.
 
 ``PATH`` is the ``src`` folder of the CLI at commit 8fba6af (``git archive 8fba6af src`` into
 a scratch folder is enough). The script runs the CLI's own ``_infer_strategy_for_column`` and
 ``_emit_column_yaml`` on each case below and records what the CLI decided, so the engine port
-is judged against the CLI and not against a hand copy of it. Review text is recorded with the
-retired product name replaced by "The scan" (see `_RETIRED_NAME`). It also records the engine's
+is judged against the CLI and not against a hand copy of it. Review text is recorded with one
+word replaced (see `--replace-word`). It also records the engine's
 ``DEFAULT_STRATEGY_BY_DETECTOR`` as it stood before the descriptor registry (run it against
 the pre-registry engine to refresh that file; the checked-in copy came from engine main
 07763ff5).
@@ -19,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -27,11 +33,6 @@ from types import SimpleNamespace
 import yaml
 
 HERE = Path(__file__).resolve().parent
-
-# The CLI's review copy starts with the retired product name. The engine copy says "The scan"
-# instead (the removed-surface sentry bars the old name), so the fixture records the CLI text
-# with that one substitution. The name is built from single letters so this file passes the sentry.
-_RETIRED_NAME = re.compile("".join(["S", "T", "O", "R", "M"]))
 
 # Every detector id the CLI table keys, in table order.
 CLI_DETECTORS = [
@@ -123,7 +124,7 @@ def _stats(case: dict) -> SimpleNamespace:
     )
 
 
-def _decision(inference, emit) -> dict:
+def _decision(inference, emit, rewrite) -> dict:
     """Read the strategy, provider and provider_config the CLI would write for one column."""
     block = yaml.safe_load(emit("c", inference, indent="")) or {}
     # The emitted text is `# REVIEW...` lines then `- name: c` and its keys.
@@ -133,7 +134,7 @@ def _decision(inference, emit) -> dict:
         "provider": entry.get("provider"),
         "provider_config": entry.get("provider_config", {}),
         "deterministic": bool(entry.get("deterministic", False)),
-        "review": _RETIRED_NAME.sub("The scan", inference.review),
+        "review": rewrite(inference.review),
     }
 
 
@@ -141,7 +142,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cli-src", required=True, type=Path)
     parser.add_argument("--no-default-base", action="store_true")
+    parser.add_argument("--replace-word", default=os.environ.get("CAPTURE_REPLACE_WORD"))
     args = parser.parse_args()
+    if not args.replace_word or "=" not in args.replace_word:
+        parser.error("--replace-word OLD=NEW is required")
+    old, new = args.replace_word.split("=", 1)
+    retired = re.compile(re.escape(old))
+
+    def rewrite(text: str) -> str:
+        return retired.sub(lambda _m: new, text)
+
     sys.path.insert(0, str(args.cli_src))
     from decoy.cli._init_inference import _infer_strategy_for_column
     from decoy.cli.init import _emit_column_yaml
@@ -149,9 +159,9 @@ def main() -> int:
     recorded = []
     for case in cases():
         inference = _infer_strategy_for_column(_stats(case))
-        recorded.append({**case, "expected": _decision(inference, _emit_column_yaml)})
+        recorded.append({**case, "expected": _decision(inference, _emit_column_yaml, rewrite)})
     document = {
-        "source": "decoy CLI 8fba6af _infer_strategy_for_column (review text: retired product name replaced by The scan)",
+        "source": "decoy CLI 8fba6af _infer_strategy_for_column (review text: one product word replaced)",
         "cases": recorded,
     }
     (HERE / "cli_inference_8fba6af.json").write_text(json.dumps(document, indent=2) + "\n")

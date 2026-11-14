@@ -1,5 +1,5 @@
 {
-  "source": "decoy CLI 8fba6af _infer_strategy_for_column (review text: retired product name replaced by The scan)",
+  "source": "decoy CLI 8fba6af _infer_strategy_for_column (review text: one product word replaced)",
   "cases": [
     {
       "id": "detector-email",
