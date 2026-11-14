@@ -66,7 +66,10 @@ def test_every_nested_connection_sees_the_cap(
     _run(tmp_path, out_of_core_threads=2)
     assert len(opened) >= 2  # the relation build and at least one joiner
     for config in opened:
-        assert config["threads"] == _expected_threads(config, cap=2, cpus=8) == 2
+        assert config["threads"] == _expected_threads(config, cap=2, cpus=8)
+    # The route's own connections have the memory for the whole cap; the post-scan gate's
+    # connection is held to 512MB and so to one thread, which its own limit decides.
+    assert max(c["threads"] for c in opened) == 2
 
 
 def test_no_cap_keeps_no_user_cap_but_honors_detected_cpus(
@@ -76,7 +79,8 @@ def test_no_cap_keeps_no_user_cap_but_honors_detected_cpus(
     _run(tmp_path)
     assert opened
     for config in opened:
-        assert config["threads"] == _expected_threads(config, cap=None, cpus=3) == 3
+        assert config["threads"] == _expected_threads(config, cap=None, cpus=3)
+    assert max(c["threads"] for c in opened) == 3
 
 
 def test_a_cap_above_the_detected_cpus_is_clamped_to_them(
@@ -84,7 +88,9 @@ def test_a_cap_above_the_detected_cpus_is_clamped_to_them(
 ) -> None:
     monkeypatch.setattr(_duckdb, "detect_usable_cpus", lambda: 4)
     _run(tmp_path, out_of_core_threads=64)
-    assert {c["threads"] for c in opened} == {4}
+    for config in opened:
+        assert config["threads"] == _expected_threads(config, cap=min(64, 4), cpus=4)
+    assert max(c["threads"] for c in opened) == 4  # clamped to the CPUs, never to the cap
 
 
 def test_a_small_memory_limit_takes_threads_below_the_cap(

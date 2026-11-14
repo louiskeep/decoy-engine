@@ -171,13 +171,18 @@ from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
 )
+from decoy_engine.execution.pipeline._post_scan import note_quarantined, publish_after_gate
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.progress import get_active_channel
-from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
+from decoy_engine.quarantine import (
+    compute_quarantine,
+    finalize_committed_quarantine,
+    quarantine_row_mask,
+)
 from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 if TYPE_CHECKING:
@@ -539,6 +544,10 @@ def run_sequential(
                 )
 
                 if table_records:  # reaching here means every record was covered
+                    note_quarantined(
+                        {table: out},
+                        quarantine_row_mask({table: out}, None, q_cfg, row_errors=table_records),
+                    )
                     filtered, entries, counts, _total = compute_quarantine(
                         {table: out}, None, q_cfg, row_errors=table_records
                     )
@@ -640,6 +649,7 @@ def run_sequential(
             output_path=q_output_path,
             entries=quarantine_entries,
             counts_by_trigger=counts_by_trigger,
+            publish=publish_after_gate,  # a run the gate blocks publishes no row values
         )
         if quarantine_metrics is not None:
             quality_metrics["quarantine"] = quarantine_metrics

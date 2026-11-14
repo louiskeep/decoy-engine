@@ -162,7 +162,7 @@ def test_a_missing_key_column_and_incomparable_types_are_their_own_codes(tmp_pat
     gone = tables(p={"id": [1]}, c={"other": [1]})
     res = run(tmp_path, rels, source, gone)[("c", "foreign")]
     assert (res.status, codes(res)) == ("key_column_missing", {"key_column_missing"})
-    mixed = tables(p={"id": [1]}, c={"pid": ["1"]})
+    mixed = tables(p={"id": [1]}, c={"pid": ["unencodable"]})
     res = run(tmp_path, rels, source, mixed)[("c", "foreign")]
     assert (res.status, codes(res)) == ("key_type_mismatch", {"key_type_mismatch"})
 
@@ -274,7 +274,7 @@ def test_a_child_shared_by_two_parents_is_checked_against_the_union(tmp_path: Pa
 
 def test_parents_with_different_key_types_are_a_type_mismatch(tmp_path: Path) -> None:
     rels = [rel("a", ["id"], ("c", ["k"])), rel("b", ["id"], ("c", ["k"]))]
-    data = tables(a={"id": [1]}, b={"id": ["x"]}, c={"k": [1]})
+    data = tables(a={"id": [1]}, b={"id": ["unencodable"]}, c={"k": [1]})
     res = run(tmp_path, rels, data, data)[("c", "foreign")]
     assert (res.status, codes(res)) == ("key_type_mismatch", {"key_type_mismatch"})
 
@@ -305,7 +305,7 @@ def test_a_table_absent_from_the_inputs_has_a_zero_baseline(tmp_path: Path) -> N
 
 def test_a_source_side_type_mismatch_has_no_source_counts(tmp_path: Path) -> None:
     rels = [rel("p", ["id"], ("c", ["pid"]))]
-    source = tables(p={"id": [1]}, c={"pid": ["1"]})
+    source = tables(p={"id": [1]}, c={"pid": ["unencodable"]})
     output = tables(p={"id": [1]}, c={"pid": [9]})
     hit = run(tmp_path, rels, source, output)[("c", "foreign")]
     # Not counted, so no zero to misread; the output is still compared with zero below.

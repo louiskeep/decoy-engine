@@ -251,3 +251,94 @@ def required_label(node: ast.AST) -> str | None:
 def applies_sites() -> list[str]:
     decisions = [k for k in scan(applies_label, ".") if not k.startswith(APPLIES_HOME)]
     return decisions + scan(required_label, GATE)
+
+
+# ----- no commit without the gate -------------------------------------------------------------
+
+COMMIT_HOME = ("_publication_observer.py", "observed_commit")
+# `publish.commit()` is the session wrapper, whose own `commit` goes through `observed_commit`.
+# Only these files may call it, matched by exact path and receiver name, so a helper named
+# `publish` elsewhere is still a commit site.
+PUBLISH_SESSION_FILES = frozenset(
+    {
+        "decoy_engine/execution/_pipeline_full_frame.py",
+        "decoy_engine/execution/_pipeline_mixed_route.py",
+        "decoy_engine/generation/_streamed.py",
+    }
+)
+
+
+def _receiver(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        inner = func.value
+        return inner.attr if isinstance(inner, ast.Attribute) else _name(inner)
+    return None
+
+
+def commit_label(node: ast.AST) -> str | None:
+    """A sink commit outside `observed_commit`: `x.commit()`, `atomic_commit(...)`, or a
+    `getattr(x, "commit")` handle. `publish.commit()` is the named session wrapper, whose own
+    `commit` goes through `observed_commit`."""
+    if not isinstance(node, ast.Call):
+        return None
+    name = _name(node.func)
+    if name == "atomic_commit":
+        return "atomic-commit"
+    if name == "getattr" and len(node.args) > 1 and "commit" in _strings(node.args[1]):
+        return "getattr-commit"
+    if name == "commit" and isinstance(node.func, ast.Attribute):
+        return "publish-commit" if _receiver(node) == "publish" else "commit-call"
+    return None
+
+
+def session_commit(key: str) -> bool:
+    """True for a `publish.commit()` site in one of the session wrapper's own files."""
+    path, _, label, _ = key.split("::")
+    return label == "publish-commit" and path in PUBLISH_SESSION_FILES
+
+
+def commit_sites() -> list[str]:
+    keys = scan(commit_label, "execution", "generation")
+    home = f"/{COMMIT_HOME[0]}::{COMMIT_HOME[1]}::"
+    return [k for k in keys if home not in k and not session_commit(k)]
+
+
+# ----- one model predicate --------------------------------------------------------------------
+
+MODEL_HOME = "decoy_engine/config/_post_scan.py"
+
+
+def model_label(node: ast.AST) -> str | None:
+    """A read of `ner_findings`, or `detectors` weighed against `"regex"`, outside the predicate."""
+    if isinstance(node, ast.Constant) and node.value == "ner_findings":
+        return "ner-findings-read"
+    if isinstance(node, ast.Compare):
+        operands = [node.left, *node.comparators]
+        if any("regex" in _strings(o) for o in operands) and any(
+            "detectors" in ast.unparse(o) for o in operands
+        ):
+            return "detectors-compare"
+    return None
+
+
+def model_sites() -> list[str]:
+    return [k for k in scan(model_label, ".") if not k.startswith(MODEL_HOME)]
+
+
+# ----- one route residency decision ----------------------------------------------------------
+
+READABILITY_HOME = "decoy_engine/execution/_transforms_gate.py::post_scan_resident_for::"
+CONFIG_HOME = "decoy_engine/config/_post_scan.py"
+
+
+def readability_label(node: ast.AST) -> str | None:
+    """A residency decision made outside the one helper."""
+    if isinstance(node, ast.Call) and _name(node.func) == "post_scan_resident_reason":
+        return "decision-call"
+    return None
+
+
+def readability_sites() -> list[str]:
+    keys = scan(readability_label, ".")
+    return [k for k in keys if not k.startswith((READABILITY_HOME, CONFIG_HOME))]

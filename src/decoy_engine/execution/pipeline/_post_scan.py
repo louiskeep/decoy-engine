@@ -5,70 +5,121 @@ Declared keys are measured over Arrow batches by `check_keys`. The column suite 
 relationships is never scanned for findings it did not opt in to. `post_scan_verdict` decides and a
 block raises `PostScanBlockedError` after every `except` block has closed, so its chain is empty.
 A coded engine error from a part propagates unchanged; any other keeps only its class name,
-because a reader or DuckDB message can quote key values. No route calls the gate yet.
+because a reader or DuckDB message can quote key values.
+
+`execute_route` binds one gate per run (`bind_gate`); a route that holds its outputs resident
+runs it before it commits, and `observed_commit` refuses a commit while a required gate has not
+run. `settle` runs it over the returned outputs when no route did, and stamps its report on the
+result.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Final
+from collections.abc import Callable, Collection, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, Final
 
 import pyarrow as pa
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
+from decoy_engine._lexeme import lexeme_columns_by_table
 from decoy_engine.config import (
+    RelationshipConfig,
     parse_relationship_config,
     post_scan_gate_applies,
     post_scan_integrity_requested,
 )
+from decoy_engine.execution._chunked_input import SourceFacts, capture_source_facts, check_opened
+from decoy_engine.execution._pipeline_sources import materialize_source
+from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
 from decoy_engine.internal.memory_limit import require_megabytes
+from decoy_engine.profile import LazySource
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
 from decoy_engine.progress import safe_error_class
+from decoy_engine.reasons import reason_ref_payload
 from decoy_engine.verification.postmask import (
     SCHEMA_VERSION,
     KeyResult,
     PostScanVerdict,
     blocked_error,
     check_keys,
+    from_lazy,
     from_table,
     keys_report,
     post_scan_verdict,
     run_post_mask,
 )
 
-__all__ = ["PostScanGate"]
+if TYPE_CHECKING:
+    from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.execution._pipeline_context import PipelineRunContext
+    from decoy_engine.verification.postmask import TableBatches
+
+__all__ = ["PostScanGate", "active_gate", "bind_gate", "note_quarantined", "settle"]
 
 # `pass_failed_with` when the commit is reached and a required gate never ran.
 _NOT_RUN: Final = "PostScanGateNotRun"
+
+
+# A smaller cap starves DuckDB's hash join even at 100k keys (it fails to pin a block), so a small
+# run budget never takes the key scan below this.
+_FLOOR_MB: Final = 128
 
 
 class PostScanGate:
     """One run's gate. `ran` is set once a check completes; every later call is a no-op. After a
     run, `report` is the value-free report and `verdict` the decision on it."""
 
-    def __init__(self, config: Mapping[str, Any], *, budget_bytes: int | None = None) -> None:
+    def __init__(
+        self,
+        config: Mapping[str, Any],
+        *,
+        budget_bytes: int | None = None,
+        source_facts: Mapping[str, SourceFacts] | None = None,
+        deferred: bool = False,
+    ) -> None:
         self.required = post_scan_gate_applies(config)
+        # True on a route whose inputs or output the gate cannot read back yet: the run is then
+        # checked report-only, as before the gate, and says so on its result.
+        self.deferred = deferred and self.required
         self.ran = False
         self.report: dict[str, Any] | None = None
         self.verdict: PostScanVerdict | None = None
         self._config = config
         self._budget_bytes = budget_bytes
+        # Key columns of the parent rows quarantine removed. Kept only in memory, so a child
+        # that pointed at one is told apart from an orphan the run introduced; never reported.
+        self._quarantined: dict[tuple[str, tuple[str, ...]], list[pa.Table]] = {}
+        # Footer facts of each lazy input, taken before any route read it: a re-read refuses a
+        # file that changed in between.
+        self._source_facts = source_facts or {}
+        # Writes that carry row values (the quarantine file), held until the verdict passes.
+        self._held: list[Callable[[], None]] = []
 
     @property
     def memory_limit(self) -> str:
-        """The key scan's DuckDB cap: its own fixed cap or the run's budget, whichever is less."""
+        """The key scan's DuckDB cap: its own fixed cap or the run's budget share, whichever is
+        less, never below the working floor. The scan spills to its scratch directory past it."""
         budget = resolve_ooc_memory_limit(self._budget_bytes).memory_limit
-        return min(MEMORY_LIMIT, budget, key=require_megabytes)
+        capped = min(MEMORY_LIMIT, budget, key=require_megabytes)
+        return f"{max(_FLOOR_MB, require_megabytes(capped))}MB"
 
     def run_resident(
         self,
         outputs: Mapping[str, pa.Table],
-        sources: Mapping[str, pa.Table],
+        sources: Mapping[str, pa.Table | LazySource],
         table_kinds: Mapping[str, str],
     ) -> None:
-        """Check resident outputs against their sources; raise if the verdict blocks."""
+        """Check resident outputs against their sources (resident or lazy, re-read in batches);
+        raise if the verdict blocks."""
         if self.ran or not self.required:
+            return
+        if not self.deferred and not _resident(outputs, table_kinds):
+            self.deferred = True  # the route wrote its output to a sink; nothing is left to read
+        if self.deferred:
+            self._report_only(outputs, sources, table_kinds)
             return
         failed: str | None = None
         keys: tuple[KeyResult, ...] = ()
@@ -96,46 +147,194 @@ class PostScanGate:
         if error is not None:
             raise error
 
+    def _report_only(
+        self,
+        outputs: Mapping[str, pa.Table],
+        sources: Mapping[str, pa.Table | LazySource],
+        table_kinds: Mapping[str, str],
+    ) -> None:
+        """The check a deferred route gets: the column suite over the mask tables the run still
+        holds, reported and never blocking. Declared keys alone get no check yet."""
+        self.ran = True
+        if not post_scan_integrity_requested(self._config):
+            return
+        masked = [n for n in outputs if table_kinds.get(n, "mask") == "mask" and n in sources]
+        if masked:
+            self.report = run_post_mask(
+                {n: materialize_source(sources[n]).to_pandas() for n in masked},
+                {n: outputs[n].to_pandas() for n in masked},
+                config=dict(self._config),
+            )
+
+    def note_quarantined(self, table: str, rows: pa.Table, removed: Collection[int]) -> None:
+        """Record the declared parent keys of `rows` (a table before quarantine filtered it) at
+        the `removed` row indices. A relationship that cannot be read is left for the check to
+        report."""
+        if not self.required or self.deferred or not removed:
+            return
+        try:
+            relationships = self._relationships()
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            return
+        for rel in relationships:
+            columns = tuple(rel.parent.columns)
+            if rel.parent.table == table and set(columns) <= set(rows.column_names):
+                taken = rows.select(list(columns)).take(sorted(removed))
+                self._quarantined.setdefault((table, columns), []).append(taken)
+
+    def _relationships(self) -> list[RelationshipConfig]:
+        return [
+            parse_relationship_config(raw, prefix=f"relationship {n} is invalid")
+            for n, raw in enumerate(self._config.get("relationships") or ())
+        ]
+
     def before_commit(self, sink: Any) -> None:
-        """Refuse the commit when a required gate never ran. No sink's staged files can be checked
-        yet, so every sink is refused; `ran` stays false, so a retry is refused too."""
-        if self.ran or not self.required:
+        """A required gate that has not run when a sink commits has no resident output to read:
+        the route wrote it to the sink as it went. That run is deferred, not refused. With no sink
+        (the post-condition after the route) a gate that never ran is a wiring fault and refuses."""
+        if self.ran or not self.required or self.deferred:
+            return
+        if sink is not None:
+            self.deferred = True
             return
         report = {"schema_version": SCHEMA_VERSION, "pass_failed_with": _NOT_RUN}
         error = blocked_error(report, post_scan_verdict(report))
         if error is not None:
             raise error
 
+    def _source(self, name: str, source: pa.Table | LazySource) -> TableBatches:
+        if not isinstance(source, LazySource):
+            return from_table(name, source)
+        expected = self._source_facts.get(name)
+        if expected is None:
+            return from_lazy(name, source)
+        return from_lazy(
+            name, source, on_open=lambda opened: check_opened(opened, expected, table=name)
+        )
+
     def _keys(
-        self, outputs: Mapping[str, pa.Table], sources: Mapping[str, pa.Table]
+        self, outputs: Mapping[str, pa.Table], sources: Mapping[str, pa.Table | LazySource]
     ) -> tuple[KeyResult, ...]:
-        rels = [
-            parse_relationship_config(raw, prefix=f"relationship {n} is invalid")
-            for n, raw in enumerate(self._config.get("relationships") or ())
-        ]
+        rels = self._relationships()
         if not rels:
             return ()
+        # The gate's connections go through the run's own recorder and thread cap, which
+        # `execute_route` binds around the route and this check alike.
         with fileaccess.protected_scratch_dir(prefix="decoy-post-scan-gate-") as scratch:
             return check_keys(
                 rels,
-                {name: from_table(name, table) for name, table in sources.items()},
+                {name: self._source(name, source) for name, source in sources.items()},
                 {name: from_table(name, table) for name, table in outputs.items()},
                 scratch=scratch,
                 memory_limit=self.memory_limit,
+                quarantined=self._quarantined,
             )
 
     def _column_suite(
         self,
         outputs: Mapping[str, pa.Table],
-        sources: Mapping[str, pa.Table],
+        sources: Mapping[str, pa.Table | LazySource],
         table_kinds: Mapping[str, str],
         keys: tuple[KeyResult, ...],
     ) -> dict[str, Any]:
         # Generated tables have no source to compare against, as in the report-only suite.
         masked = [n for n in outputs if table_kinds.get(n, "mask") == "mask" and n in sources]
         return run_post_mask(
-            {n: sources[n].to_pandas() for n in masked},
+            {n: materialize_source(sources[n]).to_pandas() for n in masked},
             {n: outputs[n].to_pandas() for n in masked},
             config=dict(self._config),
             keys=keys,
+        )
+
+
+_ACTIVE: ContextVar[PostScanGate | None] = ContextVar("decoy_post_scan_gate", default=None)
+
+
+def active_gate() -> PostScanGate | None:
+    """The gate bound to this run, or `None` outside `bind_gate`."""
+    return _ACTIVE.get()
+
+
+def _resident(outputs: Mapping[str, pa.Table], table_kinds: Mapping[str, str]) -> bool:
+    """Whether every table the run produces is still held in `outputs`."""
+    return all(name in outputs for name in table_kinds)
+
+
+def _deferred(ctx: PipelineRunContext, route: str) -> bool:
+    """Whether this run's inputs cannot be read back by the gate before the route runs: a loader
+    supplies tables nothing can re-read, a lazy table that declares transforms is transformed
+    inside the route, and a bounded route casts declared columns per chunk. Outputs that are not
+    resident are found later, when the gate is asked to run."""
+    lazy_transformed = any(
+        isinstance(ctx.caller_sources.get(name), LazySource)
+        for name in transform_bearing_mask_tables(ctx.config)
+    )
+    return (
+        ctx.source_loader is not None
+        or lazy_transformed
+        or (route != "full_frame" and bool(lexeme_columns_by_table(ctx.config)))
+    )
+
+
+@contextmanager
+def bind_gate(ctx: PipelineRunContext, route: str) -> Iterator[PostScanGate]:
+    """Bind one gate for the run. Its lazy-input snapshot is taken here, before any route reads."""
+    deferred = _deferred(ctx, route)
+    facts = (
+        capture_source_facts(ctx.caller_sources, ctx.table_kinds)
+        if post_scan_gate_applies(ctx.config) and not deferred
+        else {}
+    )
+    gate = PostScanGate(
+        ctx.config,
+        budget_bytes=ctx.out_of_core_budget_bytes,
+        source_facts=facts,
+        deferred=deferred,
+    )
+    token = _ACTIVE.set(gate)
+    try:
+        yield gate
+    finally:
+        _ACTIVE.reset(token)
+
+
+def note_quarantined(
+    tables: Mapping[str, pa.Table], removed: Mapping[str, Collection[int]]
+) -> None:
+    """Tell the run's gate which rows quarantine is about to remove from `tables` (still
+    unfiltered). Outside `bind_gate` there is no gate and nothing to tell."""
+    if (gate := active_gate()) is None:
+        return
+    for name, rows in removed.items():
+        if name in tables:
+            gate.note_quarantined(name, tables[name], rows)
+
+
+def publish_after_gate(write: Callable[[], None]) -> None:
+    """Run `write`, a publish that carries row values, once nothing can block the run: now when
+    no gate will judge it, else in `settle` after the verdict passes. A blocked run drops it."""
+    gate = active_gate()
+    if gate is None or not gate.required or gate.ran or gate.deferred:
+        write()
+    else:
+        gate._held.append(write)
+
+
+def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult) -> None:
+    """After a route returns: run the gate over the outputs when no route did, refuse a required
+    gate that still has not run, publish what waited on the verdict, and stamp the report."""
+    if not gate.ran:
+        gate.run_resident(result.outputs, ctx.caller_sources, ctx.table_kinds)
+    if gate.required and not gate.ran:
+        gate.before_commit(None)
+    held, gate._held = gate._held, []
+    for write in held:
+        write()
+    if gate.report is not None:
+        result.quality_metrics["post_scan_integrity"] = gate.report
+    if gate.deferred:
+        result.quality_metrics["post_scan_gate_deferred"] = reason_ref_payload(
+            reasons.post_scan.GATE_DEFERRED_ROUTE.spec.ref
         )

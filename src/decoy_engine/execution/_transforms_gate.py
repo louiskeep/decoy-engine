@@ -12,13 +12,16 @@ from collections.abc import Mapping
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.config import post_scan_resident_reason
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.reasons import ReasonCode
 
 PER_TABLE_TRANSFORMS_PRESENT = reasons.plan.PER_TABLE_TRANSFORMS_PRESENT
 
 __all__ = [
     "PER_TABLE_TRANSFORMS_PRESENT",
     "find_table_config",
+    "post_scan_resident_for",
     "reject_any_per_table_transforms",
     "reject_per_table_transforms",
     "transform_bearing_mask_tables",
@@ -72,3 +75,9 @@ def reject_any_per_table_transforms(config: Mapping[str, Any], *, route: str) ->
     """`reject_per_table_transforms` over every transform-bearing mask table."""
     for table in sorted(transform_bearing_mask_tables(config)):
         reject_per_table_transforms(config, table=table, route=route)
+
+
+def post_scan_resident_for(config: Mapping[str, Any]) -> ReasonCode | None:
+    """The one place a routing site asks whether the post-scan gate keeps the job resident:
+    every runtime, compiler and estimator site calls this."""
+    return post_scan_resident_reason(config)

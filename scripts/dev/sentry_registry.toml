@@ -131,3 +131,15 @@ baseline = "tests/sentry/baselines/post-scan-reason-identity.json"
 [[sentry]]
 id = "post-scan-gate-applies"
 baseline = "tests/sentry/baselines/post-scan-gate-applies.json"
+
+[[sentry]]
+id = "post-scan-commit"
+baseline = "tests/sentry/baselines/post-scan-commit.json"
+
+[[sentry]]
+id = "post-scan-model-predicate"
+baseline = "tests/sentry/baselines/post-scan-model-predicate.json"
+
+[[sentry]]
+id = "post-scan-readability"
+baseline = "tests/sentry/baselines/post-scan-readability.json"

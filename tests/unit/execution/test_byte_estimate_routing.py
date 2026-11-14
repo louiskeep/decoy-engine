@@ -587,13 +587,9 @@ class TestFlagOnByteEstimateRouting:
 
 
 def _faker_col(name: str, namespace: str) -> dict[str, Any]:
-    return {
-        "name": name,
-        "strategy": "faker",
-        "provider": "person_email",
-        "deterministic": True,
-        "namespace": namespace,
-    }
+    # A key-preserving strategy: faker draws from a pool, so 200k keys collide and the post-scan
+    # gate rightly withholds the run.
+    return {"name": name, "strategy": "hash", "namespace": namespace}
 
 
 def _write_source(tmp_path: Path, table: pa.Table, name: str) -> str:

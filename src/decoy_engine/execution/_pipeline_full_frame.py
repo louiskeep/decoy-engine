@@ -28,6 +28,7 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
+from decoy_engine.execution.pipeline._post_scan import active_gate
 from decoy_engine.generation.pool import PoolCache
 
 if TYPE_CHECKING:
@@ -305,9 +306,10 @@ def _run_full_frame(
             post_validation_sample_size=ctx.post_validation_sample_size,
             post_validation_enforce=ctx.post_validation_enforce,
         )
-        _pipeline_finalize.compute_post_scan_integrity(
-            result, config=ctx.config, sources=step.sources
-        )
+        # Before the cast run seals and before the commit: a block commits nothing. An executor
+        # called outside `execute_route` has no bound gate.
+        if (gate := active_gate()) is not None:
+            gate.run_resident(outputs, step.sources, ctx.table_kinds)
         if cast_run is not None:
             # Seal only once nothing failure-capable remains but the publish itself; a failure
             # from here on still discards the sealed artifact through cast_run.abort().

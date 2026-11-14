@@ -97,7 +97,14 @@ def capture_publication_failure(
 
 
 def observed_commit(sink: Any) -> None:
-    """``sink.commit()``, recording the outcome. Exceptions propagate unchanged."""
+    """``sink.commit()``, recording the outcome. Exceptions propagate unchanged.
+
+    The run's post-scan gate speaks first: a required gate that has not run refuses the commit,
+    before the evidence below, so a refusal is never recorded as a failed commit."""
+    from decoy_engine.execution.pipeline._post_scan import active_gate
+
+    if (gate := active_gate()) is not None:
+        gate.before_commit(sink)
     evidence = evidence_of(sink)
     try:
         sink.commit()

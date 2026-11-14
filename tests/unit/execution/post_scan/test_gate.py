@@ -20,7 +20,6 @@ from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
 from decoy_engine.execution.pipeline import _post_scan
 from decoy_engine.execution.pipeline._post_scan import PostScanGate
-from decoy_engine.profiling import MEMORY_LIMIT
 from decoy_engine.verification.postmask import PostScanBlockedError, TableBatches, from_table
 
 CANARY = "CANARY-31c4"
@@ -118,12 +117,24 @@ def test_before_commit_after_a_run_lets_the_commit_through() -> None:
     assert gate.ran
 
 
-def test_before_commit_on_a_required_unrun_gate_refuses() -> None:
+def test_before_commit_with_a_sink_on_an_unrun_gate_defers_it() -> None:
+    gate = PostScanGate(KEYS)
+    gate.before_commit(object())
+    assert gate.deferred and not gate.ran
+
+
+def test_before_commit_with_no_sink_on_a_required_unrun_gate_refuses() -> None:
     gate = PostScanGate(KEYS)
     for _ in range(2):
-        exc = blocked(lambda: gate.before_commit(object()))
+        exc = blocked(lambda: gate.before_commit(None))
         assert exc.reason == "post_scan.check_error" and exc.verdict.blocking
-    assert not gate.ran
+    assert not gate.ran and not gate.deferred
+
+
+def test_a_gate_whose_outputs_are_not_resident_defers_and_is_not_blocked() -> None:
+    gate = PostScanGate(KEYS)
+    gate.run_resident({}, SOURCES, KINDS)
+    assert gate.deferred and gate.ran and gate.report is None
 
 
 def test_a_blocking_verdict_raises_with_an_empty_chain() -> None:
@@ -180,14 +191,16 @@ def test_a_coded_error_from_a_part_propagates_as_the_same_object(
     assert not gate.ran
 
 
-def test_the_memory_limit_is_the_smaller_of_the_scan_cap_and_the_budget(
+def test_the_memory_limit_is_the_runs_budget_share_with_a_working_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    small = 256 * 1024 * 1024
+    small = 2 * 1024**3
     assert PostScanGate(KEYS, budget_bytes=small).memory_limit == (
         resolve_ooc_memory_limit(small).memory_limit
     )
-    assert PostScanGate(KEYS, budget_bytes=64 * 1024**3).memory_limit == MEMORY_LIMIT
+    assert PostScanGate(KEYS, budget_bytes=64 * 1024**3).memory_limit == "512MB"
+    # A tiny budget never starves the scan below the floor.
+    assert PostScanGate(KEYS, budget_bytes=64 * 1024 * 1024).memory_limit == "128MB"
     seen: list[str] = []
     real = _post_scan.check_keys
 
@@ -198,3 +211,37 @@ def test_the_memory_limit_is_the_smaller_of_the_scan_cap_and_the_budget(
     monkeypatch.setattr(_post_scan, "check_keys", spy)
     run(PostScanGate(KEYS, budget_bytes=small))
     assert seen == [resolve_ooc_memory_limit(small).memory_limit]
+
+
+def _ctx(loader: object | None = None) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(source_loader=loader, config={}, caller_sources={})
+
+
+def test_a_loader_supplied_input_defers_on_every_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {})
+    for route in ("full_frame", "sequential", "out_of_core"):
+        assert _post_scan._deferred(_ctx(object()), route) is True
+        assert _post_scan._deferred(_ctx(None), route) is False
+
+
+def test_declared_casting_defers_on_a_bounded_route_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {"t": ["c"]})
+    assert _post_scan._deferred(_ctx(), "full_frame") is False
+    assert _post_scan._deferred(_ctx(), "sequential") is True
+    assert _post_scan._deferred(_ctx(), "out_of_core") is True
+
+
+def test_a_lazy_table_that_declares_transforms_defers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from decoy_engine.profile import LazySource
+
+    lazy = LazySource.__new__(LazySource)
+    monkeypatch.setattr(_post_scan, "lexeme_columns_by_table", lambda config: {})
+    monkeypatch.setattr(_post_scan, "transform_bearing_mask_tables", lambda config: {"t"})
+    held = SimpleNamespace(source_loader=None, config={}, caller_sources={"t": lazy})
+    resident = SimpleNamespace(source_loader=None, config={}, caller_sources={"t": pa.table({})})
+    assert _post_scan._deferred(held, "sequential") is True
+    assert _post_scan._deferred(resident, "sequential") is False

@@ -140,7 +140,11 @@ def _assert_direct_call_matches_baseline(
     projected = sc._relocate(sc.snapshot(sc.Run(again)), tmp_path)
     for key in ("tables", "warnings", "row_errors", "table_kinds", "execution", "execution_plan"):
         assert projected[key] == expected[key], key
-    assert projected["quality_metrics"] == expected["quality_metrics"]
+    # The post-scan gate stamps its evidence in `execute_route`, which a direct executor call
+    # bypasses; every other key must match.
+    gate_keys = {"post_scan_integrity", "post_scan_gate_deferred"}
+    kept = {k: v for k, v in expected["quality_metrics"].items() if k not in gate_keys}
+    assert projected["quality_metrics"] == kept
 
 
 def _spy_route_exec(monkeypatch: pytest.MonkeyPatch) -> dict[str, dict[str, Any]]:
@@ -263,7 +267,9 @@ def test_full_frame_dispatch_witness_and_parity(
     projected = sc._relocate(sc.snapshot(sc.Run(again)), tmp_path)
     for key in ("tables", "warnings", "row_errors", "table_kinds", "execution", "execution_plan"):
         assert projected[key] == _BASELINE[name][key], key
-    assert projected["quality_metrics"] == _BASELINE[name]["quality_metrics"]
+    gate_keys = {"post_scan_integrity", "post_scan_gate_deferred"}
+    kept = {k: v for k, v in _BASELINE[name]["quality_metrics"].items() if k not in gate_keys}
+    assert projected["quality_metrics"] == kept
 
 
 @pytest.mark.parametrize("name", FULL_FRAME_WITNESS_ONLY)

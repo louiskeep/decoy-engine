@@ -31,6 +31,7 @@ from decoy_engine import reasons
 from decoy_engine.config._pre_scan import canonical_detectors, checked_ner_model, inactive
 from decoy_engine.detection.ner import DEFAULT_NER_MODEL
 from decoy_engine.detection.types import DetectorSource
+from decoy_engine.reasons import ReasonCode
 
 _DISMISSAL_INVALID = str(reasons.config.DISMISSAL_INVALID)
 
@@ -139,3 +140,31 @@ def post_scan_gate_applies(config: Mapping[str, Any]) -> bool:
     """True when a validated config dict needs the post-scan gate: a relationship is declared or
     Post-scan integrity is on. The one place that decision is made."""
     return bool(config.get("relationships")) or post_scan_integrity_requested(config)
+
+
+def post_scan_model_setting(config: Mapping[str, Any]) -> str | None:
+    """The post-scan setting that asks for a model check (`post_scan.detectors` other than
+    regex, or `post_scan.ner_findings: fail`), or `None`. Only an enabled suite asks."""
+    if not post_scan_integrity_requested(config):
+        return None
+    block = config["post_scan"]
+    detectors = block.get("detectors")
+    # Anything other than a list of `regex` entries counts as a model ask: fail closed on a raw dict.
+    if isinstance(detectors, list | tuple):
+        asks = any(d != "regex" for d in detectors)
+    else:
+        asks = detectors is not None and detectors != "regex"
+    if asks:
+        return "post_scan.detectors"
+    return "post_scan.ner_findings" if block.get("ner_findings") == "fail" else None
+
+
+def post_scan_resident_reason(config: Mapping[str, Any]) -> ReasonCode | None:
+    """Why a job must stay on the resident route for the post-scan gate, or `None`.
+
+    `post_scan.integrity` needs the whole output (the column suite is not streamed yet). Declared
+    keys alone never move a route: where the gate cannot read a route's inputs or output yet,
+    it defers and says so on the result."""
+    if post_scan_integrity_requested(config):
+        return reasons.route.POST_SCAN_INTEGRITY_REQUESTED
+    return None

@@ -77,7 +77,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine.config import FILE_SOURCE_PATH_FIELDS, post_scan_integrity_requested
+from decoy_engine.config import FILE_SOURCE_PATH_FIELDS
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -89,6 +89,7 @@ from decoy_engine.execution._pipeline_routing_signals import (
     largest_mask_table_rows_from_profile,
     out_of_core_admission,
 )
+from decoy_engine.execution._transforms_gate import post_scan_resident_for
 from decoy_engine.execution.out_of_core import resolve_budget, resolve_ooc_memory_limit
 from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
@@ -369,7 +370,7 @@ def estimate_job_capacity(
             validators=(config.get("validators") or []),
             fidelity_report=False,
             vault_writer=None,
-            post_scan_integrity=post_scan_integrity_requested(config),
+            post_scan_resident=post_scan_resident_for(config),
             execution_mode="auto",
             graph=graph,
             resolved_substrate="pandas",
@@ -431,7 +432,7 @@ def estimate_job_capacity(
                 validators=(config.get("validators") or []),
                 fidelity_report=False,
                 vault_writer=None,
-                post_scan_integrity=post_scan_integrity_requested(config),
+                post_scan_resident=post_scan_resident_for(config),
                 execution_mode="auto",
                 graph=graph,
                 resolved_substrate="pandas",

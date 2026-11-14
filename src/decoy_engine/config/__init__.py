@@ -67,6 +67,8 @@ from decoy_engine.config._post_scan import (
     PostScanConfig,
     post_scan_gate_applies,
     post_scan_integrity_requested,
+    post_scan_model_setting,
+    post_scan_resident_reason,
 )
 from decoy_engine.config._pre_scan import PreScanConfig
 from decoy_engine.config._relationships import (
@@ -158,6 +160,8 @@ __all__ = [
     "parse_relationship_config",
     "post_scan_gate_applies",
     "post_scan_integrity_requested",
+    "post_scan_model_setting",
+    "post_scan_resident_reason",
     "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",
     "value_key",

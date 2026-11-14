@@ -1,0 +1,15 @@
+{
+ "sentry_id": "post-scan-commit",
+ "created_in": "PS-8",
+ "entries": {
+  "decoy_engine/execution/_isolated_run.py::_run_in_process::atomic-commit::0": {
+   "reason": "the in-process fallback commits its staged directory; the gate ran in the same process first. Goes when F22 c2 retires atomic_commit"
+  },
+  "decoy_engine/execution/_isolated_run.py::_commit::atomic-commit::0": {
+   "reason": "the isolated parent commits what the child's gate already passed (a blocked child returns no outputs). Goes when F22 c2 retires atomic_commit"
+  },
+  "decoy_engine/execution/_sequential.py::_has_transactional_write_contract::getattr-commit::0": {
+   "reason": "a protocol probe for a sink's method, not a commit"
+  }
+ }
+}

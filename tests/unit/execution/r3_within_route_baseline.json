@@ -1762,6 +1762,64 @@
       }
      ]
     }
+   },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
    }
   },
   "row_errors": [],
@@ -1962,6 +2020,64 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": false,
     "route_reason": "generate_plus_mask"
+   },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
    }
   },
   "row_errors": [],
@@ -4416,6 +4532,64 @@
      "table": "child"
     }
    ],
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
+   },
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4606,6 +4780,64 @@
      "table": "child"
     }
    ],
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
+   },
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4796,6 +5028,64 @@
      "table": "child"
     }
    ],
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
+   },
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4986,6 +5276,10 @@
      "table": "child"
     }
    ],
+   "post_scan_gate_deferred": {
+    "code": "gate_deferred_route",
+    "namespace": "post_scan"
+   },
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -5176,6 +5470,10 @@
      "table": "child"
     }
    ],
+   "post_scan_gate_deferred": {
+    "code": "gate_deferred_route",
+    "namespace": "post_scan"
+   },
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -5366,6 +5664,10 @@
      "table": "child"
     }
    ],
+   "post_scan_gate_deferred": {
+    "code": "gate_deferred_route",
+    "namespace": "post_scan"
+   },
    "resources": {
     "out_of_core": {
      "applied": {
@@ -5555,6 +5857,64 @@
      "table": "child"
     }
    ],
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 4,
+       "orphan_rows": 4,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 4,
+       "orphan_rows": 4,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
+   },
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -5745,6 +6105,10 @@
      "table": "child"
     }
    ],
+   "post_scan_gate_deferred": {
+    "code": "gate_deferred_route",
+    "namespace": "post_scan"
+   },
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -5919,6 +6283,64 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
+   },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
    },
    "sequential_hash": [
     {
@@ -6161,6 +6583,64 @@
      "sequential_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False)."
     }
    },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
+   },
    "sequential_hash": [
     {
      "column": "id",
@@ -6385,6 +6865,10 @@
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
    },
+   "post_scan_gate_deferred": {
+    "code": "gate_deferred_route",
+    "namespace": "post_scan"
+   },
    "sequential_hash": [
     {
      "column": "id",
@@ -6608,6 +7092,64 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
+   },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 4,
+       "orphan_rows": 4,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 4,
+       "orphan_rows": 4,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
    },
    "sequential_hash": [
     {
@@ -6840,6 +7382,64 @@
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
    },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 4,
+       "orphan_rows": 4,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 4,
+       "orphan_rows": 4,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
+   },
    "sequential_hash": [
     {
      "column": "id",
@@ -7065,6 +7665,10 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": true,
     "route_reason": "pure_mask_fk"
+   },
+   "post_scan_gate_deferred": {
+    "code": "gate_deferred_route",
+    "namespace": "post_scan"
    },
    "sequential_hash": [
     {
@@ -7294,6 +7898,64 @@
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
    },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
+   },
    "sequential_hash": [
     {
      "column": "id",
@@ -7520,6 +8182,64 @@
     "out_of_core_declined": "per_table_transforms_present",
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
+   },
+   "post_scan_integrity": {
+    "keys": [
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "id"
+      ],
+      "kind": "primary",
+      "output": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "parent": [],
+      "source": {
+       "duplicate_excess": 0,
+       "null_key_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "parent"
+     },
+     {
+      "baseline": "measured",
+      "bounded": true,
+      "codes": [],
+      "columns": [
+       "parent_id"
+      ],
+      "kind": "foreign",
+      "output": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "parent": [
+       "parent"
+      ],
+      "source": {
+       "null_key_rows": 0,
+       "orphan_distinct_keys": 0,
+       "orphan_rows": 0,
+       "rows": 20
+      },
+      "status": "checked",
+      "table": "child"
+     }
+    ],
+    "schema_version": "post-scan-integrity/v2",
+    "verdict": {
+     "blocking": false,
+     "codes": [],
+     "warnings": []
+    }
    },
    "sequential_hash": [
     {

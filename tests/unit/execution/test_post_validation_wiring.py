@@ -24,6 +24,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionResult, run_pipeline
 from decoy_engine.execution._pipeline_routing import _sequential_eligible, decide_execution_route
+from decoy_engine.execution.pipeline import _post_scan as post_scan_module
 from decoy_engine.relationships import RelationshipGraph
 from tests._declared_schema import declare_rest
 
@@ -109,7 +110,9 @@ def _hash_config(tmp_path: Path, values: list[str]) -> tuple[dict[str, Any], dic
     )
 
 
-def _dup_pk_fk_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
+def _dup_pk_fk_config(
+    tmp_path: Path, *, keep_keys: bool = False
+) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     """An FK job whose declared-PK parent column truncates to a single value.
 
     "p{i}"[:1] == "p" for every row, so every masked PK collides -> the
@@ -130,6 +133,10 @@ def _dup_pk_fk_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tabl
     pq.write_table(parent, pp)
     pq.write_table(child, cp)
     trunc = {"strategy": "truncate", "provider": "person_email", "provider_config": {"length": 1}}
+    if keep_keys:
+        # The post-scan gate withholds a run that collapses its declared keys, so a test that
+        # needs the run to complete keeps them unique.
+        trunc = {"strategy": "hash", "namespace": "ns"}
     raw = {
         "version": 2,
         "global_settings": {"seed": 7},
@@ -335,7 +342,14 @@ class TestInjectedLeakFailBefore:
         assert r.quality_metrics["failed_checks"] == []
         assert r.quality_metrics["post_validation_enforce"] is False
 
-    def test_post_validation_on_duplicate_pk_populates_failed_checks(self, tmp_path: Path) -> None:
+    def test_post_validation_on_duplicate_pk_populates_failed_checks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The key is declared on a relationship, and a declared relationship puts the run under
+        # the post-scan gate, which withholds a run that collapses its keys before post_validation
+        # can report it. This test is about post_validation, so the gate is off for it; the gate's
+        # own duplicate-key block is pinned in tests/unit/execution/post_scan/test_wiring.py.
+        monkeypatch.setattr(post_scan_module, "post_scan_gate_applies", lambda config: False)
         cfg, src = _dup_pk_fk_config(tmp_path)
         r = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION, post_validation=True)
         assert r.quality_metrics["quality_summary"]["failed_checks"] == ("pk_uniqueness",)
@@ -443,7 +457,7 @@ class TestRoutingDeclinesBoundedRoutes:
     def test_run_pipeline_fk_job_runs_full_frame_and_reaches_seam(self, tmp_path: Path) -> None:
         # End-to-end: an FK job under post_validation runs full_frame (never a
         # bounded route) and the finalize seam produces the summary.
-        cfg, src = _dup_pk_fk_config(tmp_path)
+        cfg, src = _dup_pk_fk_config(tmp_path, keep_keys=True)
         on = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION, post_validation=True)
         assert on.quality_metrics["execution"]["execution_mode"] == "full_frame"
         assert "quality_summary" in on.quality_metrics
@@ -455,7 +469,7 @@ class TestRoutingDeclinesBoundedRoutes:
         # post-validation keys may appear -- this guards the "a future
         # unconditional run trips this" invariant at the seam itself. A bounded-eligible
         # job no longer reaches that seam on its own, so the route is forced.
-        cfg, src = _dup_pk_fk_config(tmp_path)
+        cfg, src = _dup_pk_fk_config(tmp_path, keep_keys=True)
         off = run_pipeline(
             cfg, sources=src, engine_version=_ENGINE_VERSION, execution_mode="full_frame"
         )

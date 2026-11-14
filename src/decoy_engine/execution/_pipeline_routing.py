@@ -36,6 +36,7 @@ from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.reasons import ReasonCode
 
 if TYPE_CHECKING:
     from decoy_engine.relationships import RelationshipGraph
@@ -93,7 +94,7 @@ def _sequential_eligible(
     vault_writer: Any,
     post_validation: bool = False,
     resolved_substrate: str = "pandas",
-    post_scan_integrity: bool = False,
+    post_scan_resident: ReasonCode | None = None,
 ) -> tuple[bool, str]:
     """Decide whether a mask job may take the bounded-memory sequential path.
 
@@ -137,9 +138,10 @@ def _sequential_eligible(
         return False, reasons.route.FIDELITY_REPORT_REQUESTED
     if post_validation:
         return False, reasons.route.POST_VALIDATION_REQUESTED
-    if post_scan_integrity:
-        # Post-scan integrity checks need the resident output (full-frame), like post_validation.
-        return False, reasons.route.POST_SCAN_INTEGRITY_REQUESTED
+    if post_scan_resident is not None:
+        # The post-scan gate needs the output and inputs it can read: integrity wants the whole
+        # output resident, declared keys want output and inputs readable (config._post_scan).
+        return False, post_scan_resident
     if vault_writer is not None:
         return False, reasons.route.VAULT_WRITER_REQUESTED
     if resolved_substrate != "pandas":
@@ -202,7 +204,7 @@ def decide_execution_route(
     execution_mode: str,
     graph: RelationshipGraph,
     post_validation: bool = False,
-    post_scan_integrity: bool = False,
+    post_scan_resident: ReasonCode | None = None,
     resolved_substrate: str = "pandas",
     out_of_core_compatible: bool = False,
     out_of_core_reject_code: str | None = None,
@@ -233,7 +235,7 @@ def decide_execution_route(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
-        post_scan_integrity=post_scan_integrity,
+        post_scan_resident=post_scan_resident,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     # D3b: the vault is the ONLY disqualifier lifted, and only onto out-of-core.
@@ -252,7 +254,7 @@ def decide_execution_route(
             vault_writer=None,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
-            post_scan_integrity=post_scan_integrity,
+            post_scan_resident=post_scan_resident,
         )[0]
     )
     # D3a: validators are the only disqualifier lifted here, and only onto out-of-core.
@@ -271,7 +273,7 @@ def decide_execution_route(
             vault_writer=vault_writer,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
-            post_scan_integrity=post_scan_integrity,
+            post_scan_resident=post_scan_resident,
         )[0]
     )
     # `eligible` is a job-SHAPE check and stays true for a cross-table cycle, so
@@ -325,8 +327,8 @@ def decide_execution_route(
         reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
 
-    # `not post_scan_integrity`: Post-scan integrity needs the resident full-frame output, so such a job declines mixed here.
-    if mixed_admitted and not post_scan_integrity:
+    # A job the post-scan gate cannot read back declines mixed here and runs full-frame.
+    if mixed_admitted and post_scan_resident is None:
         return "mixed", reasons.route.MIXED_GENERATE_MASK_CHUNKED
 
     if lazy_transform_bearing and has_relationships and has_mask_table:

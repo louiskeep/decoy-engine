@@ -696,6 +696,12 @@ def test_parent_truncated_to_its_first_batch_is_caught(monkeypatch: pytest.Monke
 
 
 def test_perturbed_parent_keys_are_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The post-scan gate withholds a run whose parent keys collapse, before this check can compare
+    # the tables. The gate's own duplicate-key block is pinned in
+    # tests/unit/execution/post_scan/test_wiring.py, so the gate is off for this oracle check.
+    monkeypatch.setattr(
+        "decoy_engine.execution.pipeline._post_scan.post_scan_gate_applies", lambda config: False
+    )
     # The fixture's parent key is `unique: true`, so it is drawn by the unique categorical sampler.
     monkeypatch.setattr(
         "decoy_engine.generation._unique.unique_categorical",

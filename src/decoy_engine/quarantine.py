@@ -44,6 +44,7 @@ import errno
 import json
 import os
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -222,6 +223,7 @@ def apply_quarantine(
     *,
     row_errors: tuple[RowErrorRecord, ...] = (),
     file_access: FileAccess | None = None,
+    publish: Callable[[Callable[[], None]], None] | None = None,
 ) -> tuple[dict[str, pa.Table], QuarantineSummary]:
     """Route failing rows to the quarantine output; return filtered main outputs.
 
@@ -271,7 +273,7 @@ def apply_quarantine(
 
     # Write the quarantine JSONL file only when rows were quarantined.
     if quarantine_entries and output_path:
-        _write_jsonl(output_path, quarantine_entries)
+        (publish or _now)(lambda: _write_jsonl(output_path, quarantine_entries))
 
     summary = QuarantineSummary(
         enabled=True,
@@ -313,6 +315,10 @@ def _quarantine_dir(path: str) -> OutputDir:
     return fileaccess.current().output_dir(
         FileRequest(FileRole.QUARANTINE_OUTPUT, "write", path, "quarantine.output_path")
     )
+
+
+def _now(write: Callable[[], None]) -> None:
+    write()
 
 
 def _write_records(fh: Any, records: list[dict[str, Any]]) -> None:
@@ -564,8 +570,10 @@ def finalize_committed_quarantine(
     output_path: str,
     entries: list[dict[str, Any]],
     counts_by_trigger: dict[str, int],
+    publish: Callable[[Callable[[], None]], None] | None = None,
 ) -> dict[str, Any] | None:
-    """Publish the quarantine sidecar; return its evidence-manifest entry.
+    """Publish the quarantine sidecar through `publish` (default: now); return its
+    evidence-manifest entry.
 
     Called by ``run_sequential`` strictly AFTER ``_tsink.commit()`` has
     already returned successfully (or with no sink / a non-transactional
@@ -582,19 +590,23 @@ def finalize_committed_quarantine(
     """
     if not entries:
         return None
-    if is_genuine_transactional_sink:
-        guard_quarantine_not_aliasing_committed_table(sink, written_tables, output_path)
-        staged = write_jsonl_staged(output_path, entries)
-        try:
-            publish_staged_jsonl(staged, output_path)
-        except BaseException:
-            # Tables are already committed; this is a bare sidecar-publish
-            # failure, not a run failure -- discard the orphaned staged file
-            # and surface the error.
-            discard_staged_jsonl(staged)
-            raise
-    else:
-        _write_jsonl(output_path, entries)
+
+    def write() -> None:
+        if is_genuine_transactional_sink:
+            guard_quarantine_not_aliasing_committed_table(sink, written_tables, output_path)
+            staged = write_jsonl_staged(output_path, entries)
+            try:
+                publish_staged_jsonl(staged, output_path)
+            except BaseException:
+                # Tables are already committed; this is a bare sidecar-publish
+                # failure, not a run failure -- discard the orphaned staged file
+                # and surface the error.
+                discard_staged_jsonl(staged)
+                raise
+        else:
+            _write_jsonl(output_path, entries)
+
+    (publish or _now)(write)
     return quarantine_manifest(
         QuarantineSummary(
             enabled=True,

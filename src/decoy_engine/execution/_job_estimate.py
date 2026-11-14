@@ -37,12 +37,12 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine import fileaccess
-from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._throughput_calibration import (
     RuntimeBand,
     estimate_generation_runtime_band,
     estimate_mask_runtime_band,
 )
+from decoy_engine.execution._transforms_gate import post_scan_resident_for
 from decoy_engine.fileaccess import FileAccess
 
 _PEAK_PATHS = frozenset({"full_frame", "out_of_core", "sequential"})
@@ -162,7 +162,7 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
         use_byte_estimate_routing=False,
         use_probe_routing=False,
         # Post-scan integrity needs the resident output, so it disqualifies sequential/out-of-core.
-        post_scan_integrity=post_scan_integrity_requested(config),
+        post_scan_resident=post_scan_resident_for(config),
     )
 
     # A mixed job's generated volume is not priced; refuse rather than under-price.

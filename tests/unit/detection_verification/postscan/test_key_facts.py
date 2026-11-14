@@ -10,7 +10,6 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.config._csv_dialect import CsvDialect
-from decoy_engine.execution.out_of_core import _duckdb
 from decoy_engine.profile._lazy_csv import CsvLazySource
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.profiling import KeyBatches, KeyFacts, key_facts
@@ -104,15 +103,9 @@ def test_composite_key_is_complete_only_when_every_part_is_set(tmp_path: Path) -
     assert (facts.children[0].null_key_rows, facts.children[0].orphan_rows) == (2, 0)
 
 
-def test_type_mismatch_returns_no_counts_and_opens_no_connection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def refuse(**_: Any) -> None:
-        raise AssertionError("a connection was opened")
-
-    monkeypatch.setattr(_duckdb, "connect_duckdb", refuse)
+def test_a_refused_value_returns_no_counts(tmp_path: Path) -> None:
     facts = key_facts(
-        _keys(["1"], pa.string()),
+        _keys(["unencodable"], pa.string()),
         [_keys([1], pa.int64())],
         scratch=tmp_path / "s",
         memory_limit="64MB",

@@ -38,7 +38,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from decoy_engine.config import post_scan_integrity_requested
+from decoy_engine.execution._transforms_gate import post_scan_resident_for
 from decoy_engine.execution.physical import _reasons
 from decoy_engine.execution.physical._plan import (
     PhysicalNode,
@@ -92,7 +92,7 @@ def layer1_route(inputs: PhysicalPlanInputs) -> tuple[str, str]:
         validators=list(inputs.validators),
         fidelity_report=inputs.fidelity_report,
         vault_writer=vault_writer_sentinel,
-        post_scan_integrity=_post_scan_integrity_requested(inputs),
+        post_scan_resident=_post_scan_resident(inputs),
         execution_mode=inputs.execution_mode,
         graph=inputs.graph,
         resolved_substrate=inputs.resolved_substrate,
@@ -175,7 +175,7 @@ def out_of_core_not_ready_reason(inputs: PhysicalPlanInputs) -> str:
         fidelity_report=inputs.fidelity_report,
         vault_writer=vault_writer_sentinel,
         resolved_substrate=inputs.resolved_substrate,
-        post_scan_integrity=_post_scan_integrity_requested(inputs),
+        post_scan_resident=_post_scan_resident(inputs),
     )
     if not eligible:
         return eligibility_reason
@@ -434,11 +434,12 @@ def compile_physical_plan(inputs: PhysicalPlanInputs) -> PhysicalPlan:
     )
 
 
-def _post_scan_integrity_requested(inputs: Any) -> bool:
-    """`post_scan_integrity: true` from the frozen config (a routing disqualifier, E3b)."""
+def _post_scan_resident(inputs: Any) -> Any:
+    """Why the post-scan gate keeps this job resident, from the frozen config and the facts the
+    snapshot holds (the same call every runtime and estimator site makes)."""
     from decoy_engine.execution.physical._inputs import thaw_config
 
     try:
-        return post_scan_integrity_requested(thaw_config(inputs.config))
+        return post_scan_resident_for(thaw_config(inputs.config))
     except Exception:
-        return False
+        return None
