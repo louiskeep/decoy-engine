@@ -1,5 +1,0 @@
-### Changed (isolated runs report a post-scan block as its own outcome, POSTSCAN-PS9, 2026-11-14)
-
-`run_pipeline_isolated` now returns `outcome="blocked"` when the post-scan gate withholds a run, in the child process and on the in-process fallback. Before, the block read as `crashed`. The result keeps the reason (for example `post_scan/foreign_key_orphans_introduced`) and the value-free report in `quality_metrics["post_scan_integrity"]`, has `outputs=None`, and commits nothing to `output_dir`. `IsolatedRunOutcome` gains `blocked`.
-
-`run_job_with_governor` treats `blocked` as terminal. It tries no further route, records no trip, and returns `GovernorResult(outcome="blocked")` with the attempted route in `final_route` and the isolated result in `result`. `GovernorOutcome` gains `blocked`, so a caller that switches on `completed` and `exhausted` needs a third case. An envelope outcome that is not one of the four known strings (a bool, an unknown token) is still classified as a dead child.

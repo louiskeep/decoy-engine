@@ -1,0 +1,1437 @@
+{
+  "entries": [
+    {
+      "code": "resume_checkpoint_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "decision",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A finished table failed verification and runs again.",
+      "symbol": "RESUME_CHECKPOINT_INVALID"
+    },
+    {
+      "code": "resume_fingerprint_changed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The run differs from the one that wrote the resume store.",
+      "symbol": "RESUME_FINGERPRINT_CHANGED"
+    },
+    {
+      "code": "resume_in_progress",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "retry_operation",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Another process is running or resuming this run.",
+      "symbol": "RESUME_IN_PROGRESS"
+    },
+    {
+      "code": "resume_layout_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "This output layout cannot be resumed.",
+      "symbol": "RESUME_LAYOUT_UNSUPPORTED"
+    },
+    {
+      "code": "resume_no_checkpoint",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The run has no resume store.",
+      "symbol": "RESUME_NO_CHECKPOINT"
+    },
+    {
+      "code": "resume_platform_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "This platform cannot lock a resume store, so the run cannot be resumed.",
+      "symbol": "RESUME_PLATFORM_UNSUPPORTED"
+    },
+    {
+      "code": "resume_route_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Only a chunked run can be resumed.",
+      "symbol": "RESUME_ROUTE_UNSUPPORTED"
+    },
+    {
+      "code": "resume_run_dir_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The resume directory is not a run folder of this pipeline.",
+      "symbol": "RESUME_RUN_DIR_INVALID"
+    },
+    {
+      "code": "resume_source_changed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A source of a finished table changed since it was run.",
+      "symbol": "RESUME_SOURCE_CHANGED"
+    },
+    {
+      "code": "resume_store_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The resume store is unreadable or malformed.",
+      "symbol": "RESUME_STORE_INVALID"
+    },
+    {
+      "code": "resume_store_not_removed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The resume store was not removed after delivery.",
+      "symbol": "RESUME_STORE_NOT_REMOVED"
+    },
+    {
+      "code": "resume_superseded",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A later run was delivered, so this run cannot be resumed.",
+      "symbol": "RESUME_SUPERSEDED"
+    },
+    {
+      "code": "resume_vault_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "DecoyResume",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A run with a vault cannot be resumed.",
+      "symbol": "RESUME_VAULT_UNSUPPORTED"
+    },
+    {
+      "code": "bucket_perturb_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Bucket perturb requires namespace.",
+      "symbol": "BUCKET_PERTURB_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "categorical_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Categorical requires namespace.",
+      "symbol": "CATEGORICAL_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "date_shift_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Date shift requires namespace.",
+      "symbol": "DATE_SHIFT_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "fpe_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "FPE requires namespace.",
+      "symbol": "FPE_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "generate_formula_number_used_as_text",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A formula uses a number reference as text.",
+      "symbol": "GENERATE_FORMULA_NUMBER_USED_AS_TEXT"
+    },
+    {
+      "code": "hash_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Hash requires namespace.",
+      "symbol": "HASH_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "nested_strategy_unset",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Nested strategy unset.",
+      "symbol": "NESTED_STRATEGY_UNSET"
+    },
+    {
+      "code": "nested_target_unset",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Nested target unset.",
+      "symbol": "NESTED_TARGET_UNSET"
+    },
+    {
+      "code": "shuffle_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Shuffle requires namespace.",
+      "symbol": "SHUFFLE_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "tokenize_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Tokenize requires namespace.",
+      "symbol": "TOKENIZE_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "foreign_key_orphans_quarantined",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._keys",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "Quarantine removed parent rows, so some child rows in the output have no parent. The run is not withheld for them.",
+      "symbol": "FOREIGN_KEY_ORPHANS_QUARANTINED"
+    },
+    {
+      "code": "gate_deferred_route",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "decoy_engine.verification.postmask._blocked",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The blocking post-scan gate cannot read this route yet, so the run was checked as before and not withheld.",
+      "symbol": "GATE_DEFERRED_ROUTE"
+    },
+    {
+      "code": "generate_formula_evaluation_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "GenerationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A generate formula could not be evaluated for a row.",
+      "symbol": "GENERATE_FORMULA_EVALUATION_FAILED"
+    },
+    {
+      "code": "token_vault_derivation_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The token vault was created before vault-scoped token derivation; use a new vault.",
+      "symbol": "TOKEN_VAULT_DERIVATION_UNSUPPORTED"
+    },
+    {
+      "code": "tokenize_vault_scope_required",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The token vault writer has no valid derivation scope (16 to 64 bytes).",
+      "symbol": "TOKENIZE_VAULT_SCOPE_REQUIRED"
+    },
+    {
+      "code": "vault_commit_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "VaultError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "The vault could not be written durably; publish no output that it would reverse.",
+      "symbol": "VAULT_COMMIT_FAILED"
+    },
+    {
+      "code": "vault_exists",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "VaultError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A vault already exists at the target; choose a new path or remove it with its outputs.",
+      "symbol": "VAULT_EXISTS"
+    },
+    {
+      "code": "vault_requires_resident_output",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ExecutionError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "mask",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "finalize",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "unknown",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "A vault writer needs resident output: pass no sink, and use run_pipeline, not a chunked entry.",
+      "symbol": "VAULT_REQUIRES_RESIDENT_OUTPUT"
+    }
+  ],
+  "event_schema_version": 1,
+  "reason_schema_version": 1,
+  "registry_version": "1.26.0"
+}

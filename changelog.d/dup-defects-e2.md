@@ -1,5 +1,0 @@
-Breaking: `derived` and `formula` now treat `Decimal('NaN')`, numpy NaN scalars, `pd.NaT`, `numpy.datetime64('NaT')` and `pd.NA` as missing, so a `derived` column that references a null parquet timestamp writes a null cell where it used to write a value such as `0`.
-
-### Fixed (one missing-cell rule for derived and formula, DUP-DEFECTS E2, 2026-11-13)
-
-`derived` and `formula` now treat `Decimal('NaN')`, numpy NaN scalars, `pd.NaT`, `numpy.datetime64('NaT')` and `pd.NA` as missing, like `None` and float NaN, and like the masking kernels. A `derived` column with `explicit_null` (the default) that references a null parquet timestamp now writes a null cell, where it used to run the expression with `NaT` and write a plausible value such as `0`. With `sentinel` or `default` the null date is replaced by `""` or `0` first, so an expression that compares it with a date can now fail that row. `formula` substitutes `""` for such cells and counts them. The strings `"NaT"` and `""` stay values. Rows without such a reference are unchanged.

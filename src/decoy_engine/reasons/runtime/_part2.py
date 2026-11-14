@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Outcome, Phase, RetryClass
+from decoy_engine.reasons._types import Outcome, Phase, RetryClass
 
 __all__ = [
     "BAD_SECRET_REF",
@@ -317,7 +317,7 @@ GENERATE_FORMULA_EVALUATION_FAILED = _d(
     "A generate formula could not be evaluated for a row.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 
 _d = _catalog.runtime("GenerationUnboundedError")

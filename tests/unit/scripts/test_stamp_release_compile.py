@@ -427,7 +427,7 @@ class Versions:
     @property
     def next_fixture(self) -> str:
         major, minor, _ = self.next.split(".")
-        return f"reason-manifest-v{major}.{minor}-release-0-24-0.json"
+        return f"reason-manifest-v{major}.{minor}-release-0-25-0.json"
 
 
 def versions(seed: Path) -> Versions:
@@ -498,7 +498,7 @@ CASES = {
 }
 
 
-def _stamp(r: ScratchRepo, version: str = "0.24.0") -> str:
+def _stamp(r: ScratchRepo, version: str = "0.25.0") -> str:
     return sr.stamp_release(r.path, version, "2026-11-12")
 
 
@@ -522,8 +522,8 @@ def test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor(
     assert probes == {"probe_one": v.next, "probe_two": v.next}
     name = v.next_fixture
     assert _fixtures(r.path) - before == {name}
-    assert pol.parse_fixture_name(name) == (v.next, "release-0-24-0")
-    assert pol.fixture_name(v.next, pol.release_fixture_slug("0.24.0")) == name
+    assert pol.parse_fixture_name(name) == (v.next, "release-0-25-0")
+    assert pol.fixture_name(v.next, pol.release_fixture_slug("0.25.0")) == name
     fixture = json.loads((r.path / F29 / name).read_text(encoding="utf-8"))
     assert fixture["registry_version"] == v.next
     assert [e["code"] for e in fixture["entries"]] == ["probe_one", "probe_two"]
@@ -538,7 +538,7 @@ def test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor(
     assert text.count(f'since="{v.next}")') == 2 and "since=UNRELEASED)" not in text
     assert "import UNRELEASED" not in text and PENDING_DOC in text
     log = (r.path / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [0.24.0] - 2026-11-12" in log and "`config/probe_one`" in log
+    assert "## [0.25.0] - 2026-11-12" in log and "`config/probe_one`" in log
     assert not (r.path / "changelog.d" / "probe.md").exists()
     _both_gates_pass(r)
 
@@ -561,7 +561,7 @@ def test_at8_a_patch_release_moves_the_registry_and_keeps_the_ceiling(
         entry = next(e for e in live["entries"] if e["code"] == "pipeline_name_invalid")
         assert entry["deprecated_in"] == v.patch1
     _both_gates_pass(r)
-    r.commit({}, "chore: release 0.24.0")
+    r.commit({}, "chore: release 0.25.0")
     edit_file(r.path / CONFIG1, '"Top level bad mode."', '"Top-level mode is not supported."')
     edit_file(
         r.path / REGISTRY,
@@ -569,7 +569,7 @@ def test_at8_a_patch_release_moves_the_registry_and_keeps_the_ceiling(
         EMPTY_MARKERS.replace("frozenset()", 'frozenset({("config", "top_level.bad_mode")})'),
     )
     r.commit({}, "fix: correct another summary")
-    assert _stamp(r, "0.25.0") == v.patch2
+    assert _stamp(r, "0.26.0") == v.patch2
     pin = _pin(r.path)
     assert (pin["registry_version"], pin["baseline_ceiling"]) == (v.patch2, v.base)
     assert _fixtures(r.path) == before
@@ -602,7 +602,7 @@ def test_at8_the_cli_accepts_only_the_automatic_registry_minor(
     v = versions(engine_seed)
     flag = {"next": v.next, "after": bump(v.next, minor=1)}.get(flag, flag)
     CASES[case](r)
-    args = ["--version", "0.24.0", "--date", "2026-11-12", "--repo", str(r.path)]
+    args = ["--version", "0.25.0", "--date", "2026-11-12", "--repo", str(r.path)]
     assert (sr.main([*args, "--registry-minor", flag]) == 0) is ok
     if not ok:
         assert r.git("status", "--porcelain", "--untracked-files=all") == ""

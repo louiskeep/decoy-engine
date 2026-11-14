@@ -9,7 +9,7 @@ be removed after delivery is only a warning.
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, ReasonCode, RetryClass, Severity
+from decoy_engine.reasons._types import Kind, Outcome, ReasonCode, RetryClass, Severity
 
 __all__ = [
     "RESUME_CHECKPOINT_INVALID",
@@ -39,7 +39,7 @@ def _refusal(code: str, summary: str) -> ReasonCode:
         severity=Severity.ERROR,
         outcome=Outcome.CONFIGURATION,
         retry=RetryClass.NEVER,
-        since=UNRELEASED,
+        since="1.26.0",
     )
 
 
@@ -91,7 +91,7 @@ RESUME_IN_PROGRESS = _d(
     severity=Severity.ERROR,
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.RETRY_OPERATION,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 # A kept table failed verification; the run reruns it instead of refusing.
 RESUME_CHECKPOINT_INVALID = _d(
@@ -101,7 +101,7 @@ RESUME_CHECKPOINT_INVALID = _d(
     severity=Severity.WARNING,
     outcome=Outcome.PUBLICATION,
     retry=RetryClass.NEVER,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 RESUME_STORE_NOT_REMOVED = _d(
     "resume_store_not_removed",
@@ -110,5 +110,5 @@ RESUME_STORE_NOT_REMOVED = _d(
     severity=Severity.WARNING,
     outcome=Outcome.PUBLICATION,
     retry=RetryClass.NEVER,
-    since=UNRELEASED,
+    since="1.26.0",
 )

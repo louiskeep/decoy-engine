@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
     "CONFIG_VALUE_NOT_JSON",
@@ -128,7 +127,7 @@ GENERATE_FORMULA_NAME_UNKNOWN = _d(
 GENERATE_FORMULA_NUMBER_USED_AS_TEXT = _d(
     "generate_formula_number_used_as_text",
     "A formula uses a number reference as text.",
-    since=UNRELEASED,
+    since="1.26.0",
 )
 GENERATE_FORMULA_REFERENCE_MISSING = _d(
     "generate_formula_reference_missing",
