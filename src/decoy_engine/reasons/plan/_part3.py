@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
+    "CONFIG_VALUE_NOT_JSON",
     "DEDUPE_UNSUPPORTED_TYPE",
     "GENERATE_CATEGORIES_MIXED",
     "GENERATE_COLUMN_FORWARD_REFERENCE",
@@ -93,6 +95,11 @@ TOP_CODE_INVALID_FLOOR = _d("top_code_invalid_floor", "Top code invalid floor.")
 # Summaries double as the refusal text plan checks show, so they never name a value.
 _d = _catalog.plan("PlanCompileError")
 
+CONFIG_VALUE_NOT_JSON = _d(
+    "config_value_not_json",
+    "A config value has a type JSON cannot hold; quote it as a string.",
+    since=UNRELEASED,
+)
 GENERATE_CATEGORIES_MIXED = _d(
     "generate_categories_mixed",
     "Generate column categories mix value types.",

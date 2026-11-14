@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine._canonical import canonical_json_bytes
 from decoy_engine._reference_date import PinnedModeError
 
 PINNED_PLAN_SCHEMA = "pinned-plan/v1"
@@ -197,7 +198,7 @@ def validate_seed(seed: Any) -> int:
 
 
 def _canonical(payload: Any) -> bytes:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return canonical_json_bytes(payload)
 
 
 def fingerprint(plan: PinnedPlan) -> str:

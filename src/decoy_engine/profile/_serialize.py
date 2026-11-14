@@ -19,6 +19,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from decoy_engine._canonical import canonical_json_bytes
 from decoy_engine.profile._types import (
     ColumnProfile,
     PIIClass,
@@ -71,12 +72,7 @@ def _data_shape_bytes(profile: Profile) -> bytes:
         ],
         "relationships": [_relationship_to_dict(r) for r in profile.relationships],
     }
-    return json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    return canonical_json_bytes(payload)
 
 
 def _profile_to_dict(profile: Profile) -> dict[str, Any]:

@@ -7,8 +7,8 @@ Pattern: HMAC-SHA256 (RFC 2104, stdlib).
   determinism/_hkdf.py (RFC 5869, PyCA ``cryptography``).
 
 Signing algorithm (``sign_manifest``):
-    1. Serialise the manifest to canonical JSON: ``json.dumps(d, sort_keys=True,
-       separators=(',', ':'))`` with ``manifest_hmac`` field cleared to ``""``.
+    1. Serialise the manifest to canonical JSON (``canonical_json_bytes``: sorted keys,
+       compact separators, UTF-8 text) with ``manifest_hmac`` field cleared to ``""``.
     2. Compute ``HMAC-SHA256(key, canonical_bytes)``.
     3. Return the hex digest (64 chars).  Store it in ``manifest.manifest_hmac``.
 
@@ -69,6 +69,7 @@ import os
 from pathlib import Path
 
 from decoy_engine import fileaccess
+from decoy_engine._canonical import canonical_json_bytes
 from decoy_engine._opaque import OpaqueBox
 from decoy_engine.profiling.model_pack import _packio
 from decoy_engine.profiling.model_pack.types import ModelPackManifest
@@ -197,7 +198,7 @@ def _canonical_payload(manifest: ModelPackManifest) -> bytes:
     """
     d = manifest.to_dict()
     d["manifest_hmac"] = ""  # exclude the signature field from its own scope
-    return json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return canonical_json_bytes(d)
 
 
 def sign_manifest(manifest: ModelPackManifest, key: bytes) -> str:
