@@ -43,7 +43,7 @@ def canonical_config_bytes(semantic_config: dict[str, Any]) -> bytes:
         except CanonicalJsonError as error:
             type_name = error.type_name
     # Raised after the handler closed, so no exception context holds the value.
-    message = reasons.REASONS[("config", reasons.config.CONFIG_VALUE_NOT_JSON)].summary
+    message = reasons.REASONS[("plan", reasons.plan.CONFIG_VALUE_NOT_JSON)].summary
     if type_name:
         message = f"{message} Found type: {type_name}."
-    raise PlanCompileError(code=reasons.config.CONFIG_VALUE_NOT_JSON, path=None, message=message)
+    raise PlanCompileError(code=reasons.plan.CONFIG_VALUE_NOT_JSON, path=None, message=message)

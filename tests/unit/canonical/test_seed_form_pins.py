@@ -7,13 +7,15 @@ turns these red.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from decoy_engine._canonical import CanonicalJsonError
 from decoy_engine.generation.pool._builder import _config_hash, _derive_pool_seed
 from decoy_engine.generators.derivation import strategy_config_fingerprint
 
-_COLUMNS = [
+_COLUMNS: list[tuple[dict[str, Any], str]] = [
     (
         {"type": "categorical", "categories": ["a", "b"], "weights": [1, 2]},
         "0df81fb081e3d993b2d58d90f66d4c31c055df5f4944acf5794dcde7477432dc",

@@ -28,6 +28,8 @@ FAMILY_NAMESPACE: dict[str, str] = {
     "ValidationError": "config",
     "ValidationMessage": "config",
     "SubsetConfigError": "config",
+    "CanonicalJsonError": "config",
+    "CanonicalStringError": "config",
     "NamespaceConfigError": "config",
     "PlanCompileError": "plan",
     "PlanCheckError": "plan",

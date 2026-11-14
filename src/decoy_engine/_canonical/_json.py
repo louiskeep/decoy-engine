@@ -27,8 +27,14 @@ import re
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine._error_base import DecoyError
 
-__all__ = ["CanonicalJsonError", "canonical_json_bytes", "seed_fingerprint_bytes"]
+__all__ = [
+    "CanonicalJsonError",
+    "CanonicalStringError",
+    "canonical_json_bytes",
+    "seed_fingerprint_bytes",
+]
 
 _SURROGATE = re.compile("[\ud800-\udfff]")
 # A lone surrogate written by the ASCII encoder is always `\ud8xx` to `\udfxx`. A literal
@@ -36,17 +42,31 @@ _SURROGATE = re.compile("[\ud800-\udfff]")
 _ESCAPED_SURROGATE = re.compile(r"\\u[dD][89a-fA-F][0-9a-fA-F]{2}")
 
 
-class CanonicalJsonError(ValueError):
-    """A value cannot be written in canonical JSON. Value-free: it names a type at most."""
+class CanonicalJsonError(DecoyError, ValueError):
+    """A value cannot be written in canonical JSON. Value-free: it names a type at most.
 
-    def __init__(self, code: str, message: str, type_name: str | None = None) -> None:
-        super().__init__(code, message, type_name)
-        self.code = code
+    It is a ``ValueError`` so the records codec's ``except ValueError`` arms turn it into the
+    coded ``record_invalid``.
+    """
+
+    code = reasons.config.CONFIG_VALUE_NOT_JSON
+
+    def __init__(self, message: str, type_name: str | None = None) -> None:
+        super().__init__(message, type_name)
         self.message = message
         self.type_name = type_name
 
     def __str__(self) -> str:
         return self.message
+
+
+class CanonicalStringError(CanonicalJsonError):
+    """A string or object key holds an unpaired surrogate, so it has no UTF-8 form."""
+
+    code = reasons.config.CANONICAL_JSON_INVALID_STRING
+
+    def __init__(self) -> None:
+        super().__init__(_summary(self.code))
 
 
 def _summary(code: str) -> str:
@@ -96,20 +116,17 @@ def _encode(value: object, *, ensure_ascii: bool) -> bytes:
     except (TypeError, ValueError, RecursionError):
         pass
     if text is None:
-        code = reasons.config.CONFIG_VALUE_NOT_JSON
         if refused:
             raise CanonicalJsonError(
-                code, f"Canonical JSON cannot encode a value of type {refused[0]}.", refused[0]
+                f"Canonical JSON cannot encode a value of type {refused[0]}.", refused[0]
             )
         raise CanonicalJsonError(
-            code,
             "Canonical JSON cannot encode a non-finite number, a circular value "
-            "or object keys of mixed types.",
+            "or object keys of mixed types."
         )
     hint = _ESCAPED_SURROGATE if ensure_ascii else _SURROGATE
     if hint.search(text) and _has_surrogate(value):
-        code = reasons.config.CANONICAL_JSON_INVALID_STRING
-        raise CanonicalJsonError(code, _summary(code))
+        raise CanonicalStringError()
     return text.encode("utf-8")
 
 

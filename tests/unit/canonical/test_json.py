@@ -11,9 +11,11 @@ import pytest
 from decoy_engine import reasons
 from decoy_engine._canonical import (
     CanonicalJsonError,
+    CanonicalStringError,
     canonical_json_bytes,
     seed_fingerprint_bytes,
 )
+from decoy_engine.errors import DecoyError
 
 FORMS = [canonical_json_bytes, seed_fingerprint_bytes]
 SURROGATE = "before\ud800after"
@@ -134,10 +136,12 @@ def test_errors_carry_no_context_and_no_input_text(form: Any, bad: Any) -> None:
         assert needle not in text
 
 
-def test_the_error_is_a_value_error_and_carries_a_registered_code() -> None:
-    error = CanonicalJsonError(reasons.config.CONFIG_VALUE_NOT_JSON, "x")
-    assert isinstance(error, ValueError)
+def test_the_error_is_a_value_error_and_a_decoy_error_with_a_registered_code() -> None:
+    error = CanonicalJsonError("x")
+    assert isinstance(error, ValueError) and isinstance(error, DecoyError)
     assert error.code == reasons.config.CONFIG_VALUE_NOT_JSON
+    assert CanonicalStringError().code == reasons.config.CANONICAL_JSON_INVALID_STRING
+    assert isinstance(CanonicalStringError(), CanonicalJsonError)
 
 
 def test_the_surrogate_message_is_the_fixed_registered_text() -> None:
