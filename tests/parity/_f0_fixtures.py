@@ -311,7 +311,6 @@ def cfg_formula() -> dict[str, Any]:
                         "formula": "f'2024-03-{1 + i % 28:02d}'",
                     },
                     {"name": "empty", "type": "formula", "formula": ""},
-                    {"name": "bad", "type": "formula", "formula": "undefined_name + 1"},
                 ],
             )
         ]

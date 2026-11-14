@@ -1523,6 +1523,35 @@ the formula scope provides, such as `abs` or `sqrt` (`round` and `random` are in
 that has `references` (`generate_column_forward_reference`). Declare dependencies
 before the columns that read them.
 
+A formula reads each referenced column as the type the column has. A plain `sequence` (no
+prefix, suffix or padding), an int or float `faker` column and a numeric `categorical`,
+`constant`, `distribution` or `reference` column arrive as numbers, so `round(a / 3)` and
+`a * 2` do arithmetic. The same holds when another column reads the same column as text: the
+output column stays text there, and the formula still sees the number.
+
+Text spellings of a number reference are refused at compile with
+`generate_formula_number_used_as_text`. Rewrite them with `str()` or compare with a number:
+
+| Before | After |
+|---|---|
+| `'ORD-' + id` | `'ORD-' + str(id)` or `f'ORD-{id}'` |
+| `id.zfill(5)` | `str(id).zfill(5)` or `f'{id:05d}'` |
+| `id[-4:]`, `len(id)` | `str(id)[-4:]`, `len(str(id))` |
+| `id == '1'` | `id == 1` |
+| `x if id else y` with a sequence from 0 | `x if id is not None else y` |
+
+Row rules:
+
+- A missing cell (a null from `null_probability`) in a referenced number column makes the
+  result null, and the formula does not run for that row. A formula cannot replace that null.
+- A missing cell in any other referenced column is bound as `""`.
+- A formula that raises on any other row fails the run with
+  `generate_formula_evaluation_failed`. The message names the table, the column, the row
+  index and a fixed reason word, never a cell value. This includes a formula with no
+  `references`.
+- Reversed membership such as `'1' in id` is not refused at compile. It fails at run with
+  `generate_formula_evaluation_failed`.
+
 ### derived
 
 Computes a column from other already-generated sibling columns via the SP-06

@@ -13,6 +13,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.native._bucket_perturb_ext import native_range_exceeded
+from decoy_engine.generation.pool import GenerationError
 from decoy_engine.generators.columns import ColumnGenerator
 from decoy_engine.transforms.windowed_date import WindowedDateError, _shift_and_format
 
@@ -49,7 +50,9 @@ def test_days_from_now_uses_a_specific_timedelta_unit() -> None:
     assert set(cg.generate_column(2, col, "t", {}).tolist()) == {"2026-01-31"}
 
 
-def test_days_from_now_still_fails_the_row_on_a_non_number() -> None:
+def test_days_from_now_on_a_non_number_fails_the_run_with_the_formula_code() -> None:
     cg = ColumnGenerator(seed=42, reference_date=pd.Timestamp("2026-01-01"))
     col = {"name": "y", "type": "formula", "formula": 'days_from_now(float("nan"))'}
-    assert cg.generate_column(2, col, "t", {}).tolist() == [None, None]
+    with pytest.raises(GenerationError) as info:
+        cg.generate_column(2, col, "t", {})
+    assert info.value.code == "generate_formula_evaluation_failed"

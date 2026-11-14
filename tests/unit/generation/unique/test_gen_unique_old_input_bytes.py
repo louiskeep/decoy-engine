@@ -9,6 +9,11 @@ fingerprint are what they were. Do not re-pin to make this pass: a moved digest 
 Re-pinned `cells` for three corpus configs when generated numeric columns became int64 (GEN-C2):
 rendering each numeric column back to text reproduces the old digests, so only the cell type
 moved. `config_json` and `fingerprints` are untouched.
+
+`all_basic_types.cells` was re-pinned once more when a generate formula began reading `score` as a
+number: `f = score * 2` went from repeated text to multiplication. Its before and after digests
+are in docs/records/2026-11-13-formula-typing-refreeze.md; `config_json` and `fingerprints` did not
+move.
 """
 
 from __future__ import annotations
@@ -16,18 +21,16 @@ from __future__ import annotations
 import pytest
 
 from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.generation.pool import GenerationError
 from tests.unit.generation.unique._gu_corpus import CORPUS, digests
+
+UNLISTED_FORMULA = "all_basic_types_unlisted_formula"
 
 PINNED = {
     "all_basic_types": {
-        "cells": "c7ea7449a95cb1740c336f96421aa53acb924b3760ec007f1bea1e81f5434fe6",
+        "cells": "a6cbb34f9386440812a583166e698781007d426281cca2dc61c0281e55cbcc0f",
         "config_json": "c82643e094caf6665bf2a292cda6561eb89766a1292e244a818c86ce2b45f074",
         "fingerprints": "d25f1cc532c7beae91e731d26bcb92d754e62641192ee872bd4097a74a458fdd",
-    },
-    "all_basic_types_unlisted_formula": {
-        "cells": "1f5c4a2f626e7917e8ba2b4978ccac968c7f9234076364d40a9cfe74ef975cca",
-        "config_json": "1a7a3630c78e0ea1f924f26b6d12248be77aada420e34bc1eccfe9f42f823351",
-        "fingerprints": "42e2831b6ec3f309cba7df47c4a6d7e38bec722d64da7aa09d9408059ac6c72e",
     },
     "pooled_and_opted_out": {
         "cells": "090b25b7223a2c086173164bfa22ed505f9e3fe5ee3f33626c7486273a672a4e",
@@ -48,7 +51,15 @@ PINNED = {
 
 
 def test_pins_cover_the_whole_corpus():
-    assert set(PINNED) == set(CORPUS)
+    assert set(PINNED) | {UNLISTED_FORMULA} == set(CORPUS)
+
+
+@pytest.mark.usefixtures("lenient_generate_checks")
+def test_unlisted_formula_read_fails_the_run_instead_of_writing_nulls():
+    # The plan check refuses this config; a run that bypasses it must not write a null column.
+    with pytest.raises(GenerationError) as info:
+        digests(UNLISTED_FORMULA)
+    assert info.value.code == "generate_formula_evaluation_failed"
 
 
 @pytest.mark.golden

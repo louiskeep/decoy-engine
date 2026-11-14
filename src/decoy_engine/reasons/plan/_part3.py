@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
     "DEDUPE_UNSUPPORTED_TYPE",
@@ -11,6 +12,7 @@ __all__ = [
     "GENERATE_FAKER_KWARGS_UNKNOWN",
     "GENERATE_FAKER_TYPE_UNKNOWN",
     "GENERATE_FORMULA_NAME_UNKNOWN",
+    "GENERATE_FORMULA_NUMBER_USED_AS_TEXT",
     "GENERATE_FORMULA_REFERENCE_MISSING",
     "GENERATE_FORMULA_REFERENCE_UNKNOWN",
     "GENERATE_FORMULA_TEMPLATE_SYNTAX",
@@ -116,6 +118,11 @@ GENERATE_FORMULA_NAME_UNKNOWN = _d(
     "generate_formula_name_unknown",
     "Generate column formula uses a name that is not defined.",
     since="1.13.0",
+)
+GENERATE_FORMULA_NUMBER_USED_AS_TEXT = _d(
+    "generate_formula_number_used_as_text",
+    "A formula uses a number reference as text.",
+    since=UNRELEASED,
 )
 GENERATE_FORMULA_REFERENCE_MISSING = _d(
     "generate_formula_reference_missing",

@@ -423,6 +423,14 @@ numpy NaN scalar, `NaT` or `pd.NA`: `explicit_null` now writes a null where the 
 reports today's value-free text), and `formula` substitutes `""` and counts it. Rows without such
 a reference are unchanged. No `SEED_PROTOCOL_VERSION` change.
 
+**2026-11-13, generate `formula` types (pre-GA break).** A generate `formula` now reads a plain
+`sequence`, an int or float `faker` column and a numeric column with nulls as numbers, not as
+cell text. Output of such a formula changes (`a * 2` was `'11'`, is `2`), a column a formula
+reads keeps its numeric Parquet type unless another reader needs it as text, and a formula that
+raises fails the run instead of writing nulls. No seed draw moves and
+`SEED_PROTOCOL_VERSION` is unchanged. The refreeze is recorded in
+`docs/records/2026-11-13-formula-typing-refreeze.md`.
+
 ### 3.4 The public API + CLI contract
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and
