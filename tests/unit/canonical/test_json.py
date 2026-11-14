@@ -148,3 +148,14 @@ def test_the_surrogate_message_is_the_fixed_registered_text() -> None:
     with pytest.raises(CanonicalJsonError) as caught:
         canonical_json_bytes(SURROGATE)
     assert str(caught.value) == "Canonical JSON strings must contain only Unicode scalar values."
+
+
+@pytest.mark.parametrize(
+    "error", [CanonicalJsonError("a value of type set", "set"), CanonicalStringError()]
+)
+def test_the_errors_survive_a_pickle_round_trip(error: CanonicalJsonError) -> None:
+    import pickle
+
+    again = pickle.loads(pickle.dumps(error))
+    assert type(again) is type(error)
+    assert str(again) == str(error) and again.code == error.code

@@ -68,6 +68,9 @@ class CanonicalStringError(CanonicalJsonError):
     def __init__(self) -> None:
         super().__init__(_summary(self.code))
 
+    def __reduce__(self) -> tuple[type[CanonicalStringError], tuple[()]]:
+        return (type(self), ())
+
 
 def _summary(code: str) -> str:
     return reasons.REASONS[("config", code)].summary
