@@ -156,6 +156,6 @@ def test_the_surrogate_message_is_the_fixed_registered_text() -> None:
 def test_the_errors_survive_a_pickle_round_trip(error: CanonicalJsonError) -> None:
     import pickle
 
-    again = pickle.loads(pickle.dumps(error))
+    again = pickle.loads(pickle.dumps(error))  # noqa: S301 - bytes this test just produced
     assert type(again) is type(error)
     assert str(again) == str(error) and again.code == error.code
