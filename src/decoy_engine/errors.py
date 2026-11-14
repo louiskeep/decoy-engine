@@ -69,6 +69,28 @@ class PipelineValidationError(ConfigError):
         super().__init__(message)
 
 
+class EnvFlagError(DecoyError, ValueError):
+    """An environment flag holds a value outside the accepted spellings.
+
+    ``variable`` names the variable. The text names it and the accepted spellings, never the value
+    read, so a typo or a secret pasted into the wrong variable stays out of logs and reports. Maps
+    to code ``env_flag_invalid``. Callers decide the safe outcome: a flag that gates behaviour
+    inside a run refuses, a switch that turns a feature off leaves it off.
+    """
+
+    code: str = reasons.config.ENV_FLAG_INVALID
+
+    def __init__(self, variable: str) -> None:
+        self.variable = variable
+        super().__init__(
+            f"{variable} must be one of 1, true, yes, on, 0, false, no, off, or empty "
+            "(any case). The value read is not shown."
+        )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(self), (self.variable,))
+
+
 class ValidationError(DecoyError):
     """Lower-level validation failure raised by individual modular
     validators (the per-op ``validate_config`` callbacks).
@@ -580,6 +602,7 @@ __all__ = [
     "ConnectorErrorKind",
     "DecoyError",
     "EmptyParentPoolError",
+    "EnvFlagError",
     "FKPreservationError",
     "FixedWidthParseError",
     "FixedWidthRecordOverlongError",
