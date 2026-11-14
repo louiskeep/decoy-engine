@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import random
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -43,6 +44,9 @@ _FPE_KEY_LABEL = b"ff1-key/v1"
 _CODE_SET_KEYED_SALT = b"decoy.code_set.keyed_access.v1"
 # transforms/joint_mask.py:64 (_KEYED_ROW_SOURCE).
 _JOINT_MASK_KEYED_ROW_SOURCE = b"joint_mask/keyed_row/v1"
+# transforms/joint_mask.py (_NULL_FALLBACK_LABEL, _GEN_ROW_LABEL).
+_JOINT_MASK_NULL_FALLBACK_LABEL = b"joint_mask/null_fallback/v1"
+_JOINT_MASK_GEN_ROW_LABEL = b"joint_mask/gen_row/v1"
 
 
 def _hmac_hex(key: bytes, value: Any) -> str | None:
@@ -183,6 +187,47 @@ class JointMaskKeyedRowProvider(DrawSiteProvider):
         except BaseException:
             del mask_key
             raise
+
+
+class _JointMaskStreamProvider(DrawSiteProvider):
+    """A joint_mask numpy stream seeded under its own ``derive`` source.
+
+    Shipped seed (``transforms/joint_mask.py``): ``default_rng(seed_bytes_to_int(derive(mask_key,
+    namespace or "joint_mask", source)[:8]))`` where ``source`` is the stream label then the
+    length-prefixed UTF-8 of the table, the reference and the ``\\x1f``-joined target columns.
+    The provider reproduces the source bytes; the caller runs ``derive`` and
+    ``seed_bytes_to_int(derived[:8])`` itself, so no key is bound here. Whole-column or
+    per-null-row stream positions advance one generator, so NON-partitionable.
+    """
+
+    label: bytes = b""
+
+    @staticmethod
+    def _length_prefixed(text: str) -> bytes:
+        raw = text.encode("utf-8")
+        return len(raw).to_bytes(4, "big") + raw
+
+    def source(self, table: str, reference: str, columns: Sequence[str]) -> bytes:
+        return (
+            self.label
+            + self._length_prefixed(table)
+            + self._length_prefixed(reference)
+            + self._length_prefixed("\x1f".join(columns))
+        )
+
+
+class JointMaskNullFallbackProvider(_JointMaskStreamProvider):
+    """``mask.joint_mask_null_fallback``: one ``integers(0, row_count)`` per null key, in row order."""
+
+    draw_site_id = "mask.joint_mask_null_fallback"
+    label = _JOINT_MASK_NULL_FALLBACK_LABEL
+
+
+class JointMaskGenRowProvider(_JointMaskStreamProvider):
+    """``mask.joint_mask_gen_row``: gen mode's whole-frame ``integers(0, row_count, size=n)``."""
+
+    draw_site_id = "mask.joint_mask_gen_row"
+    label = _JOINT_MASK_GEN_ROW_LABEL
 
 
 # ---------------------------------------------------------------------------

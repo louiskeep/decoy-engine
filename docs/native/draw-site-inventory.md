@@ -44,11 +44,11 @@ partitionable.
 
 ## Summary
 
-- 40 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 42 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 23 partitionable, 17 not.
-- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 9, `faker_seed_instance`
+- 23 partitionable, 19 not.
+- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 11, `faker_seed_instance`
   5, `python_mt19937` 7, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -245,7 +245,7 @@ valid `derive` IKM lengths. Wired into output via the provider registry
 
 ---
 
-## Family: numpy_pcg64 (9 sites)
+## Family: numpy_pcg64 (11 sites)
 
 Draws from a `numpy.random.Generator` (`default_rng`, PCG64). Most are
 whole-column vector draws and are therefore NOT partitionable. The exception is
@@ -327,6 +327,23 @@ before sampling. Build-side, not per output row. Mirrors: `_name_email.py:134`,
 `_custom.py:206`, `_address.py:96`, `_person.py:142`.
 
 ---
+
+### mask.joint_mask_null_fallback
+`transforms/joint_mask.py:376`. In mask mode a row whose `key_by` value is null has no key to
+select by, so it draws a reference row index from one seeded stream: `default_rng(seed)
+.integers(0, row_count)` per null row, in row order. The seed is
+`seed_bytes_to_int(derive(mask_key, namespace or "joint_mask", source)[:8])` with
+`source = b"joint_mask/null_fallback/v1" + lp(table) + lp(reference) + lp("\x1f".join(columns))`
+and `lp` a 4-byte big-endian length followed by UTF-8. Each group (table, reference, target
+columns) walks its own stream. NOT partitionable: the draws are positional across the null rows.
+Non-null keys select by `mask.joint_mask_keyed_row` and draw nothing here.
+
+### mask.joint_mask_gen_row
+`transforms/joint_mask.py:415`. In gen mode every row draws its reference row index independent of
+the source: `default_rng(seed).integers(0, row_count, size=n)`, seeded like the null fallback with
+the label `b"joint_mask/gen_row/v1"`. NOT partitionable (one positional stream per group). Gen mode
+runs only on the whole-frame route: `joint_mask` is a cross-row strategy that the chunked and
+out-of-core routes decline.
 
 ## Family: python_mt19937 (7 sites)
 
@@ -588,8 +605,8 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (40 sites; 23
-partitionable, 17 not). An import-time invariant fails if the registry drifts
+Registry: exactly one provider per catalogued `draw_site_id` (42 sites; 23
+partitionable, 19 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
@@ -607,6 +624,8 @@ from `DRAW_SITES`.
 | gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
 | gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| mask.joint_mask_null_fallback     | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| mask.joint_mask_gen_row           | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
 | mask.shuffle                      | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
 | mask.windowed_date                | numpy_pcg64         | yes           | seed_protocol_v7; numpy NEP-19 PCG64 |
 | mask.grouped_series_monotone_walk | per_group_stream    | no            | seed_protocol_v7; numpy NEP-19 PCG64 |

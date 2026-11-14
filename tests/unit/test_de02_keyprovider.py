@@ -426,7 +426,7 @@ class TestCodeSetJointMaskRekey:
         def run(mask_key):
             # key_by reads the immutable pre-mask SOURCE snapshot (PR1 cross-column
             # contract), which the adapter wires via ctx.group_anchor_snapshots; a
-            # direct handler call supplies the same snapshot (current_table is "").
+            # direct handler call supplies the same snapshot and stamps the table.
             ctx = StrategyContext(
                 registry=_REG,
                 pool_cache=PoolCache(),
@@ -434,7 +434,8 @@ class TestCodeSetJointMaskRekey:
                 namespace_registry=_NS,
                 job_seed=_JOB_SEED,
                 mask_key=mask_key,
-                group_anchor_snapshots={("", "anchor"): frame["anchor"].copy()},
+                group_anchor_snapshots={("t", "anchor"): frame["anchor"].copy()},
+                current_table="t",
             )
             return h.run(frame.copy(), "city", seed, ctx)[0]["city"].tolist()
 

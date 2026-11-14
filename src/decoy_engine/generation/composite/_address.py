@@ -19,14 +19,14 @@ Methodology: identical pattern to composite_city_state_zip
 
 from __future__ import annotations
 
-import os
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive
+from decoy_engine.determinism import COMPOSITE_SEED_WIDTHS, derive, resolve_seed, seed_bytes_to_int
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._city_state_zip import load_locality_table
 from decoy_engine.generation.composite._errors import CompositeError
@@ -58,26 +58,29 @@ class CompositeAddress:
         self._registry = registry
         self._pool_size = pool_size
         self._street: np.ndarray | None = None
+        self._street_seed: bytes | None = None
         self._locality = load_locality_table()
 
     def _street_pool(self, spec: ProviderSpec) -> np.ndarray:
-        if self._street is None:
+        """Build the street pool for `spec.seed`; a different seed rebuilds it."""
+        assert spec.seed is not None  # noqa: S101 -- resolved by the entry point
+        if self._street is None or self._street_seed != spec.seed:
             from decoy_engine.generation.pool._builder import PoolBuilder
             from decoy_engine.providers_v2 import get_default_registry
 
             registry = self._registry if self._registry is not None else get_default_registry()
             builder = PoolBuilder(registry)
-            seed = spec.seed if spec.seed is not None else b"\x00" * 8
             locale = spec.locale or "en_US"
             pool = builder.build(
                 provider="address_street",
                 size=self._pool_size,
-                job_seed=seed,
+                job_seed=spec.seed,
                 locale=locale,
                 config={},
                 namespace=self.coherent_namespace,
             )
             self._street = pool.values
+            self._street_seed = spec.seed
         return self._street
 
     def _check_pool_size(self, size: int) -> None:
@@ -91,10 +94,11 @@ class CompositeAddress:
             )
 
     def build_pool(self, spec: ProviderSpec, *, size: int | None = None) -> BundlePool:
+        chosen = resolve_seed(spec.seed)
+        spec = dataclasses.replace(spec, seed=chosen)
         n = size if size is not None else self._pool_size
         streets = self._street_pool(spec)
-        seed = spec.seed if spec.seed is not None else b"\x00" * 8
-        rng = np.random.default_rng(int.from_bytes(seed, "big"))
+        rng = np.random.default_rng(seed_bytes_to_int(chosen, widths=COMPOSITE_SEED_WIDTHS))
         si = rng.integers(0, len(streets), size=n)
         li = rng.integers(0, len(self._locality), size=n)
         values = np.empty(n, dtype=object)
@@ -109,7 +113,7 @@ class CompositeAddress:
             provider=self.composite_name,
             locale=spec.locale or "en_US",
             config_hash="address/v1",
-            seed=seed,
+            seed=chosen,
             size=n,
             build_time_ms=0.0,
             backend_type="composite",
@@ -162,12 +166,15 @@ class CompositeAddress:
         source: pd.Series | None = None,
         deterministic: bool = False,
     ) -> dict[str, pd.Series]:
+        if deterministic and (source is None or spec.seed is None):
+            raise CompositeError(
+                code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
+                message="Deterministic composite_address requires source + seed.",
+            )
+        chosen = resolve_seed(spec.seed)
+        spec = dataclasses.replace(spec, seed=chosen)
         if deterministic:
-            if source is None or spec.seed is None:
-                raise CompositeError(
-                    code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
-                    message="Deterministic composite_address requires source + seed.",
-                )
+            assert source is not None  # noqa: S101 -- checked above
             if len(source) != count:
                 raise CompositeError(
                     code=reasons.plan.SOURCE_LENGTH_MISMATCH,
@@ -178,9 +185,8 @@ class CompositeAddress:
         from decoy_engine.generation.pool._sampler import PoolSampler
 
         pool = self.build_pool(spec)
-        seed = spec.seed if spec.seed is not None else os.urandom(8)
         return PoolSampler().sample_bundle(
-            pool, count, mode=CardinalityMode.REUSE, seed=seed, deterministic=False
+            pool, count, mode=CardinalityMode.REUSE, seed=chosen, deterministic=False
         )
 
 

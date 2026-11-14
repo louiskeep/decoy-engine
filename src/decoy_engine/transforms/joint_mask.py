@@ -13,9 +13,11 @@ Two modes:
     Uses ``ReferenceTable.keyed_row`` per the SP-06 contract.
 
   Gen mode (``mode="gen"``)
-    Draws rows via numpy.default_rng seeded from the job seed, independently of
-    any source column value. Deterministic across runs for the same seed and
-    DataFrame length.
+    Draws rows via numpy.default_rng seeded from ``derive(job_seed, namespace, source)``,
+    where the source names the table, the reference and the target columns, so each group
+    walks its own stream. Independent of any source column value. Deterministic across runs
+    for the same seed, group and DataFrame length. The null-key fallback of mask mode seeds
+    the same way under its own label.
 
 Shipped reference tables (SP-08b additions):
   ``ndc_labeler_drug_strength`` -- NDC drug labeler/name/strength/dosage-form tuples.
@@ -55,7 +57,7 @@ import pandas as pd
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine._opaque import OpaqueBox
-from decoy_engine.determinism import derive
+from decoy_engine.determinism import derive, seed_bytes_to_int
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import ReferenceTable, load_table
@@ -67,6 +69,11 @@ from decoy_engine.reference_tables._registry import JOINT_MASK_TABLES
 # run secret (Codex BLOCKER 1) instead of a public constant.
 _KEYED_ROW_SOURCE = b"joint_mask/keyed_row/v1"
 _DEFAULT_NAMESPACE = "joint_mask"
+# Labels of the two seeded streams. Each stream derives under its own source so a null-key
+# fallback and a gen-mode draw of the same group never share a seed, and neither shares one with
+# another group or table (the source below carries the table, reference and target columns).
+_NULL_FALLBACK_LABEL = b"joint_mask/null_fallback/v1"
+_GEN_ROW_LABEL = b"joint_mask/gen_row/v1"
 
 _LOG = logging.getLogger(__name__)
 
@@ -243,6 +250,26 @@ def validate_joint_mask_config(
 # ── Core apply functions ──────────────────────────────────────────────────────
 
 
+def _length_prefixed(text: str) -> bytes:
+    """4-byte big-endian length, then UTF-8, so adjacent fields cannot run together."""
+    raw = text.encode("utf-8")
+    return len(raw).to_bytes(4, "big") + raw
+
+
+def _stream_source(label: bytes, table: str, config: JointMaskConfig) -> bytes:
+    """The `derive` source of one group's seeded stream: label, table, reference, columns.
+
+    ("ab", "c") and ("a", "bc") stay apart because every field is length-prefixed. The native
+    mirror is `JointMask*Provider.source` in `execution/native/protocol/providers_mask.py`.
+    """
+    return (
+        label
+        + _length_prefixed(table)
+        + _length_prefixed(config.reference)
+        + _length_prefixed("\x1f".join(config.columns))
+    )
+
+
 def apply_joint_mask(
     df: pd.DataFrame,
     config: JointMaskConfig,
@@ -251,6 +278,7 @@ def apply_joint_mask(
     job_seed: bytes,
     namespace: str | None = None,
     key_series: pd.Series | None = None,
+    table: str,
 ) -> pd.DataFrame:
     """Apply joint_mask to ``df``, writing all target columns in one pass.
 
@@ -263,6 +291,9 @@ def apply_joint_mask(
         mode: ``"mask"`` (keyed HMAC) or ``"gen"`` (seeded random).
         job_seed: 32-byte entropy input. Same seed -> same output for a given
             input (mask mode) or DataFrame length (gen mode).
+        table: Name of the table being masked. It separates the seeded streams (null-key
+            fallback and gen mode) of one group from every other group and table of the run.
+            Required, and never empty: an empty name would put every group on one stream.
         key_series: cross-column V1 SOURCE-key override (mask mode). When given,
             the HMAC key per row comes from this pre-mask snapshot of
             ``config.key_by`` instead of the live (possibly masked) frame, so the
@@ -276,12 +307,16 @@ def apply_joint_mask(
         A copy of ``df`` with ``config.columns`` replaced by reference-table rows.
     """
     try:
+        if not table:
+            raise ValueError("joint_mask: the table name is required to seed its row streams")
         result = df.copy()
 
         if mode == "mask":
-            rows = _pick_rows_mask(df, config, job_seed, namespace=namespace, key_series=key_series)
+            rows = _pick_rows_mask(
+                df, config, job_seed, namespace=namespace, key_series=key_series, table=table
+            )
         elif mode == "gen":
-            rows = _pick_rows_gen(len(df), config, job_seed)
+            rows = _pick_rows_gen(len(df), config, job_seed, namespace=namespace, table=table)
         else:
             raise ValueError(f"joint_mask: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
 
@@ -301,19 +336,22 @@ def _pick_rows_mask(
     *,
     namespace: str | None = None,
     key_series: pd.Series | None = None,
+    table: str,
 ) -> list[dict[str, Any]]:
     """Pick one reference row per DataFrame row using HMAC-keyed selection.
 
     Null key_by values are handled by falling back to a seeded random row
     (the same fallback a null value would need since there is no key to
-    HMAC). This preserves the non-null row count and avoids crashes.
+    HMAC). This preserves the non-null row count and avoids crashes. The fallback stream
+    seeds from `derive(job_seed, namespace, null-fallback source)`, so each group (table,
+    reference, columns) walks its own stream.
 
     DE-02: `job_seed` here is the keyed-mask IKM (`ctx.mask_key`). The reference
     row is selected under an HMAC key derived from it
     (`derive(mask_key, namespace, "joint_mask/keyed_row/v1")`), so the
     real-value -> reference-row mapping depends on the run secret and is not
     reversible off the public reference-table salt (Codex BLOCKER 1). The
-    null-key fallback RNG also seeds off this IKM.
+    null-key fallback RNG also seeds off this IKM, under its own derive source.
 
     Pattern: HMAC-SHA256 via ReferenceTable.keyed_row (RFC 2104).
     SP-06 cross-version caveat: modular index shifts if row_count changes.
@@ -335,7 +373,15 @@ def _pick_rows_mask(
 
         rows: list[dict[str, Any]] = []
         # Seeded RNG for null-key fallback rows only.
-        rng = np.random.default_rng(int.from_bytes(job_seed[:8], "big"))
+        rng = np.random.default_rng(
+            seed_bytes_to_int(
+                derive(
+                    job_seed,
+                    namespace or _DEFAULT_NAMESPACE,
+                    _stream_source(_NULL_FALLBACK_LABEL, table, config),
+                )[:8]
+            )
+        )
         for val in key_col:
             if val is None or (isinstance(val, float) and np.isnan(val)):
                 # Null key: fall back to a seeded random row (no usable key).
@@ -355,16 +401,26 @@ def _pick_rows_gen(
     n: int,
     config: JointMaskConfig,
     job_seed: bytes,
+    *,
+    namespace: str | None = None,
+    table: str,
 ) -> list[dict[str, Any]]:
-    """Pick ``n`` reference rows via numpy.default_rng seeded from ``job_seed``.
+    """Pick ``n`` reference rows via numpy.default_rng seeded under the group's own source.
 
-    Deterministic: same job_seed + same n -> same sequence of rows.
-    Independent of source column values (gen mode has no source to key from).
+    Deterministic: same job_seed, namespace, table, reference, columns and n give the same
+    sequence of rows. Independent of source column values (gen mode has no source to key from).
     """
     try:
         tbl = config.table
-        seed_int = int.from_bytes(job_seed[:8], "big")
-        rng = np.random.default_rng(seed_int)
+        rng = np.random.default_rng(
+            seed_bytes_to_int(
+                derive(
+                    job_seed,
+                    namespace or _DEFAULT_NAMESPACE,
+                    _stream_source(_GEN_ROW_LABEL, table, config),
+                )[:8]
+            )
+        )
         indices = rng.integers(0, tbl.row_count, size=n)
         return [tbl.row(int(idx)) for idx in indices]
     except BaseException:

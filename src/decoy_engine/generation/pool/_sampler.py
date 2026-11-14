@@ -28,6 +28,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.determinism import seed_bytes_to_int
 from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._errors import GenerationError, raise_uniqueness_impossible
@@ -165,31 +166,6 @@ def _derive_pool_indices(
         raise
 
 
-def _seed_bytes_to_int(seed: bytes) -> int:
-    """Convert the 8-byte pool seed to a uint64 for numpy default_rng.
-
-    Mirror image of the S3 spec convention; never used as a determinism
-    envelope input (this seed feeds the build-side RNG only).
-
-    GP2 (Codex round-3 spec B): the non-deterministic dispatch previously
-    accepted any length here and let a too-short/too-long seed silently
-    truncate or overflow through int.from_bytes. A wrong-length seed is a
-    determinism-envelope bug, not a value to tolerate -- raise instead.
-    """
-    try:
-        if len(seed) != 8:
-            raise GenerationError(
-                code=reasons.runtime.INVALID_SEED_LENGTH,
-                message=(
-                    f"PoolSampler non-deterministic seed must be exactly 8 bytes; got {len(seed)}."
-                ),
-            )
-        return int.from_bytes(seed, "big")
-    except BaseException:
-        del seed
-        raise
-
-
 class PoolSampler:
     """Sample from a ValuePool under a CardinalityMode.
 
@@ -267,7 +243,7 @@ class PoolSampler:
                 return self._deterministic(pool, n, source, seed, namespace)
 
             # Non-deterministic dispatch.
-            rng = np.random.default_rng(_seed_bytes_to_int(seed))
+            rng = np.random.default_rng(seed_bytes_to_int(seed))
             if mode is CardinalityMode.REUSE:
                 indices = rng.integers(0, pool.size, size=n)
                 output = pool.values[indices]
@@ -515,7 +491,7 @@ class PoolSampler:
                 return {c: pd.Series(per_col[c]) for c in cols}
 
             # Non-deterministic: with-replacement by default; UNIQUE without.
-            rng = np.random.default_rng(_seed_bytes_to_int(seed))
+            rng = np.random.default_rng(seed_bytes_to_int(seed))
             if mode is CardinalityMode.UNIQUE:
                 if not unique_capacity_ok(pool.size, n):
                     raise_uniqueness_impossible(

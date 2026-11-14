@@ -39,9 +39,10 @@ import numpy as np
 from faker import VERSION as _FAKER_VERSION
 from faker import Faker
 
+from decoy_engine.determinism import seed_bytes_to_int
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
-from decoy_engine.generation.pool._sampler import PoolSampler, _seed_bytes_to_int
+from decoy_engine.generation.pool._sampler import PoolSampler
 from decoy_engine.generation.pool._value_pool import ValuePool, _freeze_array
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
@@ -456,7 +457,7 @@ class PooledSelector:
     def __init__(self, values: Any, selection_seed: bytes) -> None:
         try:
             self._values = values
-            self._rng = np.random.default_rng(_seed_bytes_to_int(selection_seed))
+            self._rng = np.random.default_rng(seed_bytes_to_int(selection_seed))
         except BaseException:
             del selection_seed
             raise

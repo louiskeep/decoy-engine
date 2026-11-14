@@ -19,7 +19,7 @@ def _digest(value: object) -> str:
 
 
 def test_catalogue_length_and_order_are_unchanged() -> None:
-    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 40
+    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 42
     assert [site.draw_site_id for site in protocol.DRAW_SITES] == _ORDERED_IDS
 
 
@@ -55,7 +55,10 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned for GEN-TYPES E1: gen.distribution appended at the end of the catalogue.
 # Re-pinned for GEN-TYPES E3: gen.lookup appended after gen.distribution.
 # Re-pinned for B-6: mask.tokenize derives under the vault-scoped subkey (call site moved).
-_CATALOGUE_DIGEST = "483f424e39576e2c3b863516d97d92fad7a6ba31af01321f3e60c8ad42938197"
+# Re-pinned for DUP-FREEZE E2: two joint_mask stream sites after mask.joint_mask_keyed_row, and the
+# gen.composite_build_pool seed text names resolve_seed. MASK_STRATEGY_TO_SITE maps each strategy to
+# one site, so its digest does not move.
+_CATALOGUE_DIGEST = "cfaa8fd8f7efd3d2290b0f829df1760007b37bb4a5e1f1de93df0dc5156f5e92"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -68,6 +71,8 @@ _ORDERED_IDS = [
     "mask.group_key",
     "mask.code_set",
     "mask.joint_mask_keyed_row",
+    "mask.joint_mask_null_fallback",
+    "mask.joint_mask_gen_row",
     "mask.text_mask_date_shift",
     "mask.text_mask_faker",
     "mask.grouped_series_monotone_walk",
@@ -113,6 +118,9 @@ _ENTRY_DIGESTS = [
     "acb11366c3ae3b8fa817660874102ad3a6f377c92ba35ed73cbc007b80056bb5",
     "eb568e1842f6b938756adb3e6bb841b3633d04587dd9c8473a7312aa586d53ef",
     "bddaa1d1f3acf2a49832f1742b8163425877c835b2db5e47e76a97500f6893bb",
+    # mask.joint_mask_null_fallback and mask.joint_mask_gen_row added for DUP-FREEZE E2.
+    "1e34bdac3c40cdd212874769967e021946b764b492c5c65774b26f92299ba580",
+    "5b53a0e6c5f233ae2b0d37166404395d19840b9169be29d3e8c50b30e65939ed",
     "85be9f4b05fadf9b441f28ce151d9f820c48d99112fe21d799c4a759bc9f9bcd",
     "474ab1f76ab596a309f6b3f4b6a1e4995555c6f07473a831af12862a22283a60",
     "d30d45fdcacb74a57114f50fb09d3557bfe838db4afa0b1910f59816dc18b90b",
@@ -130,7 +138,8 @@ _ENTRY_DIGESTS = [
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",
     "451e4aa4bcb7f23e437468f4e692768c4571e4defb8a081d879be0eb428a1308",
     "648d1fb0b894493e6e8ad55de08b481dbbece29402ecb9ae3eb9cc54b995b211",
-    "00cc3c083188a7299b963006aa4a5981a1abc2f0aee6e91e7ef31fe69cd532d4",
+    # gen.composite_build_pool re-pinned for DUP-FREEZE E2: the seed text names resolve_seed.
+    "3b699b988cc088d3aaf36fef25709a145682136e7006475c73063aacfe4b15ae",
     "039d679f351c8e7d8e9e92ae0b5ee7e0cfa058cf99e1a71b409fc47327565a4a",
     "1dc06347f9b91e1fbbfcb307edfb7f7fea1c6c88e96c892c14a95af48e19d679",
     "b22f3004c978c61af573fd3bfaad6fb85dfddbc68e8a9a851c17173847b8e6cb",

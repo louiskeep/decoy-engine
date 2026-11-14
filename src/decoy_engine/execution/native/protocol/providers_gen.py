@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from decoy_engine.determinism import derive
+from decoy_engine.determinism import COMPOSITE_SEED_WIDTHS, derive, seed_bytes_to_int
 from decoy_engine.execution.native.protocol.providers_base import DrawSiteProvider
 from decoy_engine.generators.derivation import GenDeriveContext
 
@@ -63,16 +63,21 @@ class DistributionProvider(DrawSiteProvider):
 
 
 class _SeededFromBytesNumpyProvider(DrawSiteProvider):
-    """Whole-column numpy stream seeded from ``int.from_bytes(seed, "big")``.
+    """Whole-column numpy stream seeded from ``seed_bytes_to_int(seed)``.
 
     Covers ``gen.pool_nondeterministic`` (seed = pool build seed) and
-    ``gen.composite_build_pool`` (seed = ``spec.seed`` or ``b"\\x00" * 8``).
+    ``gen.composite_build_pool`` (seed = ``resolve_seed(spec.seed)``, one per spec; the Python
+    side resolves first, so the mirror never sees a missing seed). The pool seed must be exactly
+    8 bytes; the composite build accepts 8 or 32 (``COMPOSITE_SEED_WIDTHS``), as the Python build does.
+    A missing or short one is refused, never replaced by zeros.
     Seeded but stream-positional, so NON-partitionable.
     """
 
+    seed_widths: tuple[int, ...] = (8,)
+
     def generator(self, seed: bytes) -> np.random.Generator:
         try:
-            return np.random.default_rng(int.from_bytes(seed, "big"))
+            return np.random.default_rng(seed_bytes_to_int(seed, widths=self.seed_widths))
         except BaseException:
             del seed
             raise
@@ -88,13 +93,7 @@ class CompositeBuildPoolProvider(_SeededFromBytesNumpyProvider):
     """``gen.composite_build_pool``: build-time ``integers`` / ``bytes(8)`` pool fill."""
 
     draw_site_id = "gen.composite_build_pool"
-
-    def generator(self, seed: bytes | None) -> np.random.Generator:
-        try:
-            return super().generator(seed if seed else b"\x00" * 8)
-        except BaseException:
-            del seed
-            raise
+    seed_widths = COMPOSITE_SEED_WIDTHS
 
 
 # ---------------------------------------------------------------------------

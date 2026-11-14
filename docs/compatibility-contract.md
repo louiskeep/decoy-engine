@@ -443,6 +443,18 @@ raises fails the run instead of writing nulls. No seed draw moves and
 `SEED_PROTOCOL_VERSION` is unchanged. The refreeze is recorded in
 `docs/records/2026-11-13-formula-typing-refreeze.md`.
 
+**2026-11-14, joint_mask streams and composite seeds (pre-GA break).** The null-key fallback of
+`joint_mask` mask mode and all of `joint_mask` gen mode seed NumPy from
+`derive(job_seed, namespace, source)` instead of `job_seed[:8]`. The source is
+`b"joint_mask/null_fallback/v1"` or `b"joint_mask/gen_row/v1"` followed by the length-prefixed
+(4-byte big-endian) UTF-8 table name, reference name and `\x1f`-joined target columns, so every
+group draws its own stream. Output changes for rows with a null `key_by` and for every row of a
+`mode: gen` group; rows with a non-null `key_by` use the unchanged keyed path and are byte-identical.
+No shim and no flag. Composite specs resolve one seed per call (`resolve_seed`): a seeded spec,
+including the deterministic composite masking path with a 32-byte mask key, produces the same bytes
+as before, and only a spec with no seed changes (a fresh 8-byte seed per call, not an all-zero pool
+seed). `SEED_PROTOCOL_VERSION` is unchanged: no `derive` input layout changes, only two new sources.
+
 **2026-11-14, one canonical JSON owner (pre-GA break, DUP-FREEZE E1).** Every digest, HMAC
 and signature input is now built by `decoy_engine._canonical.canonical_json_bytes`: sorted keys,
 compact separators, UTF-8 text written as-is, NaN and Infinity refused. The same module holds the

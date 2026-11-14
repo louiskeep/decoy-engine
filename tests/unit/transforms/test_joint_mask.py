@@ -65,7 +65,7 @@ class TestMaskMode:
 
         df = _make_df(10)
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
 
         tbl = load_table("us_zip5_city_state")
         valid_tuples = {
@@ -90,7 +90,7 @@ class TestMaskMode:
             }
         )
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
 
         row0 = (result.iloc[0]["zip"], result.iloc[0]["city"], result.iloc[0]["state"])
         row1 = (result.iloc[1]["zip"], result.iloc[1]["city"], result.iloc[1]["state"])
@@ -112,7 +112,7 @@ class TestMaskMode:
             }
         )
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         tuples = list(
             zip(
                 result["zip"].tolist(),
@@ -128,7 +128,7 @@ class TestMaskMode:
         df = _make_df(3)
         original_zip = df["zip"].tolist()
         config = JointMaskConfig.from_dict(_make_config())
-        _ = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        _ = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         assert df["zip"].tolist() == original_zip, "apply_joint_mask must not mutate df."
 
     def test_tuple_consistency_boulder_co(self):
@@ -149,7 +149,7 @@ class TestMaskMode:
             }
         )
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
 
         tbl = load_table("us_zip5_city_state")
         valid_tuples = {
@@ -172,8 +172,8 @@ class TestGenMode:
         df2 = _make_df(5)
         config = JointMaskConfig.from_dict(_make_config())
         seed = b"\x01" * 32
-        r1 = apply_joint_mask(df1, config, mode="gen", job_seed=seed)
-        r2 = apply_joint_mask(df2, config, mode="gen", job_seed=seed)
+        r1 = apply_joint_mask(df1, config, mode="gen", job_seed=seed, table="t")
+        r2 = apply_joint_mask(df2, config, mode="gen", job_seed=seed, table="t")
         assert r1["zip"].tolist() == r2["zip"].tolist(), "Gen mode must be seed-deterministic."
         assert r1["city"].tolist() == r2["city"].tolist()
         assert r1["state"].tolist() == r2["state"].tolist()
@@ -187,12 +187,14 @@ class TestGenMode:
             JointMaskConfig.from_dict(_make_config()),
             mode="gen",
             job_seed=b"\x01" * 32,
+            table="t",
         )
         r2 = apply_joint_mask(
             df2,
             JointMaskConfig.from_dict(_make_config()),
             mode="gen",
             job_seed=b"\x02" * 32,
+            table="t",
         )
         assert r1["zip"].tolist() != r2["zip"].tolist(), "Different seeds must differ."
 
@@ -202,7 +204,7 @@ class TestGenMode:
 
         df = _make_df(20)
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="gen", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="gen", job_seed=_JOB_SEED, table="t")
 
         tbl = load_table("us_zip5_city_state")
         valid_tuples = {
@@ -223,7 +225,7 @@ class TestOutputValidity:
         df = _make_df(4)
         original_ids = df["patient_id"].tolist()
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         assert result["patient_id"].tolist() == original_ids, "Non-target columns unchanged."
         for col in _ZIP_COLS:
             assert col in result.columns
@@ -243,7 +245,7 @@ class TestOutputValidity:
         )
         config = JointMaskConfig.from_dict(_make_config())
         # Should not raise; null key_by rows may passthrough or be suppressed.
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         assert len(result) == 2
 
 
@@ -421,8 +423,8 @@ class TestApplyRouting:
         """Omitting `mode` must select mask mode, matching an explicit mask call."""
         df = _make_df(6)
         config = JointMaskConfig.from_dict(_make_config())
-        implicit = apply_joint_mask(df, config, job_seed=_JOB_SEED)
-        explicit = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        implicit = apply_joint_mask(df, config, job_seed=_JOB_SEED, table="t")
+        explicit = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         for col in _ZIP_COLS:
             assert implicit[col].tolist() == explicit[col].tolist()
 
@@ -435,9 +437,9 @@ class TestApplyRouting:
             {"patient_id": keys, "zip": ["0"] * 15, "city": ["x"] * 15, "state": ["X"] * 15}
         )
         config = JointMaskConfig.from_dict(_make_config())
-        default_ns = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        default_ns = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         custom_ns = apply_joint_mask(
-            df, config, mode="mask", job_seed=_JOB_SEED, namespace="custom_ns"
+            df, config, mode="mask", job_seed=_JOB_SEED, namespace="custom_ns", table="t"
         )
         assert default_ns["zip"].tolist() != custom_ns["zip"].tolist()
 
@@ -462,7 +464,7 @@ class TestMaskRowSelection:
             {"patient_id": keys, "zip": ["0"] * 6, "city": ["x"] * 6, "state": ["X"] * 6}
         )
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
 
         hmac_key = derive(_JOB_SEED, _DEFAULT_NAMESPACE, _KEYED_ROW_SOURCE)
         tbl = config.table
@@ -482,7 +484,7 @@ class TestMaskRowSelection:
             {"patient_id": keys, "zip": ["0"] * 6, "city": ["x"] * 6, "state": ["X"] * 6}
         )
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         out = [
             (result.iloc[i]["zip"], result.iloc[i]["city"], result.iloc[i]["state"])
             for i in range(6)
@@ -501,7 +503,7 @@ class TestMaskRowSelection:
         df = pd.DataFrame({"patient_id": ["K0"], "zip": ["0"], "city": ["x"], "state": ["X"]})
         config = JointMaskConfig.from_dict(_make_config())
         with pytest.raises(ValueError):
-            apply_joint_mask(df, config, mode="bogus", job_seed=_JOB_SEED)
+            apply_joint_mask(df, config, mode="bogus", job_seed=_JOB_SEED, table="t")
 
     def test_missing_key_column_falls_back_per_row(self):
         """When the key_by column is absent, every row must fall back to a seeded
@@ -510,7 +512,7 @@ class TestMaskRowSelection:
 
         df = pd.DataFrame({"zip": ["0"] * 4, "city": ["x"] * 4, "state": ["X"] * 4})
         config = JointMaskConfig.from_dict(_make_config())  # key_by=patient_id, absent here
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
 
         assert len(result) == 4
         tbl = load_table("us_zip5_city_state")
@@ -533,7 +535,7 @@ class TestMaskRowSelection:
             }
         )
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
 
         tbl = config.table
         valid = {
@@ -550,23 +552,23 @@ class TestMaskRowSelection:
             {"patient_id": [None] * 8, "zip": ["0"] * 8, "city": ["x"] * 8, "state": ["X"] * 8}
         )
         config = JointMaskConfig.from_dict(_make_config())
-        r1 = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
-        r2 = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        r1 = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
+        r2 = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         assert r1["zip"].tolist() == r2["zip"].tolist()
         assert r1["city"].tolist() == r2["city"].tolist()
 
-    def test_null_key_fallback_seed_is_first_eight_bytes(self):
-        """The fallback RNG is seeded from the first 8 bytes of job_seed: two
-        seeds equal in those bytes must give identical fallback rows."""
+    def test_null_key_fallback_seed_uses_the_whole_key(self):
+        """The fallback RNG derives from the full job seed, not its first 8 bytes: two
+        seeds that share those bytes but differ in the tail draw different rows."""
         df = pd.DataFrame(
             {"patient_id": [None] * 8, "zip": ["0"] * 8, "city": ["x"] * 8, "state": ["X"] * 8}
         )
         config = JointMaskConfig.from_dict(_make_config())
         seed_a = bytes(range(8)) + b"\x00" * 24
         seed_b = bytes(range(8)) + b"\xff" * 24  # same first 8 bytes, different tail
-        ra = apply_joint_mask(df, config, mode="mask", job_seed=seed_a)
-        rb = apply_joint_mask(df, config, mode="mask", job_seed=seed_b)
-        assert ra["zip"].tolist() == rb["zip"].tolist()
+        ra = apply_joint_mask(df, config, mode="mask", job_seed=seed_a, table="t")
+        rb = apply_joint_mask(df, config, mode="mask", job_seed=seed_b, table="t")
+        assert ra["zip"].tolist() != rb["zip"].tolist()
 
     def test_null_keys_produce_varied_fallback_rows(self):
         """Each null key draws independently from the fallback RNG, so many null
@@ -576,7 +578,7 @@ class TestMaskRowSelection:
             {"patient_id": [None] * 12, "zip": ["0"] * 12, "city": ["x"] * 12, "state": ["X"] * 12}
         )
         config = JointMaskConfig.from_dict(_make_config())
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         tuples = set(
             zip(result["zip"], result["city"], result["state"], strict=True),
         )
@@ -597,7 +599,7 @@ class TestMaskRowSelection:
         config = JointMaskConfig.from_dict(
             {"columns": ["code"], "reference": f"customer:{path}", "key_by": "entity_id"}
         )
-        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED, table="t")
         assert set(result["code"].tolist()) == {"A", "B"}
 
 
@@ -605,16 +607,16 @@ class TestMaskRowSelection:
 
 
 class TestGenRowSelection:
-    def test_gen_seed_is_first_eight_bytes(self):
-        """Gen mode seeds its RNG from the first 8 bytes of job_seed: two seeds
-        equal in those bytes must produce identical output."""
+    def test_gen_seed_uses_the_whole_key(self):
+        """Gen mode derives its RNG from the full job seed, not its first 8 bytes: two
+        seeds that share those bytes but differ in the tail draw different rows."""
         df = _make_df(8)
         config = JointMaskConfig.from_dict(_make_config())
         seed_a = bytes(range(8)) + b"\x00" * 24
         seed_b = bytes(range(8)) + b"\xff" * 24
-        ra = apply_joint_mask(df, config, mode="gen", job_seed=seed_a)
-        rb = apply_joint_mask(df, config, mode="gen", job_seed=seed_b)
-        assert ra["zip"].tolist() == rb["zip"].tolist()
+        ra = apply_joint_mask(df, config, mode="gen", job_seed=seed_a, table="t")
+        rb = apply_joint_mask(df, config, mode="gen", job_seed=seed_b, table="t")
+        assert ra["zip"].tolist() != rb["zip"].tolist()
 
     def test_gen_sampling_can_select_first_row(self, tmp_path):
         """Gen sampling spans the full [0, row_count) range; with a two-row
@@ -631,5 +633,5 @@ class TestGenRowSelection:
         config = JointMaskConfig.from_dict(
             {"columns": ["code"], "reference": f"customer:{path}", "key_by": "unused_in_gen"}
         )
-        result = apply_joint_mask(df, config, mode="gen", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, config, mode="gen", job_seed=_JOB_SEED, table="t")
         assert set(result["code"].tolist()) == {"A", "B"}

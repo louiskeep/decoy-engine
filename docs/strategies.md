@@ -619,9 +619,13 @@ Two modes:
   selects a row at position `HMAC-SHA256(job_seed, key_value) % row_count` in
   the `id`-sorted table (RFC 2104). Same key value and seed always produce the
   same row. Null `key_by` values fall back to a seeded random row.
-- **Gen mode**: draws row indices from `numpy.default_rng` seeded from the job
-  seed, independent of source column values. Deterministic for the same seed and
-  DataFrame length.
+- **Gen mode**: draws row indices from `numpy.default_rng`, independent of
+  source column values. Deterministic for the same seed and DataFrame length.
+
+The null-key fallback and gen mode seed from `derive(job_seed, namespace, source)`,
+where the source names the table, the reference and the target columns. Each
+`joint_mask` group therefore draws its own stream: two groups of one run never
+pick the same reference row index. `joint_mask` runs on the whole-frame route only.
 
 Config validation runs at execution time, before any data is mutated
 (fail-closed). Raises `PlanCompileError` on missing `columns`, missing

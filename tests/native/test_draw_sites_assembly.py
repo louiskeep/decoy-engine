@@ -36,7 +36,7 @@ def test_catalogue_is_the_family_modules_in_order() -> None:
 
 
 def test_family_sizes() -> None:
-    assert [len(family) for family in _FAMILY_ORDER] == [14, 14, 4, 1, 1, 3, 1, 2]
+    assert [len(family) for family in _FAMILY_ORDER] == [16, 14, 4, 1, 1, 3, 1, 2]
 
 
 def test_protocol_reexports_the_record_type_and_enums() -> None:
