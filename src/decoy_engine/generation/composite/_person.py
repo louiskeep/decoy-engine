@@ -19,14 +19,14 @@ approach per engineering-best-practices section 6.2.
 
 from __future__ import annotations
 
-import os
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive
+from decoy_engine.determinism import derive, resolve_seed
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -67,22 +67,28 @@ class CompositePerson:
         self._first: np.ndarray | None = None
         self._last: np.ndarray | None = None
         self._dob: np.ndarray | None = None
+        self._pools_seed: bytes | None = None
 
     def _pools(self, spec: ProviderSpec) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Build (and cache) first/last/dob pools, reproducibly from the seed."""
-        if self._first is None or self._last is None or self._dob is None:
+        """Build first/last/dob pools for `spec.seed`; a different seed rebuilds them."""
+        assert spec.seed is not None  # noqa: S101 -- resolved by the entry point
+        if (
+            self._first is None
+            or self._last is None
+            or self._dob is None
+            or self._pools_seed != spec.seed
+        ):
             from decoy_engine.generation.pool._builder import PoolBuilder
             from decoy_engine.providers_v2 import get_default_registry
 
             registry = self._registry if self._registry is not None else get_default_registry()
             builder = PoolBuilder(registry)
-            seed = spec.seed if spec.seed is not None else b"\x00" * 8
             locale = spec.locale or "en_US"
 
             first_pool = builder.build(
                 provider="person_first_name",
                 size=self._pool_size,
-                job_seed=seed,
+                job_seed=spec.seed,
                 locale=locale,
                 config={},
                 namespace=self.coherent_namespace,
@@ -90,7 +96,7 @@ class CompositePerson:
             last_pool = builder.build(
                 provider="person_last_name",
                 size=self._pool_size,
-                job_seed=seed,
+                job_seed=spec.seed,
                 locale=locale,
                 config={},
                 namespace=self.coherent_namespace,
@@ -98,7 +104,7 @@ class CompositePerson:
             dob_pool = builder.build(
                 provider="person_dob",
                 size=self._pool_size,
-                job_seed=seed,
+                job_seed=spec.seed,
                 locale=locale,
                 config={},
                 namespace=self.coherent_namespace,
@@ -106,6 +112,7 @@ class CompositePerson:
             self._first = first_pool.values
             self._last = last_pool.values
             self._dob = dob_pool.values
+            self._pools_seed = spec.seed
         return self._first, self._last, self._dob
 
     def _resolve_domains(self, spec: ProviderSpec) -> tuple[str, ...]:
@@ -135,12 +142,13 @@ class CompositePerson:
 
     def build_pool(self, spec: ProviderSpec, *, size: int | None = None) -> BundlePool:
         """Build a BundlePool of coherent (first, last, email, dob) tuples."""
+        chosen = resolve_seed(spec.seed)
+        spec = dataclasses.replace(spec, seed=chosen)
         n = size if size is not None else self._pool_size
         first_arr, last_arr, dob_arr = self._pools(spec)
         domains = self._resolve_domains(spec)
         fmt = str(spec.extra.get("email_format", _DEFAULT_EMAIL_FORMAT))
-        seed = spec.seed if spec.seed is not None else b"\x00" * 8
-        rng = np.random.default_rng(int.from_bytes(seed, "big"))
+        rng = np.random.default_rng(int.from_bytes(chosen, "big"))
         fi = rng.integers(0, len(first_arr), size=n)
         li = rng.integers(0, len(last_arr), size=n)
         di = rng.integers(0, len(domains), size=n)
@@ -160,7 +168,7 @@ class CompositePerson:
             provider=self.composite_name,
             locale=spec.locale or "en_US",
             config_hash="person/v1",
-            seed=seed,
+            seed=chosen,
             size=n,
             build_time_ms=0.0,
             backend_type="composite",
@@ -220,12 +228,15 @@ class CompositePerson:
         source: pd.Series | None = None,
         deterministic: bool = False,
     ) -> dict[str, pd.Series]:
+        if deterministic and (source is None or spec.seed is None):
+            raise CompositeError(
+                code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
+                message="Deterministic composite_person requires source + seed.",
+            )
+        chosen = resolve_seed(spec.seed)
+        spec = dataclasses.replace(spec, seed=chosen)
         if deterministic:
-            if source is None or spec.seed is None:
-                raise CompositeError(
-                    code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
-                    message="Deterministic composite_person requires source + seed.",
-                )
+            assert source is not None  # noqa: S101 -- checked above
             if len(source) != count:
                 raise CompositeError(
                     code=reasons.plan.SOURCE_LENGTH_MISMATCH,
@@ -236,9 +247,8 @@ class CompositePerson:
         from decoy_engine.generation.pool._sampler import PoolSampler
 
         pool = self.build_pool(spec)
-        seed = spec.seed if spec.seed is not None else os.urandom(8)
         return PoolSampler().sample_bundle(
-            pool, count, mode=CardinalityMode.REUSE, seed=seed, deterministic=False
+            pool, count, mode=CardinalityMode.REUSE, seed=chosen, deterministic=False
         )
 
 

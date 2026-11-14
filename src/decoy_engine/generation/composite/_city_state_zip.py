@@ -18,7 +18,7 @@ per best-practices §6.2.
 from __future__ import annotations
 
 import csv
-import os
+import dataclasses
 from functools import lru_cache
 from pathlib import Path
 
@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
+from decoy_engine.determinism import resolve_seed
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.generation.pool._cardinality import CardinalityMode
@@ -61,6 +62,7 @@ class CompositeCityStateZip:
         self._table = load_locality_table()
         self._sampler = PoolSampler()
         self._pool: BundlePool | None = None
+        self._pool_seed: bytes | None = None
 
     @property
     def locality_table(self) -> tuple[tuple[str, str, str], ...]:
@@ -73,6 +75,7 @@ class CompositeCityStateZip:
         is the table length; the `size` arg is accepted for protocol symmetry
         but a smaller pool would exclude triples, so it is ignored here.
         """
+        chosen = resolve_seed(spec.seed)
         table = self._table
         values = np.empty(len(table), dtype=object)
         for i, triple in enumerate(table):
@@ -83,7 +86,7 @@ class CompositeCityStateZip:
             provider=self.composite_name,
             locale=spec.locale or "en_US",
             config_hash="locality/v1",
-            seed=spec.seed if spec.seed is not None else b"\x00" * 8,
+            seed=chosen,
             size=len(table),
             build_time_ms=0.0,
             backend_type="composite",
@@ -93,8 +96,10 @@ class CompositeCityStateZip:
         )
 
     def _pool_for(self, spec: ProviderSpec) -> BundlePool:
-        if self._pool is None:
+        """The pool for `spec.seed`; a different seed rebuilds it (its `seed` is metadata)."""
+        if self._pool is None or self._pool_seed != spec.seed:
             self._pool = self.build_pool(spec)
+            self._pool_seed = spec.seed
         return self._pool
 
     def generate_bundle(
@@ -105,25 +110,26 @@ class CompositeCityStateZip:
         source: pd.Series | None = None,
         deterministic: bool = False,
     ) -> dict[str, pd.Series]:
+        if deterministic and (source is None or spec.seed is None):
+            raise CompositeError(
+                code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
+                message="Deterministic composite_city_state_zip requires source + seed.",
+            )
+        chosen = resolve_seed(spec.seed)
+        spec = dataclasses.replace(spec, seed=chosen)
         pool = self._pool_for(spec)
         if deterministic:
-            if source is None or spec.seed is None:
-                raise CompositeError(
-                    code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
-                    message="Deterministic composite_city_state_zip requires source + seed.",
-                )
             return self._sampler.sample_bundle(
                 pool,
                 count,
                 mode=CardinalityMode.REUSE,
-                seed=spec.seed,
+                seed=chosen,
                 source=source,
                 namespace=self.coherent_namespace,
                 deterministic=True,
             )
-        seed = spec.seed if spec.seed is not None else os.urandom(8)
         return self._sampler.sample_bundle(
-            pool, count, mode=CardinalityMode.REUSE, seed=seed, deterministic=False
+            pool, count, mode=CardinalityMode.REUSE, seed=chosen, deterministic=False
         )
 
 

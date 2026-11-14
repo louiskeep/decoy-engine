@@ -225,6 +225,58 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
         ),
         mirror_call_sites=("transforms/joint_mask.py:223",),
     ),
+    # -- Masking: joint_mask seeded row streams (one per group) --------------
+    DrawSite(
+        draw_site_id="mask.joint_mask_null_fallback",
+        family="numpy_pcg64",
+        call_site="transforms/joint_mask.py:376",
+        entropy_root="mask_key",
+        seed_derivation=(
+            "seed_bytes_to_int(derive(mask_key, namespace or 'joint_mask', "
+            "b'joint_mask/null_fallback/v1' + lp(table) + lp(reference) + "
+            "lp('\\x1f'.join(columns)))[:8]); lp = 4-byte big-endian length, then UTF-8"
+        ),
+        api_operation="numpy.random.default_rng(seed_int).integers",
+        call_shape="rng.integers(0, row_count)  # one draw per null key_by value, in row order",
+        consumes_variable_draws=False,
+        identity="column",
+        null_draw_behavior=(
+            "draws only for rows whose key_by value is null; non-null keys select by "
+            "mask.joint_mask_keyed_row and consume no draw"
+        ),
+        partitionable=False,
+        config_fingerprint_source="namespace_registry(namespace)+table+reference+columns",
+        provider_version=f"{_V6}; numpy NEP-19 PCG64",
+        notes=(
+            "Each group walks its own stream: the table, reference and target columns are in "
+            "the derive source, so two groups of one run never pick the same row index. "
+            "Stream-positional across null rows, so a partition cannot resume mid-stream."
+        ),
+    ),
+    DrawSite(
+        draw_site_id="mask.joint_mask_gen_row",
+        family="numpy_pcg64",
+        call_site="transforms/joint_mask.py:415",
+        entropy_root="mask_key",
+        seed_derivation=(
+            "seed_bytes_to_int(derive(mask_key, namespace or 'joint_mask', "
+            "b'joint_mask/gen_row/v1' + lp(table) + lp(reference) + "
+            "lp('\\x1f'.join(columns)))[:8]); lp = 4-byte big-endian length, then UTF-8"
+        ),
+        api_operation="numpy.random.default_rng(seed_int).integers",
+        call_shape="rng.integers(0, row_count, size=n)  # whole-frame, independent of source values",
+        consumes_variable_draws=False,
+        identity="column",
+        null_draw_behavior="gen mode ignores key_by; every row draws, nulls included",
+        partitionable=False,
+        config_fingerprint_source="namespace_registry(namespace)+table+reference+columns",
+        provider_version=f"{_V6}; numpy NEP-19 PCG64",
+        notes=(
+            "Gen mode runs only on the whole-frame route (joint_mask is a cross-row strategy "
+            "the chunked and out-of-core routes decline). The stream is positional, so it is "
+            "not partitionable."
+        ),
+    ),
     DrawSite(
         draw_site_id="mask.text_mask_date_shift",
         family="source_keyed_hmac",

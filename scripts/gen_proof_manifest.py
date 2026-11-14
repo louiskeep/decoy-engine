@@ -697,7 +697,7 @@ def _joint_mask_proof() -> dict:
             "key_by": "patient_id",
         }
     )
-    result = apply_joint_mask(df, cfg, mode="mask", job_seed=job_seed)
+    result = apply_joint_mask(df, cfg, mode="mask", job_seed=job_seed, table="proof")
 
     tbl = load_table("us_zip5_city_state")
     valid_tuples = {

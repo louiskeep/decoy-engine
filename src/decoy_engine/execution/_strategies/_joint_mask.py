@@ -123,5 +123,6 @@ class JointMaskHandler:
             job_seed=ctx.mask_key,
             namespace=plan.namespace,
             key_series=key_series,
+            table=ctx.current_table,
         )
         return updated_df, []

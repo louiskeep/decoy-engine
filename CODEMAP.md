@@ -123,7 +123,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/internal/` | Private helpers (crypto, faker setup, validators) |
 | `src/decoy_engine/disguises/` | Disguise registry (post-FORECAST replacement) |
 | `src/decoy_engine/instrumentation/` | Public timing / collector helpers |
-| `src/decoy_engine/determinism/` | Seed protocol, key derivation |
+| `src/decoy_engine/determinism/` | Seed protocol, key derivation, seed helpers (`_seeds.py`: one width check, one resolve rule) |
 | `src/decoy_engine/transforms/` | Leaf modules kept because V2 strategies in `execution/_strategies/` import them: `base.py`, `code_set.py`, `date_shift.py`, `derived.py`, `formula.py`, `fpe.py`, `geo_generalize.py`, `joint_mask.py`, `text_mask.py`; a future sprint may relocate them into `_strategies/_reused_v1/`. |
 | `src/decoy_engine/transforms/text_mask.py` | `text_mask` core logic (SP-07): HMAC-SHA256-keyed span masking, `DETECTOR_DEFAULTS` dispatch table (TIER-1 and TIER-2 entries), `unmatched_span_policy` enforcement, raw-value isolation. Calls `iter_spans` directly; Pre-scan is the single detector source. |
 | `src/decoy_engine/execution/_strategies/_text_mask.py` | `TextMaskHandler` (SP-07): thin V2 StrategyHandler wrapping `transforms/text_mask.py`. Registered in `SCALAR_HANDLERS`. Reads `detectors`, `per_detector_strategy`, `unmatched_span_policy`, and `token` from `plan.provider_config`. |

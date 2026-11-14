@@ -297,7 +297,10 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         family="numpy_pcg64",
         call_site="generation/composite/_provider.py:116",
         entropy_root="job_seed",
-        seed_derivation='np.random.default_rng(int.from_bytes(seed, "big"))  # seed = spec.seed or b"\\x00"*8',
+        seed_derivation=(
+            'np.random.default_rng(int.from_bytes(seed, "big"))  '
+            "# seed = resolve_seed(spec.seed), one per spec"
+        ),
         api_operation="numpy.random.default_rng(seed_int).integers / .bytes",
         call_shape="rng.integers(0, len(names), size=n); rng.bytes(8)  # whole-pool build",
         consumes_variable_draws=False,

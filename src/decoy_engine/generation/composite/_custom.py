@@ -55,14 +55,14 @@ composite_name_email (SDV's HMA1-style per the engine-v2 S8 spec).
 
 from __future__ import annotations
 
-import os
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive
+from decoy_engine.determinism import derive, resolve_seed
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -152,6 +152,7 @@ class CompositeCustom:
         self._registry = registry
         self._pool_size = pool_size
         self._pools: list[np.ndarray] | None = None
+        self._pools_seed: bytes | None = None
 
     def _check_pool_size(self, size: int) -> None:
         if size > _POOL_SIZE_MAX:
@@ -173,7 +174,8 @@ class CompositeCustom:
         different pools (correct: ordering is significant for the
         sub-byte slicing).
         """
-        if self._pools is not None:
+        assert spec.seed is not None  # noqa: S101 -- resolved by the entry point
+        if self._pools is not None and self._pools_seed == spec.seed:
             return self._pools
 
         from decoy_engine.generation.pool._builder import PoolBuilder
@@ -181,7 +183,6 @@ class CompositeCustom:
 
         registry = self._registry if self._registry is not None else get_default_registry()
         builder = PoolBuilder(registry)
-        seed = spec.seed if spec.seed is not None else b"\x00" * 8
         locale = spec.locale or "en_US"
         pools: list[np.ndarray] = []
         for slot, item in enumerate(self.bundle):
@@ -189,7 +190,7 @@ class CompositeCustom:
             pool = builder.build(
                 provider=item["provider"],
                 size=self._pool_size,
-                job_seed=seed,
+                job_seed=spec.seed,
                 locale=locale,
                 config=item.get("config") or {},
                 namespace=slot_ns,
@@ -197,14 +198,16 @@ class CompositeCustom:
             pools.append(pool.values)
             self._check_pool_size(len(pool.values))
         self._pools = pools
+        self._pools_seed = spec.seed
         return pools
 
     def build_pool(self, spec: ProviderSpec, *, size: int | None = None) -> BundlePool:
         """Build a BundlePool of coherent bundle tuples (non-det path)."""
+        chosen = resolve_seed(spec.seed)
+        spec = dataclasses.replace(spec, seed=chosen)
         n = size if size is not None else self._pool_size
         pools = self._build_pools(spec)
-        seed = spec.seed if spec.seed is not None else b"\x00" * 8
-        rng = np.random.default_rng(int.from_bytes(seed, "big"))
+        rng = np.random.default_rng(int.from_bytes(chosen, "big"))
         # One uniform draw per slot to form n coherent tuples.
         slot_indices = [rng.integers(0, len(pools[s]), size=n) for s in range(len(pools))]
         values = np.empty(n, dtype=object)
@@ -220,7 +223,7 @@ class CompositeCustom:
             provider=self.composite_name,
             locale=spec.locale or "en_US",
             config_hash="custom/v1",
-            seed=seed,
+            seed=chosen,
             size=n,
             build_time_ms=0.0,
             backend_type="composite",
@@ -260,12 +263,15 @@ class CompositeCustom:
         source: pd.Series | None = None,
         deterministic: bool = False,
     ) -> dict[str, pd.Series]:
+        if deterministic and (source is None or spec.seed is None):
+            raise CompositeError(
+                code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
+                message=("Deterministic composite_custom requires source + seed."),
+            )
+        chosen = resolve_seed(spec.seed)
+        spec = dataclasses.replace(spec, seed=chosen)
         if deterministic:
-            if source is None or spec.seed is None:
-                raise CompositeError(
-                    code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
-                    message=("Deterministic composite_custom requires source + seed."),
-                )
+            assert source is not None  # noqa: S101 -- checked above
             if len(source) != count:
                 raise CompositeError(
                     code=reasons.plan.SOURCE_LENGTH_MISMATCH,
@@ -277,9 +283,8 @@ class CompositeCustom:
         from decoy_engine.generation.pool._sampler import PoolSampler
 
         pool = self.build_pool(spec)
-        seed = spec.seed if spec.seed is not None else os.urandom(8)
         return PoolSampler().sample_bundle(
-            pool, count, mode=CardinalityMode.REUSE, seed=seed, deterministic=False
+            pool, count, mode=CardinalityMode.REUSE, seed=chosen, deterministic=False
         )
 
 

@@ -67,7 +67,7 @@ class TestNDCJointMask:
             "key_by": "patient_id",
         }
         cfg = JointMaskConfig.from_dict(cfg_dict)
-        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED, table="t")
 
         # Output must not contain placeholder values.
         for col in ndc_cols:
@@ -93,7 +93,7 @@ class TestNDCJointMask:
         cfg = JointMaskConfig.from_dict(
             {"columns": ndc_cols, "reference": "ndc_labeler_drug_strength", "key_by": "patient_id"}
         )
-        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED, table="t")
 
         # Build reference set: set of (col0, col1) tuples from the table.
         ref_rows = set()
@@ -141,7 +141,7 @@ class TestMCCJointMask:
         cfg = JointMaskConfig.from_dict(
             {"columns": mcc_cols, "reference": "mcc_category_description", "key_by": "merchant_id"}
         )
-        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED, table="t")
 
         for col in mcc_cols:
             for val in result[col]:
@@ -164,7 +164,7 @@ class TestMCCJointMask:
         cfg = JointMaskConfig.from_dict(
             {"columns": mcc_cols, "reference": "mcc_category_description", "key_by": "merchant_id"}
         )
-        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED, table="t")
 
         ref_rows = set()
         for i in range(tbl.row_count):
@@ -229,7 +229,7 @@ class TestCustomerProvidedTable:
                 "key_by": "order_id",
             }
         )
-        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED, table="t")
 
         valid_product_codes = {"product_code_A", "product_code_B", "product_code_C"}
         valid_categories = {"category_A", "category_B", "category_C"}
@@ -264,7 +264,7 @@ class TestCustomerProvidedTable:
         cfg = JointMaskConfig.from_dict(
             {"columns": ["code", "desc"], "reference": ref_str, "key_by": "entity_id"}
         )
-        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, cfg, mode="mask", job_seed=_JOB_SEED, table="t")
         assert result["code"].iloc[0] == result["code"].iloc[2], (
             "Same key_by value must produce same output code."
         )
@@ -304,8 +304,8 @@ class TestCrossDomainJointMask:
         cfg_mcc = JointMaskConfig.from_dict(
             {"columns": mcc_cols, "reference": "mcc_category_description", "key_by": "merchant_id"}
         )
-        result = apply_joint_mask(df, cfg_zip, mode="mask", job_seed=_JOB_SEED)
-        result = apply_joint_mask(result, cfg_mcc, mode="mask", job_seed=_JOB_SEED)
+        result = apply_joint_mask(df, cfg_zip, mode="mask", job_seed=_JOB_SEED, table="t")
+        result = apply_joint_mask(result, cfg_mcc, mode="mask", job_seed=_JOB_SEED, table="t")
 
         # Both sets of columns must be replaced.
         for col in zip_cols:

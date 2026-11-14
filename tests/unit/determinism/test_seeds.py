@@ -13,7 +13,7 @@ def test_seed_bytes_to_int_refuses_every_width_but_eight(width: int) -> None:
     with pytest.raises(ValueError) as exc:
         seed_bytes_to_int(raw)
     assert exc.value.__cause__ is None and exc.value.__context__ is None
-    assert str(raw) not in str(exc.value) and raw.hex() not in str(exc.value)
+    assert not raw or (str(raw) not in str(exc.value) and raw.hex() not in str(exc.value))
 
 
 def test_seed_bytes_to_int_refuses_a_non_bytes_value() -> None:
