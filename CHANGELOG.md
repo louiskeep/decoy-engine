@@ -18,6 +18,27 @@ minimum engine version it was tested against via its
 - `derived` and `formula` now treat `Decimal('NaN')`, numpy NaN scalars, `pd.NaT`, `numpy.datetime64('NaT')` and `pd.NA` as missing, so a `derived` column that references a null parquet timestamp writes a null cell where it used to write a value such as `0`.
 - a vault writer is refused with a sink or a chunked entry, a `TokenVaultWriter` needs `derivation_scope`, tokenize output changes, and an existing vault file is refused instead of overwritten; see the entry.
 - with relationships declared, a run whose output gains primary key duplicates or nulls, or foreign key orphans the inputs did not have, now fails with `PostScanBlockedError` and publishes nothing; `decide_execution_route` takes `post_scan_resident` in place of `post_scan_integrity`, and `compute_post_scan_integrity` is removed; see the PS-8 entry.
+- a profile's `generated_at` ends `+00:00` instead of `Z`; a stored profile with `Z` still loads.
+- `run_pipeline_isolated` and `run_job_with_governor` gain the outcome `blocked`, so a caller that switches on the outcome needs a new case; see the PS-9 entry.
+
+### Changed (isolated runs report a post-scan block as its own outcome, POSTSCAN-PS9, 2026-11-14)
+
+`run_pipeline_isolated` now returns `outcome="blocked"` when the post-scan gate withholds a run, in the child process and on the in-process fallback. Before, the block read as `crashed`. The result keeps the reason (for example `post_scan/foreign_key_orphans_introduced`) and the value-free report in `quality_metrics["post_scan_integrity"]`, has `outputs=None`, and commits nothing to `output_dir`. `IsolatedRunOutcome` gains `blocked`.
+
+`run_job_with_governor` treats `blocked` as terminal. It tries no further route, records no trip, and returns `GovernorResult(outcome="blocked")` with the attempted route in `final_route` and the isolated result in `result`. `GovernorOutcome` gains `blocked`, so a caller that switches on `completed` and `exhausted` needs a third case. An envelope outcome that is not one of the four known strings (a bool, an unknown token) is still classified as a dead child.
+
+### Changed (one generated-at shape and one NER mismatch message, DUP-FREEZE-E4, 2026-11-14)
+
+- `ColumnProfile.generated_at` is now `datetime.now(timezone.utc).isoformat()`, the shape the
+  report, quality and post-mask writers already use. A stored profile that carries the older
+  `Z` suffix is a plain string field and loads unchanged.
+- The out-of-core `text_mask` route and the whole-frame `text_mask` handler call
+  `enforce_ner_model_version` instead of raising `ner_model_version_mismatch` inline. Both routes
+  now give the helper's text for the same column and versions (the out-of-core text used to be
+  shorter and named no column). The code is unchanged.
+- Two sentries hold the result: `tests/sentry/profiling/test_generated_at_shape.py` fails a `Z`
+  suffix or a naive `datetime.utcnow()` in the source, and
+  `tests/sentry/defects/test_ner_mismatch_single_site.py` fails any second raise site of the code.
 
 ### Changed (post-scan gate wired into run_pipeline, POSTSCAN-STREAM PS-8, 2026-11-13)
 
