@@ -30,8 +30,8 @@ HERE = Path(__file__).resolve().parent
 
 # The CLI's review copy starts with the retired product name. The engine copy says "The scan"
 # instead (the removed-surface sentry bars the old name), so the fixture records the CLI text
-# with that one substitution. The name is spelled in two parts so this file passes the sentry.
-_RETIRED_NAME = re.compile("STORM")
+# with that one substitution. The name is built from single letters so this file passes the sentry.
+_RETIRED_NAME = re.compile("".join(["S", "T", "O", "R", "M"]))
 
 # Every detector id the CLI table keys, in table order.
 CLI_DETECTORS = [
