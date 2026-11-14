@@ -22,6 +22,7 @@ __all__ = [
     "GENERATE_UNIQUE_UNSUPPORTED",
     "GENERATE_WEIGHTS_INVALID",
     "LOADER_TABLE_UNDECLARED",
+    "NAMESPACE_PLACEHOLDER_UNSET",
     "PIPELINE_NAME_INVALID",
     "VARIABLE_UNKNOWN_SCOPE",
     "VARIABLE_UNRESOLVED",
@@ -132,5 +133,13 @@ DECLARED_TABLE_DROPPED = _d(
     "declared_table_dropped",
     "A table declared under tables has no work in the compiled plan; the run would pass its "
     "rows through unmasked.",
+    since=UNRELEASED,
+)
+
+# The placeholder a starter pipeline writes where a declared relationship named no namespace.
+# The text never carries the submitted value; the error location names the field.
+NAMESPACE_PLACEHOLDER_UNSET = _d(
+    "namespace_placeholder_unset",
+    "A namespace still holds the placeholder a starter pipeline writes; set a real namespace.",
     since=UNRELEASED,
 )

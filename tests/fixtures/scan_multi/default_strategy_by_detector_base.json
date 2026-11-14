@@ -1,0 +1,159 @@
+{
+  "first_name": [
+    "faker",
+    {
+      "faker_type": "first_name",
+      "locale": "en_US"
+    }
+  ],
+  "last_name": [
+    "faker",
+    {
+      "faker_type": "last_name",
+      "locale": "en_US"
+    }
+  ],
+  "person_name": [
+    "faker",
+    {
+      "faker_type": "name",
+      "locale": "en_US"
+    }
+  ],
+  "email": [
+    "faker",
+    {
+      "faker_type": "email"
+    }
+  ],
+  "us_phone": [
+    "faker",
+    {
+      "faker_type": "phone_number",
+      "locale": "en_US"
+    }
+  ],
+  "fax_number": [
+    "faker",
+    {
+      "faker_type": "phone_number",
+      "locale": "en_US"
+    }
+  ],
+  "address": [
+    "faker",
+    {
+      "faker_type": "address",
+      "locale": "en_US"
+    }
+  ],
+  "ssn": [
+    "fpe",
+    {
+      "charset": "digits"
+    }
+  ],
+  "iso_date": [
+    "date_shift",
+    {
+      "jitter_days": 15
+    }
+  ],
+  "us_date": [
+    "date_shift",
+    {
+      "jitter_days": 15
+    }
+  ],
+  "eu_date": [
+    "date_shift",
+    {
+      "jitter_days": 15
+    }
+  ],
+  "us_zip": [
+    "fpe",
+    {
+      "charset": "digits"
+    }
+  ],
+  "ipv4": [
+    "faker",
+    {
+      "faker_type": "ipv4"
+    }
+  ],
+  "mrn": [
+    "fpe",
+    {
+      "charset": "alphanum"
+    }
+  ],
+  "npi": [
+    "fpe",
+    {
+      "charset": "digits"
+    }
+  ],
+  "pan": [
+    "fpe",
+    {
+      "charset": "digits",
+      "validate_luhn": true
+    }
+  ],
+  "cvv": [
+    "redact",
+    {
+      "redact_with": "XXX"
+    }
+  ],
+  "iban": [
+    "fpe",
+    {
+      "charset": "ALPHANUM"
+    }
+  ],
+  "vehicle_id": [
+    "fpe",
+    {
+      "charset": "ALPHANUM"
+    }
+  ],
+  "icd10": [
+    "redact",
+    {
+      "redact_with": "REDACTED"
+    }
+  ],
+  "url": [
+    "redact",
+    {
+      "redact_with": "REDACTED"
+    }
+  ],
+  "license_num": [
+    "redact",
+    {
+      "redact_with": "REDACTED"
+    }
+  ],
+  "health_plan_id": [
+    "redact",
+    {
+      "redact_with": "REDACTED"
+    }
+  ],
+  "device_id": [
+    "redact",
+    {
+      "redact_with": "REDACTED"
+    }
+  ],
+  "biometric_id": [
+    "redact",
+    {
+      "redact_with": "REDACTED"
+    }
+  ]
+}

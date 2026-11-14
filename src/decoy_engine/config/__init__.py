@@ -54,7 +54,11 @@ from decoy_engine.config._generate_unique import (
     value_key,
 )
 from decoy_engine.config._global_settings import DpGenerateSettings, GlobalSettings
-from decoy_engine.config._namespaces import NamespaceConfig
+from decoy_engine.config._namespaces import (
+    NAMESPACE_PLACEHOLDER_PREFIX,
+    NamespaceConfig,
+    refuse_namespace_placeholder,
+)
 from decoy_engine.config._override import override_sources
 from decoy_engine.config._parse import (
     parse_delivery_config,
@@ -79,6 +83,7 @@ from decoy_engine.config._relationships import (
     RelationshipConfig,
     RelationshipEnd,
 )
+from decoy_engine.config._scan_baseline import ScanBaselineConfig
 from decoy_engine.config._sources import (
     FILE_SOURCE_PATH_FIELDS,
     SOURCE_LOCATOR_FIELDS,
@@ -113,6 +118,7 @@ from decoy_engine.config._transforms import (
 
 __all__ = [
     "FILE_SOURCE_PATH_FIELDS",
+    "NAMESPACE_PLACEHOLDER_PREFIX",
     "NO_SINK_KIND",
     "SOURCE_LOCATOR_FIELDS",
     "SOURCE_PATH_FIELDS",
@@ -144,6 +150,7 @@ __all__ = [
     "RelationshipEnd",
     "S3Source",
     "S3Target",
+    "ScanBaselineConfig",
     "SortOp",
     "SourceDescriptor",
     "SubsetBudgetConfig",
@@ -169,6 +176,7 @@ __all__ = [
     "post_scan_resident_reason",
     "post_scan_sink_kind",
     "refuse_fixed_width_output_types",
+    "refuse_namespace_placeholder",
     "refuse_unlisted_generate_families",
     "value_key",
 ]

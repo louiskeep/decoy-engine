@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from decoy_engine.config._namespaces import refuse_namespace_placeholder
 
 OrphanPolicyLiteral = Literal["preserve", "remap", "warn", "fail"]
 
@@ -41,9 +43,14 @@ class RelationshipConfig(BaseModel):
     values are documented in S2 spec §3.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     parent: RelationshipEnd
     children: list[RelationshipEnd] = Field(min_length=1)
     orphan_policy: OrphanPolicyLiteral
     namespace: str | None = None
+
+    @field_validator("namespace")
+    @classmethod
+    def _namespace_not_a_placeholder(cls, value: str | None) -> str | None:
+        return refuse_namespace_placeholder(value)

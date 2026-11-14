@@ -12,6 +12,7 @@ jobs = [
   "ner-gate",
   "dp-certified-gate",
   "determinism",
+  "import-smoke",
 ]
 
 [[merge]]

@@ -46,6 +46,9 @@ from decoy_engine.profiling._value_redaction import (
 from decoy_engine.profiling.profiler import profile_columns
 from decoy_engine.profiling.recommendations import (
     DEFAULT_STRATEGY_BY_DETECTOR,
+    DETECTOR_DESCRIPTORS,
+    DetectorDescriptor,
+    StarterChoice,
     StrategyDefault,
     get_default_strategy,
     known_detector_ids,
@@ -71,6 +74,7 @@ from decoy_engine.profiling.types import (
 
 __all__ = [
     "DEFAULT_STRATEGY_BY_DETECTOR",
+    "DETECTOR_DESCRIPTORS",
     "KEY_BATCH_ROWS",
     "MEMORY_LIMIT",
     "MIN_RELEASE_COUNT",
@@ -82,6 +86,7 @@ __all__ = [
     "ChildFacts",
     "ChildKeyFacts",
     "ColumnProfile",
+    "DetectorDescriptor",
     "Distribution",
     "FieldStats",
     "KeyBatches",
@@ -92,6 +97,7 @@ __all__ = [
     "ScanSetCoreRead",
     "ScanSourceError",
     "SentinelFlag",
+    "StarterChoice",
     "StrategyDefault",
     "TableScan",
     "TopValue",

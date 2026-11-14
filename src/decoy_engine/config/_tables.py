@@ -50,6 +50,7 @@ from decoy_engine.config._generate_unique import (
     table_unique_problems,
     unique_type_problems,
 )
+from decoy_engine.config._namespaces import refuse_namespace_placeholder
 from decoy_engine.config._transforms import TransformOp
 from decoy_engine.errors import ConfigRuleError
 
@@ -186,6 +187,11 @@ class ColumnConfig(BaseModel):
         if default_policy is not None:
             self.error_policy = default_policy
         return self
+
+    @field_validator("namespace")
+    @classmethod
+    def _namespace_not_a_placeholder(cls, value: str | None) -> str | None:
+        return refuse_namespace_placeholder(value)
 
     @field_validator("when")
     @classmethod

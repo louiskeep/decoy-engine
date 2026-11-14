@@ -106,6 +106,17 @@ class TestCompilePlanHappyPath:
 
 
 class TestCompileDeterminism:
+    def test_scan_baseline_does_not_move_the_config_hash(
+        self, simple_config: dict, simple_profile: Profile
+    ) -> None:
+        with_pointer = {
+            **simple_config,
+            "scan_baseline": {"path": "x.json", "schema": "scan-set/v1"},
+        }
+        p1 = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
+        p2 = compile_plan(with_pointer, simple_profile, decoy_engine_version="0.1.0")
+        assert p1.pipeline_config_hash == p2.pipeline_config_hash
+
     def test_two_compiles_equal(self, simple_config: dict, simple_profile: Profile) -> None:
         p1 = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         p2 = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
