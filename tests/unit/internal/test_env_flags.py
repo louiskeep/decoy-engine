@@ -76,7 +76,7 @@ def test_the_refusal_never_holds_the_value_and_has_no_context(
 
 
 def test_the_error_survives_a_pickle_round_trip() -> None:
-    err = pickle.loads(pickle.dumps(EnvFlagError(VAR)))
+    err = pickle.loads(pickle.dumps(EnvFlagError(VAR)))  # noqa: S301 -- own round trip
     assert isinstance(err, EnvFlagError)
     assert err.variable == VAR and str(err) == str(EnvFlagError(VAR))
 

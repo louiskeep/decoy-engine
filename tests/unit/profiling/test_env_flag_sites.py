@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from decoy_engine.errors import EnvFlagError
+from decoy_engine.profiling.model_pack import _detectors
 from decoy_engine.profiling.model_pack._detectors import classifier_status
 from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
 from decoy_engine.profiling.model_pack.provenance import SIGNING_KEY_ENV
@@ -127,6 +128,7 @@ def test_classifier_reports_down_pack_for_an_unknown_signature_flag(
 ) -> None:
     pytest.importorskip("lightgbm")
     pytest.importorskip("sklearn")
+    monkeypatch.setattr(_detectors, "_CACHE", {})  # a cached success would skip the load
     monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "maybe")
     status = classifier_status()
     assert status.available is False

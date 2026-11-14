@@ -40,6 +40,7 @@ from decoy_engine.fileaccess import (
     FileRequest,
     FileRole,
 )
+from decoy_engine.internal.env_flags import env_flag
 from decoy_engine.profiling.model_pack.provenance import (
     SIGNING_KEY_ENV,
     load_signing_key_from_env,
@@ -53,9 +54,8 @@ from decoy_engine.profiling.model_pack.types import (
 
 _log = logging.getLogger(__name__)
 
-#: Tokens accepted as "on"/"off" for the fail-closed signature flag, case-insensitive.
-_REQUIRE_SIG_TRUTHY = frozenset({"1", "true", "yes", "on"})
-_REQUIRE_SIG_FALSY = frozenset({"0", "false", "no", "off", ""})
+_REQUIRE_SIGNATURE_ENV = "DECOY_PACK_REQUIRE_SIGNATURE"
+_ML_DISABLED_ENV = "DECOY_ML_DISABLED"
 
 
 class ModelPackLoadError(DecoyError, ValueError):
@@ -81,22 +81,12 @@ def _rebuild_load_error(message: str, cause: str) -> ModelPackLoadError:
 def _require_signature_enabled() -> bool:
     """Parse ``DECOY_PACK_REQUIRE_SIGNATURE`` into a bool, failing CLOSED.
 
-    A security flag whose purpose is fail-closed posture must not silently
-    fail *open* on a plausible misconfiguration (M1). So ``true``/``yes``/``on``
-    (any case) all enable the requirement, the explicit falsy tokens disable
-    it, and ANY other value raises ``ModelPackLoadError`` -- an ambiguous
-    security flag is treated as "require + you typo'd it", never as "off".
+    A security flag whose purpose is fail-closed posture must not silently fail *open* on a
+    plausible misconfiguration (M1). The one flag parser accepts the engine's spellings and
+    raises ``EnvFlagError`` on any other value, so an ambiguous security flag is treated as
+    "require + you typo'd it", never as "off". The error text never holds the value.
     """
-    raw = os.environ.get("DECOY_PACK_REQUIRE_SIGNATURE", "0").strip().lower()
-    if raw in _REQUIRE_SIG_TRUTHY:
-        return True
-    if raw in _REQUIRE_SIG_FALSY:
-        return False
-    raise ModelPackLoadError(
-        f"DECOY_PACK_REQUIRE_SIGNATURE has an unrecognized value {raw!r}; "
-        f"expected one of {sorted(_REQUIRE_SIG_TRUTHY)} or {sorted(_REQUIRE_SIG_FALSY)}. "
-        "Refusing to guess a security-flag value (fail-closed)."
-    )
+    return env_flag(_REQUIRE_SIGNATURE_ENV, default=False)
 
 
 class ModelPackLoader:
@@ -182,8 +172,12 @@ class ModelPackLoader:
 
     @property
     def is_ml_disabled(self) -> bool:
-        """True when the ``DECOY_ML_DISABLED`` env var is set to ``"1"``."""
-        return os.environ.get("DECOY_ML_DISABLED", "0") == "1"
+        """True when ``DECOY_ML_DISABLED`` is set to an accepted true spelling.
+
+        Raises:
+            EnvFlagError: the variable holds a spelling outside the accepted set.
+        """
+        return env_flag(_ML_DISABLED_ENV, default=False)
 
     def load(self) -> dict[str, Any]:
         """Load and validate the pack.  Returns the pack dict or raises.
@@ -204,7 +198,7 @@ class ModelPackLoader:
         """
         if self.is_ml_disabled:
             raise ModelPackLoadError(
-                "ML is disabled via DECOY_ML_DISABLED=1; engine uses deterministic fallback.",
+                f"ML is disabled via {_ML_DISABLED_ENV}; engine uses deterministic fallback.",
                 cause="disabled",
             )
 

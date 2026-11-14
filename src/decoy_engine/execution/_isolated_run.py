@@ -107,6 +107,7 @@ from decoy_engine.execution._isolated_reason import commit_reason, reason_from_e
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, entry_point
+from decoy_engine.internal.env_flags import env_flag
 from decoy_engine.profile import DeclarationRequest
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import ReasonRecord
@@ -206,6 +207,7 @@ def run_pipeline_isolated(
     Raises:
         FileAccessUnavailable: a strict policy is installed and the call would spawn a
             child, or names a `staging_dir` or `output_dir` path. Raised before any I/O.
+        EnvFlagError: `isolate` is true and the worker marker is not a flag spelling.
         ValueError: a non-None `sink`/`source_loader`/`vault_writer`/
             `registry`/`derive_key` was passed, `rlimit_kind` is not a
             known kind, or `config`/`run_pipeline_kwargs` is not
@@ -215,10 +217,9 @@ def run_pipeline_isolated(
     _reject_unserializable_kwargs(run_pipeline_kwargs)
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
-    _require_ambient_for_paths(
-        spawns=isolate and os.environ.get(ISOLATED_WORKER_ENV) != "1",
-        names_paths=staging_dir is not None or output_dir is not None,
-    )
+    already_isolated = isolate and env_flag(ISOLATED_WORKER_ENV, default=False)
+    names_paths = staging_dir is not None or output_dir is not None
+    _require_ambient_for_paths(spawns=isolate and not already_isolated, names_paths=names_paths)
 
     # Before any staging or spawn: the child rechecks, since a capability cannot cross the process.
     prepare_declared_execution_sources(
@@ -233,7 +234,6 @@ def run_pipeline_isolated(
     # instead -- the re-entrant probe then reports a non-isolated measurement and
     # routing falls back to the in-process estimator, so the chain stops at
     # depth 1 (marker's docstring in `_isolated_common` has the full account).
-    already_isolated = isolate and os.environ.get(ISOLATED_WORKER_ENV) == "1"
     if not isolate or already_isolated:
         if already_isolated:
             _logger.warning(

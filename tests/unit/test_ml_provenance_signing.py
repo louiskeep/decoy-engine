@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from decoy_engine.errors import EnvFlagError
 from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
 from decoy_engine.profiling.model_pack.provenance import (
     SIGNING_KEY_ENV,
@@ -431,14 +432,15 @@ def test_require_signature_accepts_truthy_word_true(
 def test_require_signature_ambiguous_value_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """M1: an unrecognized flag value raises rather than silently failing open."""
+    """M1: an unrecognized flag value raises (value-free) rather than silently failing open."""
     pack_dir = _write_signed_pack(tmp_path, key=None)
     monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
     monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "maybe")
 
     loader = ModelPackLoader(pack_dir)
-    with pytest.raises(ModelPackLoadError, match="unrecognized value"):
+    with pytest.raises(EnvFlagError, match="DECOY_PACK_REQUIRE_SIGNATURE") as caught:
         loader.load()
+    assert "maybe" not in str(caught.value)
 
 
 def test_require_signature_falsy_word_disables(

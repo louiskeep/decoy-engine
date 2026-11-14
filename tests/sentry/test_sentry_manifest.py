@@ -93,6 +93,7 @@ SENTRIES = (
     "tests/sentry/protected_dir/test_protected_dir.py",
     "tests/sentry/dependencies/test_dependency_floors.py",
     "tests/sentry/defects/test_anchored_regex.py",
+    "tests/sentry/defects/test_environment_reads.py",
     "tests/sentry/defects/test_exception_context.py",
     "tests/sentry/defects/test_generate_option_reads.py",
     "tests/sentry/defects/test_validation_sites.py",

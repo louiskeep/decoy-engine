@@ -211,7 +211,7 @@ def load_custom_providers(
     Provider name = ``custom.<filename_stem>``. After this returns,
     pipelines can reference the lists via ``faker_type: custom.<stem>``.
 
-    Default directory comes from the ``CUSTOM_PROVIDERS_DIR`` env-var,
+    Default directory comes from the ``DECOY_CUSTOM_PROVIDERS_DIR`` env-var,
     falling back to ``custom_providers`` relative to the cwd. The directory is a
     directory capability the file-access policy issues for the custom-provider role; a
     child is opened only beneath that already-open directory.
@@ -220,7 +220,7 @@ def load_custom_providers(
     inspect or log what was registered.
     """
     if custom_dir is None:
-        custom_dir = Path(os.getenv("CUSTOM_PROVIDERS_DIR", "custom_providers"))
+        custom_dir = Path(os.getenv("DECOY_CUSTOM_PROVIDERS_DIR", "custom_providers"))
 
     custom_dir = Path(custom_dir)
     policy = fileaccess.current()

@@ -67,7 +67,9 @@ def _flag_use(read: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
     if isinstance(parent, ast.Compare):
         return True
     if isinstance(parent, ast.Call):
-        return isinstance(parent.func, ast.Name) and parent.func.id == "bool" and node in parent.args
+        return (
+            isinstance(parent.func, ast.Name) and parent.func.id == "bool" and node in parent.args
+        )
     if isinstance(parent, ast.UnaryOp):
         return isinstance(parent.op, ast.Not)
     if isinstance(parent, (ast.If, ast.While, ast.IfExp)):
@@ -159,9 +161,9 @@ def test_a_flag_shaped_read_is_a_hit(source: str) -> None:
         'import os\nroot = os.environ.get("X", "/tmp")\n',
         'import os\nraw = os.environ.get("X")\n',
         'import os\nenv = {**os.environ, "X": "1"}\n',
-        'import os\nenv = dict(os.environ)\n',
+        "import os\nenv = dict(os.environ)\n",
         'import os\nok = key is None and os.environ.get("K", "").strip()\n',
-        'def f(environ):\n    return environ is None\n',
+        "def f(environ):\n    return environ is None\n",
     ],
 )
 def test_a_non_flag_read_is_not_a_hit(source: str) -> None:
@@ -170,7 +172,6 @@ def test_a_non_flag_read_is_not_a_hit(source: str) -> None:
 
 def test_ordinals_count_per_function() -> None:
     src = (
-        "import os\n"
-        'def f():\n    return os.environ.get("A") == "1" or os.environ.get("B") == "1"\n'
+        'import os\ndef f():\n    return os.environ.get("A") == "1" or os.environ.get("B") == "1"\n'
     )
     assert _scan_source(src) == ["decoy_engine/x.py::f::0", "decoy_engine/x.py::f::1"]
