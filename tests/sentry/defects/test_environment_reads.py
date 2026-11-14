@@ -28,8 +28,15 @@ _STRING_STEPS = frozenset({"strip", "lstrip", "rstrip", "lower", "upper", "casef
 _OWNER = "decoy_engine/internal/env_flags.py"
 _FLAG_CALLERS = {
     "decoy_engine/profiling/model_pack/loader.py": "env_flag",
-    "decoy_engine/execution/_isolated_run.py": "env_flag",
+    "decoy_engine/execution/_isolated_common.py": "env_flag",
 }
+# The engine's flag variables, by literal and by the module constant that names them. Each is read
+# by the caller (so the secret-material census sees a named read) and must flow straight into
+# `env_flag` as its second argument.
+_FLAG_VARS = frozenset(
+    {"DECOY_ML_DISABLED", "DECOY_PACK_REQUIRE_SIGNATURE", "DECOY_INSIDE_ISOLATED_WORKER"}
+)
+_FLAG_CONSTS = frozenset({"_ML_DISABLED_ENV", "_REQUIRE_SIGNATURE_ENV", "ISOLATED_WORKER_ENV"})
 
 
 def _is_environ(node: ast.AST, names: set[str]) -> bool:
@@ -77,15 +84,42 @@ def _flag_use(read: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
     return False
 
 
+def _names_a_flag_var(read: ast.AST) -> bool:
+    arg = read.slice if isinstance(read, ast.Subscript) else (read.args[0] if read.args else None)  # type: ignore[attr-defined]
+    if isinstance(arg, ast.Constant):
+        return arg.value in _FLAG_VARS
+    if isinstance(arg, ast.Name):
+        return arg.id in _FLAG_CONSTS
+    return isinstance(arg, ast.Attribute) and arg.attr in _FLAG_CONSTS
+
+
+def _feeds_decoder(read: ast.AST, parents: dict[ast.AST, ast.AST], decoders: set[str]) -> bool:
+    call = parents.get(read)
+    if not isinstance(call, ast.Call) or len(call.args) < 2 or call.args[1] is not read:
+        return False
+    func = call.func
+    return (isinstance(func, ast.Name) and func.id in decoders) or (
+        isinstance(func, ast.Attribute) and func.attr in decoders
+    )
+
+
 def flag_reads(tree: ast.AST, rel: str) -> list[str]:
-    """One ``path::function::ordinal`` key per environment read used as a flag."""
+    """One ``path::function::ordinal`` key per environment read used as a flag.
+
+    Two shapes count: a read compared, coerced or truth-tested in place, and a read of one of the
+    engine's named flag variables that does not flow straight into ``env_flag``.
+    """
     environ = local_names(tree, "environ")
     getenv = local_names(tree, "getenv")
+    decoders = local_names(tree, "env_flag")
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     found: list[str] = []
     counts: dict[str, int] = {}
     for node in ast.walk(tree):
-        if not _is_env_read(node, environ, getenv) or not _flag_use(node, parents):
+        if not _is_env_read(node, environ, getenv):
+            continue
+        stray = _names_a_flag_var(node) and not _feeds_decoder(node, parents, decoders)
+        if not (stray or _flag_use(node, parents)):
             continue
         owner = parents.get(node)
         while owner is not None and not isinstance(
@@ -149,6 +183,10 @@ def test_the_owner_module_exists() -> None:
         'import os\nenv = os.environ\nx = env.get("X") == "1"\n',
         'import os\nx = 1 if os.environ.get("X") else 2\n',
         'import os\nx = os.environ.get("X", "").lower() not in ("", "0")\n',
+        'import os\nraw = os.environ.get("DECOY_ML_DISABLED")\n',
+        "import os\nraw = os.environ.get(_ML_DISABLED_ENV)\n",
+        'import os\nraw = os.environ["DECOY_PACK_REQUIRE_SIGNATURE"]\n',
+        'import os\nfrom m import env_flag\nx = env_flag("N", "1", os.environ.get("DECOY_ML_DISABLED"))\n',
     ],
 )
 def test_a_flag_shaped_read_is_a_hit(source: str) -> None:

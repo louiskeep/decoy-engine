@@ -99,6 +99,7 @@ from decoy_engine.execution._isolated_common import (
     classify_abnormal_exit,
     commit_error_text,
     exception_error_text,
+    inside_isolated_worker,
     is_memory_failure,
     peak_rss_mb,
 )
@@ -107,7 +108,6 @@ from decoy_engine.execution._isolated_reason import commit_reason, reason_from_e
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, entry_point
-from decoy_engine.internal.env_flags import env_flag
 from decoy_engine.profile import DeclarationRequest
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import ReasonRecord
@@ -207,7 +207,6 @@ def run_pipeline_isolated(
     Raises:
         FileAccessUnavailable: a strict policy is installed and the call would spawn a
             child, or names a `staging_dir` or `output_dir` path. Raised before any I/O.
-        EnvFlagError: `isolate` is true and the worker marker is not a flag spelling.
         ValueError: a non-None `sink`/`source_loader`/`vault_writer`/
             `registry`/`derive_key` was passed, `rlimit_kind` is not a
             known kind, or `config`/`run_pipeline_kwargs` is not
@@ -217,9 +216,11 @@ def run_pipeline_isolated(
     _reject_unserializable_kwargs(run_pipeline_kwargs)
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
-    already_isolated = isolate and env_flag(ISOLATED_WORKER_ENV, default=False)
-    names_paths = staging_dir is not None or output_dir is not None
-    _require_ambient_for_paths(spawns=isolate and not already_isolated, names_paths=names_paths)
+    already_isolated = isolate and inside_isolated_worker()
+    _require_ambient_for_paths(
+        spawns=isolate and not already_isolated,
+        names_paths=staging_dir is not None or output_dir is not None,
+    )
 
     # Before any staging or spawn: the child rechecks, since a capability cannot cross the process.
     prepare_declared_execution_sources(

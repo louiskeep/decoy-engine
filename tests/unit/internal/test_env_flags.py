@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pickle
 
 import pytest
@@ -23,7 +24,7 @@ def test_true_spellings_are_true_whatever_the_default(
     monkeypatch: pytest.MonkeyPatch, raw: str, default: bool
 ) -> None:
     monkeypatch.setenv(VAR, raw)
-    assert env_flag(VAR, default=default) is True
+    assert env_flag(VAR, os.environ.get(VAR), default=default) is True
 
 
 @pytest.mark.parametrize("raw", FALSE_SPELLINGS)
@@ -32,13 +33,13 @@ def test_false_spellings_are_false_whatever_the_default(
     monkeypatch: pytest.MonkeyPatch, raw: str, default: bool
 ) -> None:
     monkeypatch.setenv(VAR, raw)
-    assert env_flag(VAR, default=default) is False
+    assert env_flag(VAR, os.environ.get(VAR), default=default) is False
 
 
 @pytest.mark.parametrize("default", [True, False])
 def test_unset_gives_the_default(monkeypatch: pytest.MonkeyPatch, default: bool) -> None:
     monkeypatch.delenv(VAR, raising=False)
-    assert env_flag(VAR, default=default) is default
+    assert env_flag(VAR, os.environ.get(VAR), default=default) is default
 
 
 @pytest.mark.parametrize("raw", ["", "   ", "\t"])
@@ -47,7 +48,7 @@ def test_empty_or_blank_gives_the_default(
     monkeypatch: pytest.MonkeyPatch, raw: str, default: bool
 ) -> None:
     monkeypatch.setenv(VAR, raw)
-    assert env_flag(VAR, default=default) is default
+    assert env_flag(VAR, os.environ.get(VAR), default=default) is default
 
 
 @pytest.mark.parametrize("raw", ["y", "t", "n", "f", "2", "maybe", "truee", "1.0", "trué"])
@@ -56,7 +57,7 @@ def test_any_other_spelling_is_refused_with_the_coded_error(
 ) -> None:
     monkeypatch.setenv(VAR, raw)
     with pytest.raises(EnvFlagError) as caught:
-        env_flag(VAR, default=False)
+        env_flag(VAR, os.environ.get(VAR), default=False)
     assert caught.value.code == reasons.config.ENV_FLAG_INVALID == "env_flag_invalid"
     assert caught.value.variable == VAR
 
@@ -66,7 +67,7 @@ def test_the_refusal_never_holds_the_value_and_has_no_context(
 ) -> None:
     monkeypatch.setenv(VAR, SECRET)
     with pytest.raises(EnvFlagError) as caught:
-        env_flag(VAR, default=False)
+        env_flag(VAR, os.environ.get(VAR), default=False)
     text = str(caught.value)
     assert SECRET not in text and SECRET not in repr(caught.value)
     assert VAR in text
@@ -93,11 +94,9 @@ def test_the_error_and_its_reason_are_public() -> None:
     assert spec.since == reasons.UNRELEASED
 
 
-def test_an_explicit_mapping_is_read_instead_of_the_process_environment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_decoder_never_reads_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VAR, "off")
-    assert env_flag(VAR, default=False, environ={VAR: "yes"}) is True
-    assert env_flag(VAR, default=True, environ={}) is True
+    assert env_flag(VAR, "yes", default=False) is True
+    assert env_flag(VAR, None, default=True) is True
     with pytest.raises(EnvFlagError):
-        env_flag(VAR, default=False, environ={VAR: "maybe"})
+        env_flag(VAR, "maybe", default=False)
