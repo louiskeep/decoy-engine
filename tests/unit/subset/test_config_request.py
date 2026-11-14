@@ -150,45 +150,75 @@ def test_generate_parent_with_a_mask_child_drops_the_edge_and_passes_the_child_w
     assert sel.excluded_edges == ("gen.id -> c.gid",)
 
 
-_GUIDANCE = "add a UTC offset or quote it"
-
-
-def _timestamp_config(where: str, value: Any) -> dict[str, Any]:
+def _stamp_config(seed: dict[str, Any]) -> dict[str, Any]:
     config = _config({"a": "mask"}, [], "a")
-    if where == "predicate":
-        config["subset"]["seeds"] = [
-            {
-                "table": "a",
-                "mode": "filter",
-                "predicates": [{"column": "x", "op": "ge", "value": value}],
-            }
-        ]
-    else:
-        config["subset"]["seeds"] = [
-            {"table": "a", "mode": "keys", "key_columns": ["id"], "keys": [[value]]}
-        ]
+    config["subset"]["seeds"] = [{"table": "a", **seed}]
     return config
 
 
-def test_a_naive_timestamp_in_a_predicate_or_keys_is_refused_with_one_code() -> None:
+def _stamp_table() -> pa.Table:
     import datetime as dt
 
+    stamps = [dt.datetime(2024, 1, d, 10, 0, 0) for d in (1, 2, 3, 4)]
+    return pa.table({"id": ["a", "b", "c", "d"], "ts": pa.array(stamps, pa.timestamp("us"))})
+
+
+def _kept(seed: dict[str, Any]) -> frozenset[int]:
+    req = subset_request_from_config(_stamp_config(seed))
+    assert req is not None
+    sel = select_subset(req, {"a": _stamp_table()}, config=JOB_SEED_CONFIG)
+    return sel.survivors["a"]
+
+
+def test_naive_timestamp_literals_select_rows_of_a_zone_less_column() -> None:
+    import datetime as dt
+
+    d3 = dt.datetime(2024, 1, 3, 10, 0, 0)
+    d2 = dt.datetime(2024, 1, 2, 10, 0, 0)
+    flt = {"mode": "filter", "predicates": [{"column": "ts", "op": "ge", "value": d3}]}
+    assert _kept(flt) == frozenset({2, 3})
+    eq = {"mode": "filter", "predicates": [{"column": "ts", "op": "eq", "value": d2}]}
+    assert _kept(eq) == frozenset({1})
+    isin = {"mode": "filter", "predicates": [{"column": "ts", "op": "in", "value": [d2, d3]}]}
+    assert _kept(isin) == frozenset({1, 2})
+    keys = {"mode": "keys", "key_columns": ["ts"], "keys": [[d2], [d3]]}
+    assert _kept(keys) == frozenset({1, 2})
+
+
+def test_the_fingerprint_of_a_naive_literal_ignores_the_host_zone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import datetime as dt
+    import time
+
+    if not hasattr(time, "tzset"):
+        pytest.skip("no tzset on this platform")
+    naive = dt.datetime(2024, 1, 3, 10, 0, 0)
+    aware = naive.replace(tzinfo=dt.timezone.utc)
+
+    def fp(value: dt.datetime) -> str:
+        seed = {"mode": "filter", "predicates": [{"column": "ts", "op": "ge", "value": value}]}
+        req = subset_request_from_config(_stamp_config(seed))
+        assert req is not None
+        return req.fingerprint()
+
+    seen = set()
+    for zone in ("UTC", "America/Chicago"):
+        monkeypatch.setenv("TZ", zone)
+        time.tzset()
+        seen.add(fp(naive))
+    monkeypatch.undo()
+    time.tzset()
+    assert len(seen) == 1
+    assert seen != {fp(aware)}
+
+
+def test_a_non_finite_literal_is_still_refused_with_one_code() -> None:
     from decoy_engine.subset import SubsetConfigError
 
-    for where in ("predicate", "keys"):
-        config = _timestamp_config(where, dt.datetime(2024, 1, 1, 10, 0, 0))
-        with pytest.raises(SubsetConfigError) as caught:
-            subset_request_from_config(config)
-        error = caught.value
-        assert error.code == reasons.config.CONFIG_VALUE_NOT_JSON
-        assert _GUIDANCE in error.message
-        assert "2024" not in f"{error} {error!r}"
-        assert error.__cause__ is None and error.__context__ is None
-
-
-def test_an_aware_timestamp_and_a_quoted_one_still_build_a_request() -> None:
-    import datetime as dt
-
-    aware = dt.datetime(2024, 1, 1, 10, 0, 0, tzinfo=dt.timezone.utc)
-    assert subset_request_from_config(_timestamp_config("predicate", aware)) is not None
-    assert subset_request_from_config(_timestamp_config("keys", "2024-01-01 10:00:00"))
+    seed = {"mode": "filter", "predicates": [{"column": "x", "op": "ge", "value": float("nan")}]}
+    with pytest.raises(SubsetConfigError) as caught:
+        subset_request_from_config(_stamp_config(seed))
+    assert caught.value.code == reasons.config.CONFIG_VALUE_NOT_JSON
+    assert "nan" not in f"{caught.value}".lower().replace("finite", "")
+    assert caught.value.__cause__ is None and caught.value.__context__ is None

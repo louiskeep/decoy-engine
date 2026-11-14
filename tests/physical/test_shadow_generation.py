@@ -454,7 +454,7 @@ def test_a_leaf_knob_json_cannot_hold_is_refused_before_either_route_runs(
     config = _generate_config(columns=columns, bypass_parse=True)
     with pytest.raises(PlanCompileError) as caught:
         run_generation_shadow_and_oracle(config)
-    assert caught.value.code == reasons.config.CONFIG_VALUE_NOT_JSON
+    assert caught.value.code == reasons.plan.CONFIG_VALUE_NOT_JSON
 
 
 # NaN, Infinity and surrogates are refused at compile (above), so the sweeps draw only values a

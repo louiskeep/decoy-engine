@@ -83,6 +83,12 @@ ALLOWLIST: dict[tuple[str, str], tuple[str, str]] = {
     ),
 }
 
+# Sorted-key dumps per allowlisted function; a second dump inside an excused function is a new
+# site, not covered by the excuse. Every entry not named here holds exactly one.
+SITE_COUNTS: dict[tuple[str, str], int] = {
+    ("generation/_pinned_compile.py", "compile_pinned_plan_with_generation"): 2,
+}
+
 # The only functions that may name `seed_fingerprint_bytes`.
 SEED_FORM_CALLERS = frozenset(
     {
@@ -175,6 +181,12 @@ def test_every_sorted_key_dump_outside_the_owner_is_an_allowlisted_document() ->
         "a sorted-key JSON dump outside decoy_engine._canonical; a digest, signature or seed "
         f"input goes through canonical_json_bytes, a document goes on the allowlist: {new}"
     )
+
+
+def test_each_allowlisted_function_holds_exactly_its_pinned_number_of_dumps() -> None:
+    found = _real_sites()
+    pinned = {site: SITE_COUNTS.get(site, 1) for site in ALLOWLIST}
+    assert {k: v for k, v in found.items() if k in pinned} == pinned
 
 
 def test_every_allowlist_entry_still_matches_a_real_site() -> None:

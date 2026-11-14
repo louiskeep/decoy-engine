@@ -8,10 +8,11 @@ seed reaches: it passes through whole.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
 import pyarrow as pa
@@ -26,6 +27,23 @@ if TYPE_CHECKING:
     from decoy_engine.subset._sample import SampleSpec
 
 
+def _tag_naive_datetimes(value: Any) -> Any:
+    """A naive datetime as a tagged wall-clock text, everywhere in ``value``.
+
+    A naive literal is the one spelling a zone-less timestamp column accepts, so a request
+    must hold it. The canonical encoder refuses it (reading it as host time would make bytes
+    depend on the machine); the tag keeps the wall time without a zone and cannot equal the
+    text of an aware value.
+    """
+    if isinstance(value, dt.datetime) and value.utcoffset() is None:
+        return {"naive_datetime": value.isoformat()}
+    if isinstance(value, dict):
+        return {k: _tag_naive_datetimes(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_tag_naive_datetimes(v) for v in value]
+    return value
+
+
 @dataclass(frozen=True)
 class SubsetRequest:
     relationships: tuple[PlanRelationship, ...]
@@ -38,7 +56,8 @@ class SubsetRequest:
     def fingerprint(self) -> str:
         """SHA-256 over the canonical dump: the subset half of a run's identity. The run config
         drops the `subset` block, so this fingerprint is what covers the seed literals."""
-        return hashlib.sha256(canonical_json_bytes(dataclasses.asdict(self))).hexdigest()
+        dump = _tag_naive_datetimes(dataclasses.asdict(self))
+        return hashlib.sha256(canonical_json_bytes(dump)).hexdigest()
 
 
 @dataclass(frozen=True)

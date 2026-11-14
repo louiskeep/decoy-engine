@@ -683,7 +683,7 @@ def test_unencodable_hash_namespace_is_refused_before_admission(
     )
     with pytest.raises(PlanCompileError) as caught:
         _profile_and_plan(config, source)
-    assert caught.value.code == reasons.config.CONFIG_VALUE_NOT_JSON
+    assert caught.value.code == reasons.plan.CONFIG_VALUE_NOT_JSON
 
 
 @pytest.mark.skipif(
@@ -755,7 +755,7 @@ def test_faker_unencodable_namespace_is_refused_before_admission(tmp_path: Path)
     config, source = _build(tmp_path, [_faker_column("\ud800bad")], source)
     with pytest.raises(PlanCompileError) as caught:
         _profile_and_plan(config, source)
-    assert caught.value.code == reasons.config.CONFIG_VALUE_NOT_JSON
+    assert caught.value.code == reasons.plan.CONFIG_VALUE_NOT_JSON
 
 
 def test_faker_declines_when_the_index_kernel_is_missing(

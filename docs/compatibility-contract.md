@@ -444,9 +444,12 @@ move only for content that holds non-ASCII text; the physical-input identity has
 request fingerprint move for every config (they used default separators and a `repr` fallback).
 A pinned plan or resume fingerprint made before the change
 refuses with its existing digest-mismatch code and is rebuilt; a model pack signed over non-ASCII
-manifest text is signed again. Plan compile and `subset_request_from_config` now refuse a value
-JSON cannot hold (a YAML date or timestamp, NaN, Infinity, an unpaired surrogate) with the new
-reason `config_value_not_json`; quote the value as a string. No `SEED_PROTOCOL_VERSION` change.
+manifest text is signed again. Plan compile now refuses a config value JSON cannot hold (a YAML date or
+timestamp, NaN, Infinity, an unpaired surrogate) with the new reason `config_value_not_json`;
+quote the value as a string. `subset_request_from_config` refuses NaN, Infinity and an unpaired
+surrogate the same way, but keeps a naive timestamp literal, the only spelling a zone-less
+timestamp column accepts; the subset request fingerprint writes it as tagged wall-clock text.
+No `SEED_PROTOCOL_VERSION` change.
 
 ### 3.4 The public API + CLI contract
 

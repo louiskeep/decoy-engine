@@ -333,7 +333,8 @@ def _require_json_literals(request: SubsetRequest) -> None:
 
     The `subset:` block is left out of plan compilation, so its predicate values and seed keys
     never meet `pipeline_config_hash`. The request fingerprint is their one hash, so a value it
-    cannot write (a naive YAML timestamp, say) stops here, before any selection begins.
+    cannot write (NaN, Infinity, an unpaired surrogate) stops here, before any selection
+    begins. A naive timestamp is not refused: it is the only literal a zone-less column takes.
     """
     try:
         request.fingerprint()
@@ -343,7 +344,7 @@ def _require_json_literals(request: SubsetRequest) -> None:
         return
     raise SubsetConfigError(
         code=reasons.config.CONFIG_VALUE_NOT_JSON,
-        message=("A subset value has a type JSON cannot hold; add a UTC offset or quote it."),
+        message="A subset value is not a finite number, text, date or timestamp JSON can hold.",
     )
 
 
