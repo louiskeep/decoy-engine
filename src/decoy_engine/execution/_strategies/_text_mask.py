@@ -46,7 +46,10 @@ from decoy_engine.execution._adapter import (
     provider_config_to_dict,
 )
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._strategies._ner_config import NER_WIZARD_OPTIONS
+from decoy_engine.execution._strategies._ner_config import (
+    NER_WIZARD_OPTIONS,
+    enforce_ner_model_version,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.text_mask import mask_cell
@@ -131,23 +134,12 @@ class TextMaskHandler:
             else:
                 ner_model = DEFAULT_NER_MODEL
 
-        if ner_model is not None and plan.ner_model_version is not None:
-            from decoy_engine.detection.ner import installed_model_version
-
-            current_version = installed_model_version(ner_model)
-            if current_version is not None and current_version != plan.ner_model_version:
-                raise StrategyError(
-                    code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
-                    strategy="text_mask",
-                    message=(
-                        f"column {column!r}: NER model {ner_model!r} is installed at "
-                        f"version {current_version!r} but the plan was compiled against "
-                        f"{plan.ner_model_version!r}. spaCy model updates change masking "
-                        f"output for the same config + seed; recompile the plan against the "
-                        f"installed model (or pin the model version) to keep masked output "
-                        f"reproducible."
-                    ),
-                )
+        enforce_ner_model_version(
+            ner_model=ner_model,
+            plan_ner_model_version=plan.ner_model_version,
+            column=column,
+            strategy="text_mask",
+        )
 
         # SEQ seam, after the NER guard so a NER column keeps its handler behavior. The RESOLVED
         # detectors go through unchanged: None means all, and () would mean none.
