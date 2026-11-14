@@ -46,18 +46,24 @@ def test_pin_is_well_formed() -> None:
     assert sum(pin["since_counts"].values()) == len(pin["identities"])
 
 
+def _released(m: dict) -> dict:
+    """The first entry a release already shipped: an unreleased one is not pinned, so editing it
+    cannot trip the pin."""
+    return next(e for e in m["entries"] if e["since"] != "unreleased")
+
+
 def _new(m: dict, since: str) -> dict:
-    return {**m["entries"][0], "code": "brand_new_code", "since": since}
+    return {**_released(m), "code": "brand_new_code", "since": since}
 
 
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [
         (
-            lambda m: m["entries"].append(_new(m, m["entries"][0]["since"])),
+            lambda m: m["entries"].append(_new(m, _released(m)["since"])),
             "numeric identity is absent from the release pin",
         ),
-        (lambda m: m["entries"][0].__setitem__("summary", "Edited."), "summary differs"),
+        (lambda m: _released(m).__setitem__("summary", "Edited."), "summary differs"),
         (
             lambda m: (
                 m.__setitem__("registry_version", "9.9.0"),
