@@ -51,6 +51,7 @@ from decoy_engine.verification.postmask._keys import (
     KeyCounts,
     KeyResult,
     check_keys,
+    key_columns,
     keys_report,
 )
 from decoy_engine.verification.postmask._stream_input import (
@@ -90,6 +91,7 @@ __all__ = [
     "from_staged",
     "from_table",
     "key_batches",
+    "key_columns",
     "keys_report",
     "missing_columns",
     "post_scan_verdict",
