@@ -47,9 +47,10 @@ def test_pin_is_well_formed() -> None:
 
 
 def _first_shipped(m: dict) -> dict:
-    """The first entry a release already shipped: an unreleased one is not pinned, so editing it
+    """The first entry a release already pinned: an unreleased one is not pinned, so editing it
     cannot trip the pin."""
-    return next(e for e in m["entries"] if e["since"] != "unreleased")
+    pinned = {(i["namespace"], i["code"]) for i in _pin()["identities"]}
+    return next(e for e in m["entries"] if (e["namespace"], e["code"]) in pinned)
 
 
 def _new(m: dict, since: str) -> dict:
