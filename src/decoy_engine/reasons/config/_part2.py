@@ -6,6 +6,7 @@ from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
+    "DECLARED_TABLE_DROPPED",
     "ENV_FLAG_INVALID",
     "GENERATE_COLUMN_DUPLICATE",
     "GENERATE_FORMULA_INVALID",
@@ -18,6 +19,7 @@ __all__ = [
     "GENERATE_UNIQUE_DOMAIN_TOO_SMALL",
     "GENERATE_UNIQUE_UNSUPPORTED",
     "GENERATE_WEIGHTS_INVALID",
+    "LOADER_TABLE_UNDECLARED",
     "PIPELINE_NAME_INVALID",
     "VARIABLE_UNKNOWN_SCOPE",
     "VARIABLE_UNRESOLVED",
@@ -99,5 +101,22 @@ _d = _catalog.config("EnvFlagError")
 ENV_FLAG_INVALID = _d(
     "env_flag_invalid",
     "An environment flag has a value outside the accepted spellings.",
+    since=UNRELEASED,
+)
+
+# A table whose strategies sit under `tables:` must reach the plan. The two refusals below keep a
+# declared table from being echoed unmasked; texts name the table (a config key), never a value.
+_d = _catalog.config("ConfigError")
+
+LOADER_TABLE_UNDECLARED = _d(
+    "loader_table_undeclared",
+    "A table masked through a source loader needs a sources entry; without one the run would "
+    "pass its rows through unmasked.",
+    since=UNRELEASED,
+)
+DECLARED_TABLE_DROPPED = _d(
+    "declared_table_dropped",
+    "A table declared under tables has no work in the compiled plan; the run would pass its "
+    "rows through unmasked.",
     since=UNRELEASED,
 )

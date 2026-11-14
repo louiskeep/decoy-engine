@@ -75,9 +75,7 @@ def test_loader_table_without_source_entry_is_refused_before_any_read() -> None:
 
 def test_dropped_declared_table_is_refused_after_the_plan() -> None:
     cfg = _config(names=("a", "b"))
-    profile = profile_source(
-        _config(names=("a",)), seed=1, supplied_sources={"a": _table()}
-    )
+    profile = profile_source(_config(names=("a",)), seed=1, supplied_sources={"a": _table()})
     plan = compile_plan(_config(names=("a",)), profile, decoy_engine_version="0.1.0")
     with pytest.raises(ConfigError) as caught:
         _guards.refuse_dropped_declared_tables(cfg, plan, {"a", "b"})

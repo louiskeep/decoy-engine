@@ -85,6 +85,22 @@ def ooc_ineligible(message: str) -> ConfigError:
     return _tagged(ConfigError(message), reasons.route.OUT_OF_CORE_INELIGIBLE)
 
 
+def loader_table_undeclared(table: str) -> ConfigError:
+    """A loader table the config masks but never declares under `sources:`; refused before a read."""
+    summary = reasons.get("config", reasons.config.LOADER_TABLE_UNDECLARED).summary
+    return _tagged(
+        ConfigError(f"table {table!r}: {summary}"), reasons.config.LOADER_TABLE_UNDECLARED
+    )
+
+
+def declared_table_dropped(table: str) -> ConfigError:
+    """A declared, supplied table the compiled plan holds no work for."""
+    summary = reasons.get("config", reasons.config.DECLARED_TABLE_DROPPED).summary
+    return _tagged(
+        ConfigError(f"table {table!r}: {summary}"), reasons.config.DECLARED_TABLE_DROPPED
+    )
+
+
 def _tagged(exc: ConfigError, reason: ReasonCode) -> ConfigError:
     tag_exception(exc, reason, phase=Phase.RESOLVE)
     return exc
