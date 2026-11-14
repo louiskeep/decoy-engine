@@ -58,6 +58,27 @@ jobs:
       - name: Format check
         run: ruff format --check src tests testflight scripts
 
+  # pyproject allows Python >=3.10,<3.13 but the other jobs run 3.10 only. A bare import on the
+  # other supported minors catches version-specific import-time failures (a dataclass default
+  # that 3.11 rejects crashed `import decoy_engine`).
+  import-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install the package
+        run: pip install .
+      - name: Import
+        run: python -c "import decoy_engine"
+
   mypy:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
