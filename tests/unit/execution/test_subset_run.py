@@ -274,7 +274,7 @@ def test_at14_lazy_inputs_give_the_resident_rows(tmp_path: Path, fmt: str, mode:
 
     cfg, data, lazy = sup.job(tmp_path, fmt=fmt)
     want = sup.kept(cfg, data)
-    sink, target = rs.real_sink(tmp_path)
+    sink, target = rs.engine_sink(tmp_path)
     res = _run(cfg, lazy, sink=sink, execution_mode=mode)
     assert not any(isinstance(v, stage_mod.LazySource) for v in res.outputs.values())
     for name, rows in want.items():
