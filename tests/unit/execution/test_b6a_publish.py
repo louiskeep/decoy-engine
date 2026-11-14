@@ -19,6 +19,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
+from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _b6a_support as b6a
 from tests.unit.execution.test_auto_chunk_dispatcher import _row_error_job
@@ -304,6 +305,10 @@ def _strip_ms(value: Any) -> Any:
     return value
 
 
+def _published_names(sink: ParquetTransactionalSink) -> list[str]:
+    return sorted(p.name for p in sink.committed_table_path("x").parent.glob("*.parquet"))
+
+
 def _fk_run(tmp_path: Path, mode: str, sink: Any, **extra: Any) -> Any:
     config, manifest = _fk_config(tmp_path)
     sources = {name: pq.read_table(path) for name, path in manifest.items()}
@@ -341,6 +346,11 @@ def test_non_routed_runs_never_enter_the_new_code(
         if case in ("sequential", "out_of_core"):
             run_dir = tmp_path / label
             run_dir.mkdir()
+            # Declared keys are gated before commit, and the gate reads only the engine's own
+            # sink back, so the bounded routes take a real one and the tables it publishes are
+            # what the two runs are compared on.
+            sink = ParquetTransactionalSink(run_dir / "published")
+            sinks[label] = sink
             results[label] = _fk_run(run_dir, case, sink, **extra)
             continue
         cfg, src = shared_job
@@ -353,7 +363,10 @@ def test_non_routed_runs_never_enter_the_new_code(
         results[label] = b6a.run_streamed(cfg, src, sink, **{**kwargs, **extra})
     assert entered == []
     new, off = results["new"], results["off"]
-    assert sinks["new"].calls == sinks["off"].calls
+    if case in ("sequential", "out_of_core"):
+        assert _published_names(sinks["new"]) == _published_names(sinks["off"]) != []
+    else:
+        assert sinks["new"].calls == sinks["off"].calls
     assert list(new.outputs) == list(off.outputs)
     for name in new.outputs:
         assert new.outputs[name].equals(off.outputs[name], check_metadata=True)
