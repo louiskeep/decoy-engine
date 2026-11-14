@@ -7,7 +7,10 @@ before any read, one after the plan is built.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.errors import ConfigError
@@ -25,7 +28,7 @@ def _table() -> pa.Table:
     return pa.table({"id": ["a", "b"], "email": [_EMAIL, "z@w.com"]})
 
 
-def _config(*, with_source: bool = False, names: tuple[str, ...] = ("t",)) -> dict:
+def _config(*, source_dir: Path | None = None, names: tuple[str, ...] = ("t",)) -> dict:
     cfg: dict = {
         "version": 1,
         "tables": [
@@ -45,8 +48,11 @@ def _config(*, with_source: bool = False, names: tuple[str, ...] = ("t",)) -> di
             for name in names
         ],
     }
-    if with_source:
-        cfg["sources"] = {n: {"type": "parquet", "path": "/nonexistent.parquet"} for n in names}
+    if source_dir is not None:
+        cfg["sources"] = {
+            n: {"type": "file", "format": "parquet", "path": str(source_dir / f"{n}.parquet")}
+            for n in names
+        }
     return cfg
 
 
@@ -89,13 +95,41 @@ def test_declared_table_nobody_supplies_keeps_running() -> None:
     assert result.outputs == {}
 
 
-def test_loader_table_with_source_entry_still_masks() -> None:
+def test_loader_table_with_source_entry_still_masks(tmp_path: Path) -> None:
     table = _table()
+    pq.write_table(table, tmp_path / "t.parquet")
     result = run_pipeline(
-        _config(with_source=True),
+        _config(source_dir=tmp_path),
         {},
         engine_version="0.1.0",
         source_loader=lambda n: table,
         source_loader_schemas={"t": table.schema},
     )
     assert _EMAIL not in result.outputs["t"].column("email").to_pylist()
+
+
+def test_run_pipeline_refuses_a_dropped_table_when_the_first_gate_is_bypassed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pins the post-plan guard's call site: with the pre-read gate gone, the loader-only table
+    # still profiles as nothing, so only the construction guard stands between it and an echo.
+    monkeypatch.setattr(_guards, "refuse_undeclared_loader_tables", lambda *a, **k: None)
+    table = _table()
+    loads: list[str] = []
+
+    def loader(name: str) -> pa.Table:
+        loads.append(name)
+        return table
+
+    with pytest.raises(ConfigError) as caught:
+        run_pipeline(
+            _config(),
+            {},
+            engine_version="0.1.0",
+            source_loader=loader,
+            source_loader_schemas={"t": table.schema},
+        )
+    record = reason_from_exception(caught.value)
+    assert (record.namespace, record.code) == ("config", "declared_table_dropped")
+    assert loads == []
+    assert _EMAIL not in str(caught.value)
