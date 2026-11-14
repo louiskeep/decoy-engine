@@ -77,7 +77,7 @@ ISOLATED_WORKER_ENV = "DECOY_INSIDE_ISOLATED_WORKER"
 def inside_isolated_worker() -> bool:
     """True when the marker holds an accepted true spelling; an unknown spelling raises
     `EnvFlagError`, so a stray value fails the run before any spawn."""
-    return env_flag(ISOLATED_WORKER_ENV, os.environ.get(ISOLATED_WORKER_ENV), default=False)
+    return env_flag(ISOLATED_WORKER_ENV, os.environ.get(ISOLATED_WORKER_ENV))
 
 
 # The envelope transport contract (dennis review HIGH-1): a known FILE in

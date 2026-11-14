@@ -221,11 +221,17 @@ def test_the_client_security_context_scopes_the_cache(attribute):
 # --- client construction from the standard environment -------------------------------------
 
 
-@pytest.mark.parametrize("value", ["true", "1", "TRUE", "yes", "on"])
+@pytest.mark.parametrize("value", ["true", "1", "TRUE", "yes", "on", "t", "y", "Y", " true "])
 def test_vault_skip_verify_is_hard_rejected_not_warned(value):
     with pytest.raises(VaultClientConfigError) as info:
         client_from_env({"VAULT_ADDR": "https://v.example:8200", "VAULT_SKIP_VERIFY": value})
     assert "VAULT_SKIP_VERIFY" in str(info.value)
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "n", "off", "maybe", "  "])
+def test_vault_skip_verify_other_spellings_build_a_verifying_client(value):
+    client = client_from_env({"VAULT_ADDR": "https://v.example:8200", "VAULT_SKIP_VERIFY": value})
+    assert client.adapter.session.verify in (True, None)
 
 
 def test_tls_material_is_honored_and_verification_stays_on():

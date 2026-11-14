@@ -86,7 +86,7 @@ def _require_signature_enabled() -> bool:
     raises ``EnvFlagError`` on any other value, so an ambiguous security flag is treated as
     "require + you typo'd it", never as "off". The error text never holds the value.
     """
-    return env_flag(_REQUIRE_SIGNATURE_ENV, os.environ.get(_REQUIRE_SIGNATURE_ENV), default=False)
+    return env_flag(_REQUIRE_SIGNATURE_ENV, os.environ.get(_REQUIRE_SIGNATURE_ENV))
 
 
 class ModelPackLoader:
@@ -177,7 +177,7 @@ class ModelPackLoader:
         Raises:
             EnvFlagError: the variable holds a spelling outside the accepted set.
         """
-        return env_flag(_ML_DISABLED_ENV, os.environ.get(_ML_DISABLED_ENV), default=False)
+        return env_flag(_ML_DISABLED_ENV, os.environ.get(_ML_DISABLED_ENV))
 
     def load(self) -> dict[str, Any]:
         """Load and validate the pack.  Returns the pack dict or raises.
