@@ -1,0 +1,937 @@
+{
+  "source": "decoy CLI 8fba6af _infer_strategy_for_column (review text: retired product name replaced by The scan)",
+  "cases": [
+    {
+      "id": "detector-email",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_email",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected email addresses. Faker replaces with synthetic emails."
+      }
+    },
+    {
+      "id": "detector-ssn",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "ssn",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected SSNs. Hash preserves joinability without exposing the value. If you need real-shape output (333-22-4444), use provider: synthetic_ssn instead."
+      }
+    },
+    {
+      "id": "detector-us_phone",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected US phone numbers. Faker replaces with synthetic phone."
+      }
+    },
+    {
+      "id": "detector-person_name",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "person_name",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_full_name",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected person names. Faker replaces with synthetic names. If this column is a first OR last name only, swap the provider to person_first_name or person_last_name."
+      }
+    },
+    {
+      "id": "detector-iso_date",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "iso_date",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "date_shift",
+        "provider": null,
+        "provider_config": {
+          "min_days": -365,
+          "max_days": 365
+        },
+        "deterministic": false,
+        "review": "The scan detected ISO-format dates. date_shift shifts each date by an independent per-value offset in [min_days, max_days] (same source value always gets the same shift, but shifts are NOT globally order-preserving across rows). Defaults are min_days: -365 / max_days: 365; tune via provider_config."
+      }
+    },
+    {
+      "id": "detector-us_date",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_date",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "date_shift",
+        "provider": null,
+        "provider_config": {
+          "min_days": -365,
+          "max_days": 365
+        },
+        "deterministic": false,
+        "review": "The scan detected US-format dates. date_shift shifts each date by an independent per-value offset in [min_days, max_days] (not order-preserving across rows). Defaults are -365/+365 days; tune via provider_config."
+      }
+    },
+    {
+      "id": "detector-us_zip",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_zip",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "truncate",
+        "provider": null,
+        "provider_config": {
+          "length": 3
+        },
+        "deterministic": false,
+        "review": "The scan detected US ZIP codes. truncate to 3 digits matches HIPAA Safe Harbor; if your downstream needs full ZIP, use faker + provider: address_zip instead."
+      }
+    },
+    {
+      "id": "detector-address_street",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "address_street",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "address_street",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected street addresses. Faker replaces with synthetic addresses."
+      }
+    },
+    {
+      "id": "detector-address_city",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "address_city",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "address_city",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected city names. Faker replaces with synthetic cities."
+      }
+    },
+    {
+      "id": "detector-mrn",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "mrn",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected medical record numbers. Hash preserves joinability. If you need real-shape output, use provider: synthetic_mrn."
+      }
+    },
+    {
+      "id": "detector-npi",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "npi",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected NPI numbers. Hash preserves joinability. If you need real-shape output, use provider: synthetic_npi."
+      }
+    },
+    {
+      "id": "detector-ndc",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "ndc",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected NDC codes. Hash preserves joinability. If you need real-shape output, use provider: synthetic_ndc."
+      }
+    },
+    {
+      "id": "detector-icd10",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "icd10",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "truncate",
+        "provider": null,
+        "provider_config": {
+          "length": 3
+        },
+        "deterministic": false,
+        "review": "The scan detected ICD-10 codes. truncate to 3 chars (category) matches HIPAA Safe Harbor."
+      }
+    },
+    {
+      "id": "detector-pan",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "pan",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "fpe",
+        "provider": null,
+        "provider_config": {
+          "charset": "digits",
+          "validate_luhn": true
+        },
+        "deterministic": false,
+        "review": "The scan detected payment card numbers (PAN). fpe (format-preserving encryption) with charset: digits + validate_luhn: true keeps the masked output Luhn-valid, matching the bundled PCI template. The FPE key itself is derived automatically per job/namespace -- no key config needed -- but a namespace IS required (see below)."
+      }
+    },
+    {
+      "id": "detector-cvv",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "cvv",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected CVV. PCI DSS 3.3 requires CVV not be stored post-authorization; redact removes the value entirely."
+      }
+    },
+    {
+      "id": "detector-iban",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "iban",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected IBANs. Hash preserves joinability. If you need real-shape output, use provider: synthetic_iban."
+      }
+    },
+    {
+      "id": "detector-uuid",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "uuid",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "uuid",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected UUIDs. Faker generates fresh synthetic UUIDs."
+      }
+    },
+    {
+      "id": "detector-ipv4",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "ipv4",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected IPv4 addresses. redact removes the value; if you need realistic IP-shaped output for analytics, swap to faker + provider: random_choice over a known IP range."
+      }
+    },
+    {
+      "id": "unknown-detector-high",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "custom__uk_nhs_number",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "registered-but-not-in-cli-table",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "first_name",
+          "match_rate": 0.95,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "no-matches-string",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "no-matches-integer-unique",
+      "inferred_type": "integer",
+      "is_likely_unique": true,
+      "matches": [],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "No PII detector fired, but this column is a likely-unique integer (possible FK key). Hash preserves joinability; replace with passthrough if the column should be kept verbatim, or with faker if a real-shape replacement is preferred."
+      }
+    },
+    {
+      "id": "no-matches-integer-not-unique",
+      "inferred_type": "integer",
+      "is_likely_unique": false,
+      "matches": [],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "no-matches-float-unique",
+      "inferred_type": "float",
+      "is_likely_unique": true,
+      "matches": [],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "no-matches-string-unique",
+      "inferred_type": "string",
+      "is_likely_unique": true,
+      "matches": [],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "low-bucket-low-rate",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.3,
+          "confidence_bucket": "low"
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "none-bucket-low-rate",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.3,
+          "confidence_bucket": null
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "low-bucket-rate-at-half",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.5,
+          "confidence_bucket": "low"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_email",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected email addresses. Faker replaces with synthetic emails."
+      }
+    },
+    {
+      "id": "low-bucket-high-rate",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "ssn",
+          "match_rate": 0.8,
+          "confidence_bucket": "low"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected SSNs. Hash preserves joinability without exposing the value. If you need real-shape output (333-22-4444), use provider: synthetic_ssn instead."
+      }
+    },
+    {
+      "id": "medium-bucket-low-rate",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.3,
+          "confidence_bucket": "medium"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_email",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected email addresses. Faker replaces with synthetic emails."
+      }
+    },
+    {
+      "id": "high-bucket-low-rate",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.2,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected US phone numbers. Faker replaces with synthetic phone."
+      }
+    },
+    {
+      "id": "unknown-bucket-low-rate",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.3,
+          "confidence_bucket": "weird"
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan did not flag this column as a known PII type. redact is the safe default; replace with passthrough if this column is intentionally kept verbatim, or pick a more appropriate strategy if your data carries PII the detectors missed."
+      }
+    },
+    {
+      "id": "confident-with-integer-unique",
+      "inferred_type": "integer",
+      "is_likely_unique": true,
+      "matches": [
+        {
+          "detector_id": "npi",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected NPI numbers. Hash preserves joinability. If you need real-shape output, use provider: synthetic_npi."
+      }
+    },
+    {
+      "id": "unconfident-with-integer-unique",
+      "inferred_type": "integer",
+      "is_likely_unique": true,
+      "matches": [
+        {
+          "detector_id": "npi",
+          "match_rate": 0.1,
+          "confidence_bucket": "low"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "No PII detector fired, but this column is a likely-unique integer (possible FK key). Hash preserves joinability; replace with passthrough if the column should be kept verbatim, or with faker if a real-shape replacement is preferred."
+      }
+    },
+    {
+      "id": "ambiguous-gap-0.05",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "us_date",
+          "match_rate": 0.85,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (us_phone, us_date). The scaffolder picked faker but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "ambiguous-gap-0.09",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "us_date",
+          "match_rate": 0.81,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (us_phone, us_date). The scaffolder picked faker but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "clear-gap-0.10",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "us_date",
+          "match_rate": 0.8,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (us_phone, us_date). The scaffolder picked faker but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "clear-gap-0.15",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "us_date",
+          "match_rate": 0.75,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected US phone numbers. Faker replaces with synthetic phone."
+      }
+    },
+    {
+      "id": "clear-gap-0.19",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "us_date",
+          "match_rate": 0.71,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected US phone numbers. Faker replaces with synthetic phone."
+      }
+    },
+    {
+      "id": "ambiguous-equal-rates",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "person_name",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_email",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (email, person_name). The scaffolder picked faker but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "ambiguous-three",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "ssn",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "npi",
+          "match_rate": 0.88,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "mrn",
+          "match_rate": 0.86,
+          "confidence_bucket": "medium"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (ssn, npi, mrn). The scaffolder picked hash but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "ambiguous-four-names-three",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "ssn",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "npi",
+          "match_rate": 0.89,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "mrn",
+          "match_rate": 0.88,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "pan",
+          "match_rate": 0.87,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "hash",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (ssn, npi, mrn). The scaffolder picked hash but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "ambiguous-unsorted-input",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "us_date",
+          "match_rate": 0.85,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "us_phone",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_phone",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (us_phone, us_date). The scaffolder picked faker but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "ambiguous-top-unknown",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "custom__x",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "email",
+          "match_rate": 0.88,
+          "confidence_bucket": "high"
+        }
+      ],
+      "expected": {
+        "strategy": "redact",
+        "provider": null,
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (custom__x, email). The scaffolder picked redact but the column may need a different strategy; review before running."
+      }
+    },
+    {
+      "id": "unconfident-second-ignored",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "ssn",
+          "match_rate": 0.3,
+          "confidence_bucket": "low"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_email",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected email addresses. Faker replaces with synthetic emails."
+      }
+    },
+    {
+      "id": "confident-by-rate-only-second",
+      "inferred_type": "string",
+      "is_likely_unique": false,
+      "matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 0.9,
+          "confidence_bucket": "high"
+        },
+        {
+          "detector_id": "ssn",
+          "match_rate": 0.85,
+          "confidence_bucket": "low"
+        }
+      ],
+      "expected": {
+        "strategy": "faker",
+        "provider": "person_email",
+        "provider_config": {},
+        "deterministic": false,
+        "review": "The scan detected multiple candidate signals (email, ssn). The scaffolder picked faker but the column may need a different strategy; review before running."
+      }
+    }
+  ]
+}
