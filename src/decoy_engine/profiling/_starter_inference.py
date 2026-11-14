@@ -5,7 +5,8 @@ S3-engine.1). The per-detector choices live in `recommendations.DETECTOR_DESCRIP
 module holds only the decision order and the copy for the two cases no detector decides. It
 keeps no detector table (`tests/unit/profiling/test_starter_inference.py` fails one).
 
-The port keeps two CLI readings as they were, so the starter YAML does not move when the CLI
+The review copy was renamed in the port (the retired product word became "The scan"); the
+decisions are ported exactly. The port keeps two CLI readings as they were, so the starter YAML does not move when the CLI
 hands this over. The confident-match filter reads `confidence_bucket` with a `None` default;
 the engine's `DetectorMatch` names that field `confidence`, so on a real match only the 0.5
 match-rate rule decides. The ambiguity window is 0.1, strict. A fix to either is its own
@@ -15,7 +16,7 @@ change with a CHANGELOG line, and the parity fixture moves with it.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
@@ -49,6 +50,11 @@ _INTEGER_KEY_REVIEW = (
 )
 
 
+def _empty_mapping() -> Mapping[str, Any]:
+    # A dataclass default must be hashable on 3.11+; a mappingproxy is not, so build one per instance.
+    return MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class StarterDecision:
     """The choice for one column: strategy, provider, starter settings and the review copy.
@@ -59,7 +65,7 @@ class StarterDecision:
 
     strategy: str
     provider: str | None = None
-    provider_config: Mapping[str, Any] = MappingProxyType({})
+    provider_config: Mapping[str, Any] = field(default_factory=_empty_mapping)
     review: str = ""
     deterministic: bool = False
 

@@ -69,6 +69,7 @@ def test_the_fixture_covers_each_branch_the_port_must_keep() -> None:
 def test_default_view_equals_its_base_fixture() -> None:
     got = {k: [v[0], v[1]] for k, v in DEFAULT_STRATEGY_BY_DETECTOR.items()}
     assert got == BASE_DEFAULTS
+    assert list(got) == list(BASE_DEFAULTS)
 
 
 def test_default_view_is_derived_from_the_descriptors() -> None:

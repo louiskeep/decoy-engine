@@ -28,7 +28,9 @@ class ScanBaselineConfig(BaseModel):
     @model_serializer(mode="wrap")
     def _dump_schema_key(self, handler: Any) -> dict[str, Any]:
         data: dict[str, Any] = handler(self)
-        data["schema"] = data.pop("schema_tag")
+        # by_alias=True already names the key `schema`; a plain dump names it `schema_tag`.
+        if "schema_tag" in data:
+            data["schema"] = data.pop("schema_tag")
         return data
 
     @classmethod

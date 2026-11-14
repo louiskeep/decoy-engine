@@ -27,7 +27,7 @@ Cross-references:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
@@ -35,6 +35,11 @@ from typing import Any
 # (faker.first_name / fpe / date_shift / redact / ...). The platform
 # routes these through the mask registry without further translation.
 StrategyDefault = tuple[str, dict[str, Any]]
+
+
+def _empty_mapping() -> Mapping[str, Any]:
+    # A dataclass default must be hashable on 3.11+; a mappingproxy is not, so build one per instance.
+    return MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -48,7 +53,7 @@ class StarterChoice:
 
     strategy: str
     provider: str | None = None
-    provider_config: Mapping[str, Any] = MappingProxyType({})
+    provider_config: Mapping[str, Any] = field(default_factory=_empty_mapping)
     review: str = ""
 
 

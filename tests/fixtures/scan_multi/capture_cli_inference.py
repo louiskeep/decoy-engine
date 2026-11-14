@@ -11,9 +11,9 @@ records 'The scan'. The word itself is not written in any tracked file.
 a scratch folder is enough). The script runs the CLI's own ``_infer_strategy_for_column`` and
 ``_emit_column_yaml`` on each case below and records what the CLI decided, so the engine port
 is judged against the CLI and not against a hand copy of it. Review text is recorded with one
-word replaced (see `--replace-word`). It also records the engine's
+word replaced (see `--replace-word`). With ``--write-default-base`` it also records the engine's
 ``DEFAULT_STRATEGY_BY_DETECTOR`` as it stood before the descriptor registry (run it against
-the pre-registry engine to refresh that file; the checked-in copy came from engine main
+the pre-registry engine to refresh that file; the flag is refused on the current engine; the checked-in copy came from engine main
 07763ff5).
 
 The cases carry no data values: a detector id, a match rate, a confidence bucket and two
@@ -141,7 +141,11 @@ def _decision(inference, emit, rewrite) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cli-src", required=True, type=Path)
-    parser.add_argument("--no-default-base", action="store_true")
+    parser.add_argument(
+        "--write-default-base",
+        action="store_true",
+        help="also rewrite default_strategy_by_detector_base.json (pre-registry engine only)",
+    )
     parser.add_argument("--replace-word", default=os.environ.get("CAPTURE_REPLACE_WORD"))
     args = parser.parse_args()
     if not args.replace_word or "=" not in args.replace_word:
@@ -165,8 +169,15 @@ def main() -> int:
         "cases": recorded,
     }
     (HERE / "cli_inference_8fba6af.json").write_text(json.dumps(document, indent=2) + "\n")
-    if not args.no_default_base:
-        from decoy_engine.profiling.recommendations import DEFAULT_STRATEGY_BY_DETECTOR
+    if args.write_default_base:
+        from decoy_engine.profiling import recommendations
+
+        if hasattr(recommendations, "DETECTOR_DESCRIPTORS"):
+            parser.error(
+                "--write-default-base needs the pre-registry engine; the importable one has "
+                "DETECTOR_DESCRIPTORS, so its table is derived and would overwrite the base"
+            )
+        DEFAULT_STRATEGY_BY_DETECTOR = recommendations.DEFAULT_STRATEGY_BY_DETECTOR
 
         base = {k: [v[0], v[1]] for k, v in DEFAULT_STRATEGY_BY_DETECTOR.items()}
         (HERE / "default_strategy_by_detector_base.json").write_text(

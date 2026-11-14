@@ -619,16 +619,17 @@ _NON_SEMANTIC_GLOBAL_SETTINGS = frozenset(
         "freetext_advisory_min_distinctness",
     }
 )
-_UNHASHED_BLOCKS = ("sources", "targets", "pre_scan", "name")
+_UNHASHED_BLOCKS = ("sources", "targets", "pre_scan", "name", "scan_baseline")
 
 
 def _hash_config(config: dict[str, Any]) -> str:
     """SHA-256 over a canonical JSON serialization of the masking-semantics
     portion of the config (M1 from S1 end-of-sprint Dennis review).
 
-    The `sources`, `targets`, `pre_scan` and `name` keys are explicitly excluded: `sources`,
+    The `sources`, `targets`, `pre_scan`, `name` and `scan_baseline` keys are explicitly excluded: `sources`,
     `targets` and `name` are data binding (where bytes come from, where they go, what the pipeline
-    is called) and `pre_scan` only suggests, so none is masking semantics. A user swapping a local file source for an S3 source does not change which
+    is called), `pre_scan` only suggests and `scan_baseline` is a pointer no run reads, so none is
+    masking semantics. A user swapping a local file source for an S3 source does not change which
     columns mask how; the pipeline_config_hash must stay byte-identical across that swap so audit
     + reproducibility tooling can match the two runs as semantically equivalent. `post_scan`
     stays in: under `ner_findings: fail` its `dismissed` list decides what blocks.

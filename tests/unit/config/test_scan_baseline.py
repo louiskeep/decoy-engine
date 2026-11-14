@@ -67,6 +67,18 @@ def test_scan_baseline_round_trips() -> None:
     assert again.model_dump() == cfg.model_dump()
 
 
+def test_scan_baseline_dumps_write_schema_in_every_form() -> None:
+    cfg = PipelineConfig.model_validate(
+        _raw(scan_baseline={"path": "x.json", "schema": SCAN_SET_SCHEMA})
+    )
+    want = {"path": "x.json", "schema": "scan-set/v1"}
+    assert cfg.model_dump()["scan_baseline"] == want
+    assert cfg.model_dump(by_alias=True)["scan_baseline"] == want
+    assert cfg.model_dump(mode="json", by_alias=True)["scan_baseline"] == want
+    assert json.loads(cfg.model_dump_json(by_alias=True))["scan_baseline"] == want
+    assert json.loads(cfg.model_dump_json())["scan_baseline"] == want
+
+
 def test_scan_baseline_absent_leaves_the_dump_unchanged() -> None:
     cfg = PipelineConfig.model_validate(_raw())
     assert cfg.scan_baseline is None

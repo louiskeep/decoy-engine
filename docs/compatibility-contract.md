@@ -132,7 +132,9 @@ output for it). Loader tables with a `sources:` entry are unchanged.
 
 **Pre-GA addition (scan baseline and namespace placeholder, SCAN-MULTI S3-engine.1, 2026-11-14).** `PipelineConfig`
 gains the optional `scan_baseline: {path: str, schema: "scan-set/v1"}` block, default absent and omitted from
-`model_dump()` while unset, so a config without it hashes as before. `ColumnConfig.namespace` and
+`model_dump()` while unset, so a config without it hashes as before. The block is a pointer no run reads, so it
+is left out of `pipeline_config_hash` (with `sources`, `targets`, `pre_scan` and `name`): two configs that differ
+only in `scan_baseline` hash the same. `ColumnConfig.namespace` and
 `RelationshipConfig.namespace` refuse any value starting `decoy-set-namespace-` with `config/namespace_placeholder_unset`
 (new, `since` unreleased), naming the field location and never the value. No shipped config used the prefix. No
 artifact tag changes. `DEFAULT_STRATEGY_BY_DETECTOR` is now derived from `profiling.DETECTOR_DESCRIPTORS` with its
