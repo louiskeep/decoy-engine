@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pytest
 
 from decoy_engine import reasons
@@ -23,6 +24,7 @@ from decoy_engine.verification.postmask import PostScanBlockedError
 from tests.security.test_f29_remediation import _decide
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _subset_run_support as subset_sup
+from tests.unit.execution._auto_chunk_support import NEEDS_COMPANION
 from tests.unit.execution.post_scan.test_wiring import _blocked, _config, _run
 from tests.unit.execution.run_stream import _support as rs
 from tests.unit.execution.test_auto_chunk_routing import _single_column_job
@@ -160,9 +162,7 @@ def test_a_staged_run_is_held_back_when_the_column_suite_cannot_run(
     monkeypatch.setattr(_post_scan, "run_post_mask_tables", boom, raising=False)
     out = tmp_path / "published"
     with pytest.raises(PostScanBlockedError) as caught:
-        _run(
-            _config(tmp_path, integrity=True), "sequential", sink=ParquetTransactionalSink(out)
-        )
+        _run(_config(tmp_path, integrity=True), "sequential", sink=ParquetTransactionalSink(out))
     assert caught.value.reason == "post_scan.check_error"
     assert "CANARY-7f3a" not in str(caught.value)
     assert not out.exists()
@@ -197,6 +197,7 @@ def test_stream_mode_still_refuses_a_model_ask(tmp_path: Path, ask: dict[str, An
 # ----- the unified slice ------------------------------------------------------------------------
 
 
+@NEEDS_COMPANION
 def test_the_unified_slice_takes_regex_integrity_and_runs_the_gate_on_its_return(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -217,6 +218,7 @@ def test_the_unified_slice_takes_regex_integrity_and_runs_the_gate_on_its_return
     assert "keys" in result.quality_metrics["post_scan_integrity"]
 
 
+@NEEDS_COMPANION
 def test_a_blocking_finding_stops_a_unified_slice_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -236,3 +238,66 @@ def test_a_blocking_finding_stops_a_unified_slice_run(
     exc = _blocked(lambda: run_pipeline(cfg, sources=sources, engine_version="ps12-unified"))
     assert exc.reason == "post_scan.finding_blocked"
     assert taken == [True]
+
+
+class _FakeCastRun:
+    def __init__(self, order: list[str]) -> None:
+        self._order = order
+
+    def post_mask(self, outputs: Any, errors: Any) -> tuple[Any, Any, Any]:
+        self._order.append("post_mask")
+        return outputs, None, None
+
+    def finish(self) -> tuple[dict[str, Any], Any]:
+        self._order.append("finish")
+        return {}, None
+
+
+@pytest.mark.parametrize("with_cast", [True, False], ids=["cast_run", "no_cast_run"])
+def test_the_unified_slice_return_runs_the_gate_between_render_and_seal(
+    monkeypatch: pytest.MonkeyPatch, with_cast: bool
+) -> None:
+    from decoy_engine.execution import ExecutionResult
+    from decoy_engine.execution._pipeline_full_frame import _render_and_seal
+
+    order: list[str] = []
+    outputs = {"t": pa.table({"c": ["a"]})}
+    gate = _post_scan.PostScanGate({"post_scan": {"integrity": True}})
+    monkeypatch.setattr(gate, "run_resident", lambda *a, **k: order.append("gate"), raising=False)
+    result = ExecutionResult(outputs=outputs, warnings=())
+    token = _post_scan._ACTIVE.set(gate)
+    try:
+        _render_and_seal(
+            _FakeCastRun(order) if with_cast else None,
+            result,
+            sources={"t": outputs["t"]},
+            table_kinds={"t": "mask"},
+        )
+    finally:
+        _post_scan._ACTIVE.reset(token)
+    assert order == (["post_mask", "gate", "finish"] if with_cast else ["gate"])
+
+
+def test_a_blocking_gate_leaves_no_seal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from decoy_engine.execution import ExecutionResult
+    from decoy_engine.execution._pipeline_full_frame import _render_and_seal
+
+    order: list[str] = []
+    gate = _post_scan.PostScanGate({"post_scan": {"integrity": True}})
+
+    def block(*args: Any, **kwargs: Any) -> None:
+        raise PostScanBlockedError({"schema_version": "post-scan-integrity/v2"})
+
+    monkeypatch.setattr(gate, "run_resident", block, raising=False)
+    token = _post_scan._ACTIVE.set(gate)
+    try:
+        with pytest.raises(PostScanBlockedError):
+            _render_and_seal(
+                _FakeCastRun(order),
+                ExecutionResult(outputs={}, warnings=()),
+                sources={},
+                table_kinds={},
+            )
+    finally:
+        _post_scan._ACTIVE.reset(token)
+    assert order == ["post_mask"]

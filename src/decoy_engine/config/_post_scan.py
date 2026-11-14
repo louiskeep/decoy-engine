@@ -184,9 +184,10 @@ def post_scan_output_readable(sink_kind: str) -> bool:
 def post_scan_resident_reason(config: Mapping[str, Any]) -> ReasonCode | None:
     """Why a job must stay on the resident route for the post-scan gate, or `None`.
 
-    `post_scan.integrity` needs the whole output (the column suite is not streamed yet). Declared
-    keys never move a route: a sink the gate cannot read keeps the route it takes on main and the
-    gate is deferred for it, because a resident run never writes a sink (plan, Foreign sinks)."""
-    if post_scan_integrity_requested(config):
-        return reasons.route.POST_SCAN_INTEGRITY_REQUESTED
+    Only a model check needs resident values (the passes read `TableBatches.resident`); regex
+    integrity and declared keys are judged from batches and staged files. A sink the gate cannot
+    read keeps the route it takes on main and the gate is deferred for it, because a resident run
+    never writes a sink (plan, Foreign sinks)."""
+    if post_scan_model_setting(config) is not None:
+        return reasons.route.POST_SCAN_MODELS_RESIDENT
     return None

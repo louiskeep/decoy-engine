@@ -23,9 +23,9 @@ from decoy_engine.internal.memory_limit import require_megabytes
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _subset_run_support as subset_sup
 from tests.unit.execution.post_scan.test_wiring import _config, _mixed_run, _run
-from tests.unit.execution.test_lazy_path_route_admission import _parent_child_tables
 from tests.unit.execution.run_stream import _support as rs
 from tests.unit.execution.test_auto_chunk_routing import _single_column_job
+from tests.unit.execution.test_lazy_path_route_admission import _parent_child_tables
 
 Cell = Callable[[Path], tuple[Any, str]]
 V = "ps12-cells"
@@ -81,6 +81,8 @@ def _mixed(tmp: Path) -> tuple[Any, str]:
 
 
 def _unified(tmp: Path) -> tuple[Any, str]:
+    if not support.COMPANION_PRESENT:
+        pytest.skip("decoy-engine-native companion not installed")
     cfg, sources = _single_column_job(tmp, "hash")
     cfg["post_scan"] = {"integrity": True}
     result = run_pipeline_with(cfg, sources, None)

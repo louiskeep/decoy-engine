@@ -3,9 +3,9 @@
 The sequential, out-of-core and chunked entries mask without running the post-scan, so a config
 that asks for a model post-scan detector or for `ner_findings: fail` would publish output nobody
 checked. Each of those entries calls `refuse_unchecked_route` as its first statement, before any
-source is read. Regex-only `integrity: true` keeps today's behavior on those routes (the skip is
-a separate, recorded follow-up). `run_pipeline`'s resident routes run the post-scan, so they do
-not call the guard.
+source is read. `run_pipeline` keeps a model ask on its resident routes, which run the post-scan,
+and judges regex-only `integrity: true` from the staged output at commit, so a model ask only
+reaches these entries when a caller calls them directly.
 
 Pattern: a fail-closed admission check at the route entry with a registered, value-free refusal,
 the behavior `DeclaredCastRouteError` (`execution/_errors.py`) already has for declared casting.

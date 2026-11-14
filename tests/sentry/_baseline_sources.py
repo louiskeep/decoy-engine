@@ -344,6 +344,15 @@ SOURCES: tuple[Source, ...] = (
             ]
         ),
     ),
+    Source(
+        "post-scan-route-coverage",
+        "tests/sentry/baselines/post-scan-route-coverage.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-route-coverage.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
 )
 
 # Committed data a sentry reads that is a pinned contract, not an allowlist that could grow.

@@ -328,11 +328,21 @@ def test_cheap_admission_declines_quarantine_configured(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source) is None
 
 
-def test_cheap_admission_declines_profile_columns(tmp_path: Path) -> None:
+def test_cheap_admission_admits_regex_integrity(tmp_path: Path) -> None:
+    # Regex-only integrity is judged by the gate on the slice's return, so it no longer declines.
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     config = dict(config)
     config["post_scan"] = {"integrity": True}
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is not None
+
+
+def test_cheap_admission_declines_a_model_post_scan_ask(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    config = dict(config)
+    config["post_scan"] = {"integrity": True, "detectors": ["regex", "ner"]}
     profile, _ = _profile_and_plan(config, source)
     assert _cheap_ok(config, profile, source) is None
 

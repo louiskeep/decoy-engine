@@ -146,8 +146,8 @@ FAIL = {"severity": "fail"}
 
 @pytest.mark.parametrize(
     ("mode", "integrity"),
-    [("full_frame", False), ("auto", True)],
-    ids=["keys-full_frame", "integrity-auto"],
+    [("full_frame", False), ("full_frame", True)],
+    ids=["keys-full_frame", "integrity-full_frame"],
 )
 def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
     tmp_path: Path, mode: str, integrity: bool
@@ -157,6 +157,17 @@ def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
     exc = _blocked(lambda: _run(config, mode, sink=sink))
     assert exc.reason == DUPLICATES
     assert sink.calls == []
+
+
+def test_at16_integrity_with_a_sink_the_gate_cannot_read_keeps_its_route_deferred(
+    tmp_path: Path,
+) -> None:
+    """Regex integrity no longer forces the resident route, so a foreign sink is written and the
+    gate is deferred for it (plan, Foreign sinks), as for declared keys."""
+    sink = RecordingSink()
+    result, routes = _run(_config(tmp_path, broken=True, integrity=True), "auto", sink=sink)
+    assert routes != ["full_frame"] and ("commit",) in sink.calls
+    assert "post_scan_gate_deferred" in result.quality_metrics
 
 
 @pytest.mark.parametrize("route", ["sequential", "out_of_core"])
