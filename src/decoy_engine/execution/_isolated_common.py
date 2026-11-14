@@ -29,7 +29,7 @@ import resource
 import signal
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import duckdb
 
@@ -46,6 +46,7 @@ __all__ = [
     "ISOLATED_WORKER_ENV",
     "RESULT_FILENAME",
     "RLIMIT_KINDS",
+    "ISOLATED_OUTCOMES",
     "IsolatedRunOutcome",
     "IsolatedRunResult",
     "abnormal_exit_text",
@@ -84,6 +85,8 @@ ISOLATED_WORKER_ENV = "DECOY_INSIDE_ISOLATED_WORKER"
 RESULT_FILENAME = "result.json"
 
 IsolatedRunOutcome = Literal["completed", "oom_killed", "crashed"]
+# The envelope outcomes a driver accepts; anything else (a bool, a new token) is a dead child.
+ISOLATED_OUTCOMES: tuple[str, ...] = get_args(IsolatedRunOutcome)
 
 # Same two rlimit knobs fk_memory_probe exposes (`_RLIMITS`): 'data' (default)
 # caps brk + anonymous mmaps on Linux >= 4.7 -- the allocations that actually
