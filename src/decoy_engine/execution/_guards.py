@@ -92,45 +92,37 @@ def refuse_duplicate_run_sources(
         refuse_duplicate_field_names(name, build_declared_source(name, descriptor).schema().names)
 
 
-def _mask_table_names(config: Mapping[str, Any]) -> list[str]:
-    """Config `tables:` entries that declare at least one column strategy, in declared order."""
-    out: list[str] = []
-    for entry in config.get("tables") or []:
-        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
-            continue
-        if any(isinstance(c, dict) and c.get("strategy") for c in entry.get("columns") or []):
-            out.append(entry["name"])
-    return out
-
-
 def refuse_undeclared_loader_tables(
+    table_kinds: Mapping[str, str],
     config: Mapping[str, Any],
     caller_sources: Mapping[str, Any],
     loader_schemas: Mapping[str, Any] | None,
 ) -> None:
-    """Refuse a masked table the run could only reach through the loader and never declared.
+    """Refuse a mask table the run could only reach through the loader and never declared.
 
     Profiling reads descriptors and caller tables, so such a table profiles as nothing, the plan
-    holds no work for it and the adapter would echo its rows. Metadata only, before any read.
+    holds no work for it and the adapter would echo its rows. Metadata only, before the loader runs.
     """
     declared = config.get("sources") or {}
     via_loader = loader_schemas or {}
-    for name in _mask_table_names(config):
+    for name, kind in table_kinds.items():
+        if kind != "mask":
+            continue
         if name in via_loader and name not in declared and name not in caller_sources:
             raise loader_table_undeclared(name)
 
 
 def refuse_dropped_declared_tables(
-    config: Mapping[str, Any], plan: Plan, supplied: Iterable[str]
+    table_kinds: Mapping[str, str], plan: Plan, supplied: Iterable[str]
 ) -> None:
-    """Construction guard: every supplied table that declares a mask strategy has a plan entry.
+    """Construction guard: every supplied mask table has a plan entry.
 
     A declared table nobody supplies is not an input of this run and stays out of scope.
     """
     planned = {name for name, _ in plan.seed_envelope.per_table}
     present = set(supplied)
-    for name in _mask_table_names(config):
-        if name in present and name not in planned:
+    for name, kind in table_kinds.items():
+        if kind == "mask" and name in present and name not in planned:
             raise declared_table_dropped(name)
 
 

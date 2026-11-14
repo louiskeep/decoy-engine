@@ -347,7 +347,9 @@ def build_run_context(
     # Duplicate field names are refused after the config-only admission and before profiling,
     # routing and every pandas conversion: each looks columns up by name and would fail uncoded.
     _guards.refuse_duplicate_run_sources(config, caller_sources)
-    _guards.refuse_undeclared_loader_tables(config, caller_sources, source_loader_schemas)
+    _guards.refuse_undeclared_loader_tables(
+        table_kinds, config, caller_sources, source_loader_schemas
+    )
     source_loader = _guards.refusing_source_loader(source_loader)
 
     supplied = caller_sources  # profiled whole: a subset run compiles from the full sources
@@ -367,7 +369,7 @@ def build_run_context(
     )
 
     _guards.refuse_dropped_declared_tables(
-        config,
+        table_kinds,
         plan,
         {*caller_sources, *(source_loader_schemas or {}), *(config.get("sources") or {})},
     )

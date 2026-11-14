@@ -13,6 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine.config import classify_table_kinds
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution import _guards, run_pipeline
 from decoy_engine.plan import compile_plan
@@ -84,10 +85,11 @@ def test_dropped_declared_table_is_refused_after_the_plan() -> None:
     profile = profile_source(_config(names=("a",)), seed=1, supplied_sources={"a": _table()})
     plan = compile_plan(_config(names=("a",)), profile, decoy_engine_version="0.1.0")
     with pytest.raises(ConfigError) as caught:
-        _guards.refuse_dropped_declared_tables(cfg, plan, {"a", "b"})
+        _guards.refuse_dropped_declared_tables(classify_table_kinds(cfg), plan, {"a", "b"})
     record = reason_from_exception(caught.value)
     assert (record.namespace, record.code) == ("config", "declared_table_dropped")
     assert _EMAIL not in str(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
 
 
 def test_declared_table_nobody_supplies_keeps_running() -> None:
@@ -133,3 +135,4 @@ def test_run_pipeline_refuses_a_dropped_table_when_the_first_gate_is_bypassed(
     assert (record.namespace, record.code) == ("config", "declared_table_dropped")
     assert loads == []
     assert _EMAIL not in str(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None

@@ -124,8 +124,8 @@ unchanged here; CONFIG-EXPLICIT E2d gates them (below).
 
 **Pre-GA correction (declared table never dropped, LOADER-SRC, 2026-11-14).** A table that masks through a
 `source_loader`, has strategies under `tables:` and no `sources:` entry or caller table is refused by `run_pipeline`
-before any read, as `ConfigError` with reason `config/loader_table_undeclared` (new). After the plan is built,
-`run_pipeline` also refuses any supplied table that declares a mask strategy but has no plan entry, as
+before the loader runs or any data row is read, as `ConfigError` with reason `config/loader_table_undeclared` (new). After the plan is built,
+`run_pipeline` also refuses any supplied mask table that has no plan entry, as
 `ConfigError` with reason `config/declared_table_dropped` (new). Both texts name the table, never a value. Before
 this, such a run returned the loader's rows unmasked. A declared table that nothing supplies is unchanged (no
 output for it). Loader tables with a `sources:` entry are unchanged.
