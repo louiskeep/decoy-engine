@@ -9,6 +9,116 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-14
+
+### Breaking for consumers
+
+- A generate `formula` now reads a plain `sequence`, an int or float `faker` column and a numeric column with nulls as numbers. Text use (`'ID-' + id`, `id.zfill(5)`, `id[-4:]`, `id == '1'`) is refused at compile; write `str(id)`, or compare with a number. A formula that raises fails the run with `generate_formula_evaluation_failed` instead of writing nulls. A null number reference gives a null result. A column a formula reads keeps its numeric Parquet type unless another reader needs it as text. `x if id else y` is now false for `id` 0.
+- a column that leaves out a setting its strategy needs (a namespace for `hash`, `fpe`, `date_shift`, `bucket_perturb`, `categorical`, `tokenize` and `shuffle` with `deterministic: true`, or `provider_config.strategy` and `target` for `nested`) is now refused at validation and compile; add the setting.
+- `derived` and `formula` now treat `Decimal('NaN')`, numpy NaN scalars, `pd.NaT`, `numpy.datetime64('NaT')` and `pd.NA` as missing, so a `derived` column that references a null parquet timestamp writes a null cell where it used to write a value such as `0`.
+- a vault writer is refused with a sink or a chunked entry, a `TokenVaultWriter` needs `derivation_scope`, tokenize output changes, and an existing vault file is refused instead of overwritten; see the entry.
+
+### Changed (post-scan gate wired into run_pipeline, POSTSCAN-STREAM PS-8, 2026-11-13)
+
+`run_pipeline` now runs the post-scan gate before a run's output becomes visible. When relationships are declared, a primary key that gains duplicates or nulls, or a foreign key that gains orphans the inputs did not have, withholds the run with `PostScanBlockedError`. With `post_scan.integrity: true`, a failing column finding also withholds the run; before this it was only reported. The report lands in `quality_metrics["post_scan_integrity"]` on every run that ran the gate.
+
+The gate blocks wherever it can read the output back: the resident full-frame route (with or without a sink, with lazy inputs re-read in batches), and the sequential, out-of-core and mixed routes when they return resident outputs. Where it cannot yet, the run is checked as before (the column suite, report only, and only under `post_scan.integrity`) and the result carries `quality_metrics["post_scan_gate_deferred"]`, the reason `post_scan/gate_deferred_route`. That covers a bounded route that writes its output to a sink as it goes, inputs supplied by a `source_loader`, and declared casting on a bounded route. No run that succeeded before is refused for this.
+
+A relationship whose parent table is generated treats the orphans its input child rows already carried as inherited, so `preserve` and `warn` runs on generated parents keep passing. Orphans that point at a parent row quarantine removed no longer withhold the run; they are reported as the warning `post_scan/foreign_key_orphans_quarantined`, and any other new orphan still blocks. A null-typed key column (zero rows, or all null) compares with every key type. Parent and child key ends match by the FK join's own key identity: when the ends have one type, or differ only in integer width, string encoding, or the unit (or zone) of zone-aware timestamps and durations, the values compare by type in DuckDB; any other mix (a string against an integer, an integer against a float, a date against a timestamp, timestamp units, decimals, booleans) is mapped to the join's key token first, so the gate counts the orphans the join sees. A run that turns a comparable key into a value the join refuses blocks with `post_scan/key_type_mismatch`; a refusal the input already had is reported and does not block. The gate's key scan uses the run's memory budget share, capped at 512MB and at least 128MB, honours `out_of_core_threads`, and spills to its scratch directory. `decide_execution_route` takes `post_scan_resident` in place of `post_scan_integrity`, and `compute_post_scan_integrity` is removed. A NaN float key counts as a null key, as the join reads it. Durations, zone-aware timestamps and nanosecond times of day compare at their finest unit, so keys one nanosecond apart stay distinct. A run the gate blocks writes no quarantine file: the file waits for the verdict on both the full-frame and sequential routes.
+
+### Changed (generate formula column types, GEN-FORMULA-SEQ, 2026-11-13)
+
+A `formula` that reads a plain `sequence`, a `pyint` or `pyfloat` style faker column or a numeric categorical gets the number, so `round(a / 3)` and `a * 2` give numbers where they gave nulls or repeated text. New plan refusal `plan/generate_formula_number_used_as_text` names the reference and a fix. New run failure `runtime/generate_formula_evaluation_failed` names the table, column, row index and a fixed reason word and never a cell value; a formula with no `references` that raises now fails the same way. `numeric_plan` and the new `reader_types` share one candidate-type rule. The `derived` failure text is unchanged; its helper is renamed `failure_text`.
+
+### Added (post-scan column suite on facts, PS-6, 2026-11-13)
+
+`run_post_mask_tables` runs the post-scan report over tables held as batches: residual PII and policy validation are computed from exact per-column counts (`residual_pii_findings`, `policy_findings`), and the declared key facts come from the caller. `run_post_mask` keeps its signature and builds the same facts from its frames, so its findings do not change. Nothing in a run calls the tables entry yet.
+
+A frame whose column names are integers now gets findings (the column named as text); the old runner reported one error for the whole check. A column that cannot be compared or converted (mixed int and str, Decimal with float, list or map cells) is isolated: the other columns and tables keep their findings, and a policy-validation error names the class only.
+
+On a column that has to be compared as text, equal numbers now match across types (float 10001.0 with int 10001, Decimal("1.50") with 1.5), and an int source value against the output text "1" now counts as identical (main reported it as different). Both can only raise a finding, never hide one.
+
+### Fixed (isolated probe child hang, nightly, 2026-11-13)
+
+- Classifying a run failure no longer imports engine modules. The classifier used to import every
+  registered error family, including `quality.dp` with opendp, scikit-learn and scipy's OpenBLAS.
+  A memory-capped isolated child that had just run out of address space then spun at 100% CPU in
+  OpenBLAS's init retry loop instead of reporting the failure, so the route probe hung until its
+  timeout and the nightly `test_width_change_flips_route_at_a_fixed_budget_and_row_count` failed.
+  The same path covered `safe_error_type` while a failure is serialized, and two table entries that
+  named a re-export module instead of the defining one, so a live exception could miss its family.
+
+### Fixed (chained column-level derived columns, DERIVE-CHAIN, 2026-11-13)
+
+A `derived` column that reads another column-level `derived` column is now accepted as a created column, so a declared column the source lacks is no longer refused when it sits at the end of such a chain. A chain whose root reads a missing source column, and a cycle, are still refused.
+
+### Changed (required strategy settings, CONFIG-EXPLICIT E2b-s, 2026-11-13)
+
+`compile_plan` and `run_config_only_checks` refuse a column with a missing required strategy setting before any executor runs, with the code the executor's own guard already raised: `fpe` with no namespace now fails `decoy validate` instead of failing at run. Nine plan-namespace reasons, all pending release, carry the same code text as their runtime counterparts: `plan/hash_requires_namespace`, `plan/fpe_requires_namespace`, `plan/date_shift_requires_namespace`, `plan/bucket_perturb_requires_namespace`, `plan/categorical_requires_namespace`, `plan/tokenize_requires_namespace`, `plan/shuffle_requires_namespace`, `plan/nested_strategy_unset` and `plan/nested_target_unset`. `code_set` in `gen` mode keeps its existing plan code. Existing specific checks keep precedence and the executor guards stay.
+
+The requirements live in `decoy_engine.plan.checks` (`StrategyRequirement`, `REQUIREMENTS_BY_STRATEGY`, `requirements_for`) and each `StrategyInfo` from `strategy_catalog()` gains a `requirements` tuple that projects the same descriptors.
+
+`run_config_only_checks` (and so `decoy validate`) now also raises `namespace_ambiguity` for a `coherent_with` group whose members declare different explicit namespaces, the same code and path `compile_plan` already raised. A blank or non-string setting counts as missing.
+
+### Fixed (a memory error behind an interrupt is classified out of memory, MEMCAP-OOM, 2026-11-13)
+
+An isolated run whose child hits its memory cap and surfaces the failure as a `KeyboardInterrupt` chained from a `MemoryError` (an Arrow cancellation can do this) is now classified `oom_killed`, so the governor can reroute it, instead of `crashed`. Only exception types along the `__cause__`/`__context__` chain are read, never their text. A bare interrupt stays `crashed`. A self-reported crash sampled near its cap now carries `suspected_memory_pressure`.
+
+### Fixed (chunked when guard accepts large_string, DUP-DEFECTS E3, 2026-11-13)
+
+A seeded categorical or non-deterministic faker column under `when:` now runs with `--chunked` on a parquet source whose text columns are `large_string`. The per-chunk guard refused them with `chunked_categorical_nondeterministic_when_not_supported` and a widening reason that does not apply to `large_string`. A new private leaf, `decoy_engine._arrow_types`, holds the `is_text` and `is_text_or_null` predicates.
+
+### Fixed (non-UTF-8 statistical snapshot, DUP-DEFECTS E1, 2026-11-13)
+
+A statistical `snapshot_file` holding a byte that is not valid UTF-8 is now refused with `statistical_snapshot_unreadable`, the same code a truncated snapshot gets. `decoy validate` no longer reports an internal error and `decoy run` exits 1 instead of 3. The message names the field and the path and carries no byte of the file. New `decoy_engine.generation.statistical.parse_snapshot_json` is the one parse step for snapshot bytes.
+
+### Fixed (one missing-cell rule for derived and formula, DUP-DEFECTS E2, 2026-11-13)
+
+`derived` and `formula` now treat `Decimal('NaN')`, numpy NaN scalars, `pd.NaT`, `numpy.datetime64('NaT')` and `pd.NA` as missing, like `None` and float NaN, and like the masking kernels. A `derived` column with `explicit_null` (the default) that references a null parquet timestamp now writes a null cell, where it used to run the expression with `NaT` and write a plausible value such as `0`. With `sentinel` or `default` the null date is replaced by `""` or `0` first, so an expression that compares it with a date can now fail that row. `formula` substitutes `""` for such cells and counts them. The strings `"NaT"` and `""` stay values. Rows without such a reference are unchanged.
+
+### Added (resume fingerprint and reasons, F23-E1, 2026-11-13)
+
+Thirteen reasons in the `decoy` namespace, all pending release: `decoy/resume_run_dir_invalid`, `decoy/resume_layout_unsupported`, `decoy/resume_route_unsupported`, `decoy/resume_vault_unsupported`, `decoy/resume_platform_unsupported`, `decoy/resume_no_checkpoint`, `decoy/resume_store_invalid`, `decoy/resume_superseded`, `decoy/resume_fingerprint_changed` and `decoy/resume_source_changed` (usage failures), `decoy/resume_in_progress` (failure, retry the operation), `decoy/resume_checkpoint_invalid` (decision) and `decoy/resume_store_not_removed` (warning).
+
+New `decoy_engine.delivery.resume` sub-package with `RunFingerprint`, `build_fingerprint` and `binding_digest`: the value-free key a resume store is tied to (config hash, injected component versions, an HMAC key check, chunk size) and the per-table hash of a source and target spec. Nothing in the engine calls them yet.
+
+### Changed (vault crypto core, B-6, 2026-11-12)
+
+- HKDF-SHA256 (`determinism/_hkdf.py`) delegates to PyCA `cryptography` (`HKDF`, `HKDFExpand`,
+  and `HKDF.extract` for the extract step) instead of a hand-written loop. Every derived key is byte-identical (RFC 5869 A.1 to
+  A.3 vectors and a corpus captured from the stdlib implementation). The empty-salt refusal holds
+  on both `hkdf_extract` and the one-shot `hkdf_sha256`.
+- Breaking, pre-GA, hard cut: `tokenize` derives each token under a per-vault subkey,
+  `derive(mask_key, namespace, b"tokenize-key/v1" || len(scope) || scope)`, where `scope` is the
+  new required `TokenVaultWriter.derivation_scope` (16 to 64 non-secret bytes the vault owner
+  mints once). The tokenize output changes: two vaults with the same key, namespace and plaintext
+  mint different tokens, and a `hash` output (any `truncate`) is no longer a token payload. A
+  writer without a scope (a vault from before this change) is refused with
+  `runtime/token_vault_derivation_unsupported`, a malformed scope with
+  `runtime/tokenize_vault_scope_required`. Both are raised before any source is read, with the
+  registered summary as their only text. There is no dual derivation and no migration: tokens
+  from an earlier vault cannot be reproduced.
+- Breaking, pre-GA: boundary rule B0. A file-vault `vault_writer` is refused with
+  `runtime/vault_requires_resident_output` wherever the engine cannot hold every output row until
+  the vault is published: `run_pipeline` with both a `sink` and a `vault_writer`,
+  `run_mask_chunked` and `run_mask_pipeline_chunked` with any `vault_writer`, and
+  `run_fk_out_of_core` with both. With a sink the engine commits output inside the run, so the
+  vault could only follow it. The refusal runs before any source or chunk is read.
+  `run_pipeline` without a sink, including its auto-chunk lane, is unchanged. The `decoy` CLI's
+  `run --chunked --vault` uses the refused combination and must refuse the flag pair before it
+  repins to this release.
+- Breaking, pre-GA: the file vault is published privately, durably and exclusively.
+  `VaultWriter.write` (a path string under the ambient policy, or a policy `OutputDir`) creates a
+  stage beside the vault through the private-file creator (mode `0600` whatever the umask), writes
+  and fsyncs it, links it to the vault name, fsyncs the directory and attempts to remove the stage (a failed removal leaves only the
+  encrypted 0600 stage). An
+  existing vault is refused with `runtime/vault_exists` (the ambient policy used to overwrite it
+  in place, writing through hard links). A write, fsync or link failure is
+  `runtime/vault_commit_failed`. Both texts are fixed and name no path. No failure path removes a
+  published vault. The ambient in-place write (the `vault_direct` stage label) is deleted.
+- The `cryptography` floor rises from 42 to 49: the HKDF extract step uses `HKDF.extract`, which
+  PyCA added in 49.
+
 ## [0.23.0] - 2026-11-12
 
 ### Breaking for consumers

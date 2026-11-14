@@ -32,6 +32,45 @@ _KEY_CHARS = 60
 
 # (release, the entry's first 60 normalized characters) -> why it is not a separate break.
 TRIAGED: dict[tuple[str, str], str] = {
+    ("0.24.0", "The gate blocks wherever it can read the output back: the re"): (
+        "the sentence says no run that succeeded before is refused for the deferred routes; the gate's own withholding is the first paragraph of this entry"
+    ),
+    ("0.24.0", "A relationship whose parent table is generated treats the or"): (
+        "narrows the gate: inherited and quarantined orphans no longer withhold a run; only a new orphan or a key-type mismatch the run introduced does"
+    ),
+    ("0.24.0", "A `formula` that reads a plain `sequence`, a `pyint` or `pyf"): (
+        "Breaking: a generate `formula` reads a plain `sequence`, a numeric faker column and a numeric column with nulls as numbers; text use is refused at compile"
+    ),
+    ("0.24.0", "On a column that has to be compared as text, equal numbers n"): (
+        "post-scan findings only: equal numbers can add a finding, never hide one, and nothing is refused"
+    ),
+    ("0.24.0", "A `derived` column that reads another column-level `derived`"): (
+        "relaxation: a chained `derived` column that used to be refused is accepted; the remaining refusals are unchanged"
+    ),
+    ("0.24.0", "`compile_plan` and `run_config_only_checks` refuse a column "): (
+        "Breaking: a column that leaves out a setting its strategy needs is refused at validation and compile"
+    ),
+    ("0.24.0", "`run_config_only_checks` (and so `decoy validate`) now also "): (
+        "validate now raises the code `compile_plan` already raised for the same config, so the run failed there before"
+    ),
+    ("0.24.0", "A seeded categorical or non-deterministic faker column under"): (
+        "relaxation: a `--chunked` run on `large_string` text columns that was refused now runs"
+    ),
+    ("0.24.0", "A statistical `snapshot_file` holding a byte that is not val"): (
+        "error code and exit code change only; a snapshot with a non-UTF-8 byte already failed validate and run"
+    ),
+    ("0.24.0", "`derived` and `formula` now treat `Decimal('NaN')`, numpy Na"): (
+        "Breaking: `derived` and `formula` treat NaN-like and NaT values as missing and write a null cell"
+    ),
+    ("0.24.0", "- Breaking, pre-GA, hard cut: `tokenize` derives each token "): (
+        "Breaking: a vault writer is refused with a sink or a chunked entry, a `TokenVaultWriter` needs `derivation_scope`, tokenize output changes, and an existing vault file is refused"
+    ),
+    ("0.24.0", "- Breaking, pre-GA: boundary rule B0. A file-vault `vault_wr"): (
+        "Breaking: a vault writer is refused with a sink or a chunked entry, a `TokenVaultWriter` needs `derivation_scope`, tokenize output changes, and an existing vault file is refused"
+    ),
+    ("0.24.0", "- Breaking, pre-GA: the file vault is published privately, d"): (
+        "Breaking: a vault writer is refused with a sink or a chunked entry, a `TokenVaultWriter` needs `derivation_scope`, tokenize output changes, and an existing vault file is refused"
+    ),
     ("0.23.0", "`decoy_engine.connectors` exports `S3ObjectStore`, `ObjectSt"): (
         "new classes; the match is `rejected` as a put_if result name, not a refusal"
     ),
