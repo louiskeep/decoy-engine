@@ -140,6 +140,12 @@ def test_no_second_generated_at_shape_in_the_source() -> None:
         "from datetime import datetime as D\nx = D.utcnow()\n",
         "import datetime as dt\nx = dt.datetime.utcfromtimestamp(0)\n",
         'x = stamp.isoformat() + "Z"\n',
+        "from datetime import datetime, timezone\n"
+        "x = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')\n",
+        "x = stamp.isoformat().replace('+00:00', 'Z')\n",
+        "from datetime import datetime\nx = datetime.now().isoformat()\n",
+        "import datetime\nx = datetime.datetime.today().isoformat()\n",
+        "from datetime import datetime as D\nx = D.now().isoformat(timespec='seconds')\n",
     ],
 )
 def test_the_scan_flags_each_seeded_spelling(source: str) -> None:
