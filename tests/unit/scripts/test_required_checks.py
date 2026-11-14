@@ -52,11 +52,10 @@ CI_NAMES = [
     "ner-gate",
     "dp-certified-gate",
     "determinism",
-    "import-smoke (3.11.9)",
-    "import-smoke (3.12.7)",
 ]
+IMPORT_SMOKE = ["import-smoke (3.11.9)", "import-smoke (3.12.7)"]
 MERGE = {
-    "ci.yml": CI_NAMES,
+    "ci.yml": CI_NAMES + IMPORT_SMOKE,
     "native-companion.yml": NATIVE_NAMES,
     "docs.yml": ["docs-build"],
     "compat-preflight.yml": ["compat-preflight"],
@@ -200,6 +199,7 @@ def test_ci_yml_merge_jobs_are_named_by_key() -> None:
     doc = workflow("ci.yml")
     for key in CI_NAMES:
         assert rc.job_check_names(key, doc["jobs"][key]) == [key]
+    assert rc.job_check_names("import-smoke", doc["jobs"]["import-smoke"]) == IMPORT_SMOKE
 
 
 def test_literal_name_beats_the_key() -> None:
