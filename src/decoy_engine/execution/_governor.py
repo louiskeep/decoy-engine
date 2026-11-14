@@ -315,7 +315,8 @@ def run_job_with_governor(
         bare subprocess exit code. `result` is `None` for a ladder-exhausted
         failure (`trips` holds the per-rung detail); the flag-off exhausted
         path (LOW-1) instead carries the one attempted rung's own
-        `IsolatedRunResult` there, since it has no `trips`.
+        `IsolatedRunResult` there, since it has no `trips`. `blocked` is terminal
+        (the post-scan gate withheld the output; `result` keeps the report).
 
     Raises:
         ValueError: `on_spawn`, `execution_mode`, or `isolate=False` (MED-2 --

@@ -356,7 +356,8 @@ class IsolatedRunResult:
     `isolated_execution_enabled`) consumes this directly: `outcome`
     dispatches the reroute ladder (`completed` -> publish; `oom_killed` ->
     reroute to a bounded route; `crashed` -> surface `error` to the job
-    record), `peak_rss_mb` feeds the B5 telemetry loop (a per-job, fresh-
+    record; `blocked` -> the post-scan gate withheld the output, nothing was
+    committed, and `quality_metrics` keeps the report), `peak_rss_mb` feeds the B5 telemetry loop (a per-job, fresh-
     `execve` peak -- exactly what a shared warm worker cannot produce, per
     spec §11's contamination finding), and `isolated=False` tells the
     telemetry loop this sample is NOT trustworthy (the in-process fallback
