@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pytest
 
 from decoy_engine import reasons
 from decoy_engine.subset import (
@@ -147,3 +148,47 @@ def test_generate_parent_with_a_mask_child_drops_the_edge_and_passes_the_child_w
     sel = select_subset(req, tables, config=JOB_SEED_CONFIG)
     assert "c" in sel.scope.whole and sel.counts["c"] == (5, 5)
     assert sel.excluded_edges == ("gen.id -> c.gid",)
+
+
+_GUIDANCE = "add a UTC offset or quote it"
+
+
+def _timestamp_config(where: str, value: Any) -> dict[str, Any]:
+    config = _config({"a": "mask"}, [], "a")
+    if where == "predicate":
+        config["subset"]["seeds"] = [
+            {
+                "table": "a",
+                "mode": "filter",
+                "predicates": [{"column": "x", "op": "ge", "value": value}],
+            }
+        ]
+    else:
+        config["subset"]["seeds"] = [
+            {"table": "a", "mode": "keys", "key_columns": ["id"], "keys": [[value]]}
+        ]
+    return config
+
+
+def test_a_naive_timestamp_in_a_predicate_or_keys_is_refused_with_one_code() -> None:
+    import datetime as dt
+
+    from decoy_engine.subset import SubsetConfigError
+
+    for where in ("predicate", "keys"):
+        config = _timestamp_config(where, dt.datetime(2024, 1, 1, 10, 0, 0))
+        with pytest.raises(SubsetConfigError) as caught:
+            subset_request_from_config(config)
+        error = caught.value
+        assert error.code == reasons.config.CONFIG_VALUE_NOT_JSON
+        assert _GUIDANCE in error.message
+        assert "2024" not in f"{error} {error!r}"
+        assert error.__cause__ is None and error.__context__ is None
+
+
+def test_an_aware_timestamp_and_a_quoted_one_still_build_a_request() -> None:
+    import datetime as dt
+
+    aware = dt.datetime(2024, 1, 1, 10, 0, 0, tzinfo=dt.timezone.utc)
+    assert subset_request_from_config(_timestamp_config("predicate", aware)) is not None
+    assert subset_request_from_config(_timestamp_config("keys", "2024-01-01 10:00:00"))
