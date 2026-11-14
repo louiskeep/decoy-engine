@@ -14,6 +14,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine import reasons
 from decoy_engine.execution import _unified_slice_admission
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._companion_status import native_companion_status
@@ -22,7 +23,7 @@ from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
 from decoy_engine.execution.physical._plan import PhysicalTable
 from decoy_engine.execution.physical._types import DriverId
-from decoy_engine.plan import compile_plan
+from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.profile import profile_source
 from decoy_engine.providers_v2 import ProviderRegistry, get_default_registry
 from decoy_engine.relationships import RelationshipGraph
@@ -670,19 +671,19 @@ def test_domain_matrix_declines_out_of_domain_agreement(
     [[], [None, None, None], ["a@x.com", "b@x.com", "c@x.com"]],
     ids=["empty", "all_null", "value_bearing"],
 )
-def test_unencodable_hash_namespace_declines(tmp_path: Path, values: list[str | None]) -> None:
-    """CHANGE 1: the compiled kernel consumes the namespace at every batch
-    invocation, even for an empty/all-null column (unlike the legacy
-    per-value `derive()` call, which only ever sees the namespace for a
-    non-null value) -- so an unencodable namespace must decline in all
-    three data shapes, not only the value-bearing one."""
+def test_unencodable_hash_namespace_is_refused_before_admission(
+    tmp_path: Path, values: list[str | None]
+) -> None:
+    """A namespace with an unpaired surrogate cannot be UTF-8 encoded. Plan compile now refuses
+    it with `config_value_not_json` in every data shape, so the admission decline that once
+    covered it has no config that reaches it."""
     source = pa.table({"c": pa.array(values, type=pa.string())})
     config, source = _build(
         tmp_path, [{"name": "c", "strategy": "hash", "namespace": "\ud800bad"}], source
     )
-    profile, plan = _profile_and_plan(config, source)
-    physical_plan, registry = _compile(config, profile, plan, source)
-    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
+    with pytest.raises(PlanCompileError) as caught:
+        _profile_and_plan(config, source)
+    assert caught.value.code == reasons.plan.CONFIG_VALUE_NOT_JSON
 
 
 @pytest.mark.skipif(
@@ -749,12 +750,12 @@ def test_faker_large_string_source_binds_but_declines_admission(tmp_path: Path) 
     assert _resident_contract(physical_plan, plan, source, registry=registry) is None
 
 
-def test_faker_unencodable_namespace_declines(tmp_path: Path) -> None:
+def test_faker_unencodable_namespace_is_refused_before_admission(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [_faker_column("\ud800bad")], source)
-    profile, plan = _profile_and_plan(config, source)
-    physical_plan, registry = _compile(config, profile, plan, source)
-    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
+    with pytest.raises(PlanCompileError) as caught:
+        _profile_and_plan(config, source)
+    assert caught.value.code == reasons.plan.CONFIG_VALUE_NOT_JSON
 
 
 def test_faker_declines_when_the_index_kernel_is_missing(

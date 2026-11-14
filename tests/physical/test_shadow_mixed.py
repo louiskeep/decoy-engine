@@ -622,14 +622,7 @@ def test_decline_disqualifying_runtime_carrier(tmp_path: Path, ctx_kwargs: dict[
                 "weights": [0, 0, 1],
             }
         ],
-        [
-            {
-                "name": "amt",
-                "type": "categorical",
-                "categories": [float("nan"), 1.0],
-                "weights": [1, 0],
-            }
-        ],
+        # A NaN category is refused at compile (`config_value_not_json`), so none reaches here.
         [{"name": "tags", "type": "categorical", "categories": [[1, 2], [3, 4]]}],
     ],
     ids=[
@@ -637,7 +630,6 @@ def test_decline_disqualifying_runtime_carrier(tmp_path: Path, ctx_kwargs: dict[
         "categorical_int_null_prob",
         "categorical_str_null_prob",
         "categories_contain_none",
-        "categories_contain_nan",
         "categories_are_nested",
     ],
 )

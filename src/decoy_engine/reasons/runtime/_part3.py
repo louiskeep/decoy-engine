@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Outcome, Phase, RetryClass
+from decoy_engine.reasons._types import Outcome, Phase, RetryClass
 
 __all__ = [
     "CATEGORICAL_POSITION_OUT_OF_DOMAIN",
@@ -187,14 +187,14 @@ TOKENIZE_VAULT_SCOPE_REQUIRED = _d(
     "The token vault writer has no valid derivation scope (16 to 64 bytes).",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 TOKEN_VAULT_DERIVATION_UNSUPPORTED = _d(
     "token_vault_derivation_unsupported",
     "The token vault was created before vault-scoped token derivation; use a new vault.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 TOP_CODE_BOUNDS_UNRESOLVABLE = _d("top_code_bounds_unresolvable", "Top code bounds unresolvable.")
 TOP_CODE_NON_INTEGRAL_OBJECT_COLUMN = _d(
@@ -274,14 +274,14 @@ VAULT_KEY_MISMATCH = _d(
 VAULT_COMMIT_FAILED = _d(
     "vault_commit_failed",
     "The vault could not be written durably; publish no output that it would reverse.",
-    since=UNRELEASED,
+    since="1.26.0",
 )
 VAULT_EXISTS = _d(
     "vault_exists",
     "A vault already exists at the target; choose a new path or remove it with its outputs.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 VAULT_PROTOCOL_VERSION_MISMATCH = _d(
     "vault_protocol_version_mismatch",

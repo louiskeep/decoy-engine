@@ -42,4 +42,4 @@ def test_resume_code_is_pinned(
     assert {r.severity for r in spec.rules} == {severity}
     assert {r.outcome for r in spec.rules} == {outcome}
     assert {r.retry for r in spec.rules} == {retry}
-    assert spec.since == "unreleased"
+    assert spec.since == "1.26.0"

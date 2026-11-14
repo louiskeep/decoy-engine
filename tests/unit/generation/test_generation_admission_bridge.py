@@ -20,10 +20,12 @@ from tests.unit._dps_helpers import empty_profile
 REF = datetime(2026, 10, 22, 9, 30, 0, tzinfo=timezone.utc)
 REF_TEXT = "2026-10-22T09:30:00Z"
 # (`_hash_config`, plan_hash canonical config sha) for GlobalSettings(seed=7).model_dump() with no
-# tables, computed before the field existed. Pins that an unset reference_date migrates neither.
+# tables. Pins that an unset reference_date migrates neither. The first value was computed before
+# the field existed and has not moved. The second was re-captured once when the plan-hash config
+# moved to the canonical compact form (DUP-FREEZE E1); it is the same config minus the field.
 PRE_FIELD_DIGESTS = (
     "bfd5f0f784dcbae9b7c29179023f61ab1447650cb686476702148ecb31a966b6",
-    "0ce8c947061883d55d66d6bceb8df24653013c49edc37c2f4fbd47b2a220c053",
+    "dd407a32d45781e8a161be4d3c65b9b91f9866dd2acca64415ea4d2797fda7bf",
 )
 
 

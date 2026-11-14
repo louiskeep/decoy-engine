@@ -20,12 +20,12 @@ clock-dependent provider or formula helper when no controlled clock is recorded 
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
+from decoy_engine._canonical import canonical_json_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
@@ -160,7 +160,7 @@ class PinnedEnvelope:
     engine_minor: str
 
     def digest(self) -> str:
-        payload = json.dumps(
+        payload = canonical_json_bytes(
             [
                 self.job_seed,
                 self.config_digest,
@@ -170,11 +170,9 @@ class PinnedEnvelope:
                 [list(t) for t in self.column_locales],
                 self.controlled_clock,
                 self.engine_minor,
-            ],
-            sort_keys=True,
-            separators=(",", ":"),
+            ]
         )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return hashlib.sha256(payload).hexdigest()
 
 
 def build_envelope(
@@ -201,10 +199,9 @@ def build_envelope(
             if col.get("type") == "faker":
                 effective = col.get("locale") or instance_default_locale or "default"
                 locales.append((table["name"], col["name"], str(effective)))
-    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
     return PinnedEnvelope(
         job_seed=_normalize_job_seed_int(config),
-        config_digest=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        config_digest=hashlib.sha256(canonical_json_bytes(config)).hexdigest(),
         derive_key_digest=derive_key_digest,
         custom_provider_names=tuple(sorted(provider_snapshot or ())),
         pinned_input_digests=tuple(sorted(pinned_input_digests)),

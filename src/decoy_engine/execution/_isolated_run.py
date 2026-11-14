@@ -98,6 +98,7 @@ from decoy_engine.execution._isolated_common import (
     abnormal_exit_text,
     classify_abnormal_exit,
     commit_error_text,
+    inside_isolated_worker,
     peak_rss_mb,
 )
 from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of, start_sampler
@@ -216,8 +217,9 @@ def run_pipeline_isolated(
     _reject_unserializable_kwargs(run_pipeline_kwargs)
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
+    already_isolated = isolate and inside_isolated_worker()
     _require_ambient_for_paths(
-        spawns=isolate and os.environ.get(ISOLATED_WORKER_ENV) != "1",
+        spawns=isolate and not already_isolated,
         names_paths=staging_dir is not None or output_dir is not None,
     )
 
@@ -234,7 +236,6 @@ def run_pipeline_isolated(
     # instead -- the re-entrant probe then reports a non-isolated measurement and
     # routing falls back to the in-process estimator, so the chain stops at
     # depth 1 (marker's docstring in `_isolated_common` has the full account).
-    already_isolated = isolate and os.environ.get(ISOLATED_WORKER_ENV) == "1"
     if not isolate or already_isolated:
         if already_isolated:
             _logger.warning(

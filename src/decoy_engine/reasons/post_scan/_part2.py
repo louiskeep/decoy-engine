@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, RetryClass
+from decoy_engine.reasons._types import RetryClass
 
 __all__ = [
     "FINDING_BLOCKED",
@@ -43,14 +43,14 @@ GATE_DEFERRED_ROUTE = _verdict(
     "The blocking post-scan gate cannot read this route yet, so the run was checked as before "
     "and not withheld.",
     retry=_repair,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 FOREIGN_KEY_ORPHANS_QUARANTINED = _d(
     "foreign_key_orphans_quarantined",
     "Quarantine removed parent rows, so some child rows in the output have no parent. The run "
     "is not withheld for them.",
     retry=_repair,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 KEY_COLUMN_MISSING = _d(
     "key_column_missing",

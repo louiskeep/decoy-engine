@@ -60,6 +60,7 @@ class DetectorSet:
 
 def _classifier(file_access: FileAccess | None = None) -> tuple[ModelStatus, dict[str, Any] | None]:
     """The classifier's status and, when usable, its strictly loaded pack. Never raises."""
+    from decoy_engine.errors import EnvFlagError
     from decoy_engine.profiling.model_pack.classify import _DEFAULT_PACK_ID, default_pack_loader
     from decoy_engine.profiling.model_pack.loader import ModelPackLoadError
 
@@ -68,7 +69,12 @@ def _classifier(file_access: FileAccess | None = None) -> tuple[ModelStatus, dic
         return ModelStatus("classifier", _DEFAULT_PACK_ID, False, None, None, reason, cause), None
 
     loader = default_pack_loader(file_access)
-    if loader.is_ml_disabled:
+    try:
+        disabled = loader.is_ml_disabled
+    except EnvFlagError:
+        # A switch meant to turn ML off holding an unreadable value leaves ML off.
+        return down("disabled")
+    if disabled:
         return down("disabled")
     try:  # a missing libomp raises OSError here, not ImportError
         import lightgbm
