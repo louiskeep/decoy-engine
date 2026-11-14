@@ -89,9 +89,6 @@ def ceiling_for(loc: int) -> int:
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
-    # The public exception catalogue: one module is the contract (`decoy_engine.errors`); a split
-    # would scatter the public error names across files.
-    "src/decoy_engine/errors.py": 643,
     # F06: one declared-casting route guard per route owner (the sentry in test_f06_declared_casting
     # inventories them) and the cast_run threaded through the sequential and out-of-core executors;
     # no casting logic of its own lives in these routers.

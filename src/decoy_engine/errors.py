@@ -1,16 +1,8 @@
-"""Public exceptions raised by decoy_engine (V2.0-C).
+"""Public exceptions raised by decoy_engine.
 
-Single canonical location for every typed exception the engine raises
-that a caller might want to catch. Pre-V2.0-C this surface was split
-across ``decoy_engine.exceptions`` (orchestration/config/connector
-errors) and ``decoy_engine.internal.validator`` (ValidationError);
-V2.0-C consolidates them here so callers depend on one module and
-neither needs to reach into ``decoy_engine.internal.*``.
-
-Anything not listed here is private and may change without a version
-bump. Internal code may still raise generic ValueError / RuntimeError;
-that is fine and will be tightened incrementally as those callsites
-move to typed exceptions.
+The one home of every typed exception a caller might catch, so no caller reaches into
+``decoy_engine.internal.*`` for one. Anything not listed in ``__all__`` is private and may change
+without a version bump. Internal code may still raise generic ValueError / RuntimeError.
 """
 
 from __future__ import annotations
@@ -70,25 +62,16 @@ class PipelineValidationError(ConfigError):
 
 
 class EnvFlagError(DecoyError, ValueError):
-    """An environment flag holds a value outside the accepted spellings.
-
-    ``variable`` names the variable. The text names it and the accepted spellings, never the value
-    read, so a typo or a secret pasted into the wrong variable stays out of logs and reports. Maps
-    to code ``env_flag_invalid``. Callers decide the safe outcome: a flag that gates behaviour
-    inside a run refuses, a switch that turns a feature off leaves it off.
-    """
+    """An environment flag holds a spelling outside the accepted set; the text never shows it."""
 
     code: str = reasons.config.ENV_FLAG_INVALID
 
     def __init__(self, variable: str) -> None:
         self.variable = variable
-        super().__init__(
-            f"{variable} must be one of 1, true, yes, on, 0, false, no, off, or empty "
-            "(any case). The value read is not shown."
-        )
+        super().__init__(variable)
 
-    def __reduce__(self) -> tuple[Any, ...]:
-        return (type(self), (self.variable,))
+    def __str__(self) -> str:
+        return f"{self.variable} must be 1, true, yes, on, 0, false, no, off or empty (any case)"
 
 
 class ValidationError(DecoyError):
@@ -173,17 +156,11 @@ class FlagPauseSignal(DecoyError):  # noqa: N818 -- control-flow Signal, not a r
         super().__init__(f"{prefix}conditions failed: {detail}")
 
 
-# ── FK preservation (Sprint 4, item 4) ────────────────────────────────
-#
-# Pattern: SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no SDV
-# code: SDV is BUSL-1.1). Parent-first DAG;
-# materialize parent pool; child samples with replacement.
-#
-# Raised when a declared FK in `column_relationships` cannot be resolved
-# at runtime. The matching stable fk.* codes live in
-# validation_result.CODES.
-# Strict mode aborts the run; lenient mode drops the offending child
-# rows + writes a manifest warning.
+# ── FK preservation ──────────────────────────────────────────────────
+# Raised when a declared FK in `column_relationships` cannot be resolved at runtime; the stable
+# fk.* codes live in validation_result.CODES. Strict mode aborts the run, lenient mode drops the
+# offending child rows and writes a manifest warning. Method: SDV HMA1 (Patki et al., IEEE DSAA
+# 2016; method only, no SDV code).
 
 
 class FKPreservationError(DecoyError):

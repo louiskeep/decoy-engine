@@ -91,3 +91,13 @@ def test_the_error_and_its_reason_are_public() -> None:
     spec = reasons.get("config", "env_flag_invalid")
     assert spec.identity == ("config", "env_flag_invalid")
     assert spec.since == reasons.UNRELEASED
+
+
+def test_an_explicit_mapping_is_read_instead_of_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(VAR, "off")
+    assert env_flag(VAR, default=False, environ={VAR: "yes"}) is True
+    assert env_flag(VAR, default=True, environ={}) is True
+    with pytest.raises(EnvFlagError):
+        env_flag(VAR, default=False, environ={VAR: "maybe"})

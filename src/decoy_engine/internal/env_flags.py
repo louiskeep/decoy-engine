@@ -12,6 +12,7 @@ call.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 
 from decoy_engine.errors import EnvFlagError
 
@@ -21,9 +22,15 @@ _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
 
-def env_flag(name: str, *, default: bool) -> bool:
-    """The boolean the environment variable ``name`` holds, or ``default`` when it is empty."""
-    return _decode(name, os.environ.get(name), default)
+def env_flag(name: str, *, default: bool, environ: Mapping[str, str] | None = None) -> bool:
+    """The boolean the environment variable ``name`` holds, or ``default`` when it is empty.
+
+    ``environ`` is the mapping to read; the process environment when omitted. It is for flags
+    only: the secret-material census lists every environment read whose name it cannot resolve,
+    so a secret is never read through this function.
+    """
+    source = os.environ if environ is None else environ
+    return _decode(name, source.get(name), default)
 
 
 def _decode(name: str, raw: str | None, default: bool) -> bool:
