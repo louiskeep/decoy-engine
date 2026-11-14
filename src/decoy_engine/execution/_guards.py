@@ -24,7 +24,11 @@ import pyarrow as pa
 from decoy_engine import reasons
 from decoy_engine._field_names import repeated_names
 from decoy_engine.execution._column_access import created_columns
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import (
+    ExecutionError,
+    declared_table_dropped,
+    loader_table_undeclared,
+)
 from decoy_engine.execution._runner import build_work_list
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._checks import _INT_NULL_REJECTED_STRATEGIES
@@ -86,6 +90,40 @@ def refuse_duplicate_run_sources(
         if descriptor.get("format") in _NO_DUPLICATE_FORMATS:
             continue
         refuse_duplicate_field_names(name, build_declared_source(name, descriptor).schema().names)
+
+
+def refuse_undeclared_loader_tables(
+    table_kinds: Mapping[str, str],
+    config: Mapping[str, Any],
+    caller_sources: Mapping[str, Any],
+    loader_schemas: Mapping[str, Any] | None,
+) -> None:
+    """Refuse a mask table the run could only reach through the loader and never declared.
+
+    Profiling reads descriptors and caller tables, so such a table profiles as nothing, the plan
+    holds no work for it and the adapter would echo its rows. Metadata only, before the loader runs.
+    """
+    declared = config.get("sources") or {}
+    via_loader = loader_schemas or {}
+    for name, kind in table_kinds.items():
+        if kind != "mask":
+            continue
+        if name in via_loader and name not in declared and name not in caller_sources:
+            raise loader_table_undeclared(name)
+
+
+def refuse_dropped_declared_tables(
+    table_kinds: Mapping[str, str], plan: Plan, supplied: Iterable[str]
+) -> None:
+    """Construction guard: every supplied mask table has a plan entry.
+
+    A declared table nobody supplies is not an input of this run and stays out of scope.
+    """
+    planned = {name for name, _ in plan.seed_envelope.per_table}
+    present = set(supplied)
+    for name, kind in table_kinds.items():
+        if kind == "mask" and name in present and name not in planned:
+            raise declared_table_dropped(name)
 
 
 def refusing_source_loader(
@@ -244,8 +282,10 @@ __all__ = [
     "null_bearing_int_candidates",
     "null_bearing_int_error",
     "prepare_declared_execution_sources",
+    "refuse_dropped_declared_tables",
     "refuse_duplicate_field_names",
     "refuse_duplicate_run_sources",
+    "refuse_undeclared_loader_tables",
     "refused_per_chunk",
     "refusing_source_loader",
     "reject_gated_hash_on_integer",
