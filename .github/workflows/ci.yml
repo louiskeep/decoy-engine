@@ -67,15 +67,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python: ["3.11.9", "3.12.7"]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-      - name: Install the package
-        run: pip install .
+          python: ${{ matrix.python }}
       - name: Import
         run: python -c "import decoy_engine"
 
