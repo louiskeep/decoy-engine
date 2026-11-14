@@ -42,6 +42,7 @@ from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.reason_adapter import reason_from_exception
+from decoy_engine.verification.postmask import PostScanBlockedError
 
 
 def _error_text(exc: BaseException) -> str:
@@ -219,6 +220,15 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
         # Staging allocates too, so a memory failure here must self-report as well.
         staged_tables = _finalize_outputs(result, staging_output_dir)
         _stage_row_errors(result.row_errors, staging_output_dir)
+    except PostScanBlockedError as exc:
+        # The gate withheld the output: a verdict, not a crash. The report is value-free.
+        return {
+            "outcome": "blocked",
+            "peak_rss_mb": round(peak_rss_mb(), 1),
+            "error": _error_text(exc),
+            "reason": _reason_payload(exc),
+            "quality_metrics": {"post_scan_integrity": exc.report},
+        }
     except BaseException as exc:
         outcome = "oom_killed" if is_memory_failure(exc) else "crashed"
         return {
