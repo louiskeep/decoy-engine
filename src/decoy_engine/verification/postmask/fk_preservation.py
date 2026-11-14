@@ -17,7 +17,7 @@ from pandas.api.types import is_float_dtype
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import RelationshipConfig, RelationshipEnd, parse_relationship_config
 from decoy_engine.profiling import MEMORY_LIMIT
-from decoy_engine.verification.postmask._keys import KeyCounts, KeyResult, check_keys
+from decoy_engine.verification.postmask._keys import KeyCounts, KeyResult, check_keys, key_columns
 from decoy_engine.verification.postmask._stream_input import TableBatches, from_table
 from decoy_engine.verification.postmask.types import FKPreservationFinding, Severity
 
@@ -55,10 +55,7 @@ def _frame_keys(
 ) -> tuple[KeyResult, ...]:
     if not rels:
         return ()
-    wanted: dict[str, set[str]] = {}
-    for rel in rels:
-        for end in (rel.parent, *rel.children):
-            wanted[end.table] = wanted.get(end.table, set()) | set(end.columns)
+    wanted = key_columns(rels)
 
     def tables(frames: Mapping[str, pd.DataFrame]) -> dict[str, TableBatches]:
         # Only key columns are converted; one that is missing stays missing, so the key says so.

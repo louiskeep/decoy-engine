@@ -15,6 +15,7 @@ result.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
@@ -36,8 +37,7 @@ from decoy_engine.config import (
 from decoy_engine.execution._chunked_input import SourceFacts, capture_source_facts, check_opened
 from decoy_engine.execution._pipeline_sources import materialize_source
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
-from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
-from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
+from decoy_engine.execution.out_of_core import MaskedKeyStager, resolve_ooc_memory_limit
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.internal.memory_limit import require_megabytes
 from decoy_engine.profile import LazySource
@@ -53,6 +53,7 @@ from decoy_engine.verification.postmask import (
     from_lazy,
     from_staged,
     from_table,
+    key_columns,
     keys_report,
     post_scan_verdict,
     run_post_mask,
@@ -202,7 +203,7 @@ class PostScanGate:
         if not self.required or self.deferred:
             return None
         try:
-            wanted = _key_columns(self._relationships())
+            wanted = key_columns(self._relationships())
         except Exception as exc:
             if passes_through(exc):
                 raise
@@ -400,26 +401,26 @@ def _staged_openers(sink: Any) -> Mapping[str, Callable[[], int]] | None:
     return staged() if callable(staged) else None
 
 
-def _key_columns(rels: list[RelationshipConfig]) -> dict[str, tuple[str, ...]]:
-    """Each table's declared key columns, over every end of every relationship."""
-    out: dict[str, list[str]] = {}
-    for rel in rels:
-        for end in (rel.parent, *rel.children):
-            out.setdefault(end.table, []).extend(end.columns)
-    return {table: tuple(dict.fromkeys(cols)) for table, cols in out.items()}
+def tee_supported() -> bool:
+    """Whether the scratch writer the tee uses can run here: it opens files and directories with
+    POSIX descriptor flags. Where it cannot, a loader or transformed run stays deferred. The one
+    place that decides, for `_deferred` (and so `tee_reader`, which returns nothing when deferred)."""
+    return all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_CLOEXEC", "O_DIRECTORY"))
 
 
 def _deferred(ctx: PipelineRunContext, route: str | None = None) -> bool:
     """Whether this run's inputs cannot be read back by the gate before the route runs: a loader
     supplies tables nothing can re-read, and a lazy table that declares transforms is
     transformed inside the route. The sequential route loads each such table once through a
-    loader the gate wraps (`tee_loader`), so it is the one route that is not deferred.
+    loader resolution the gate tees (`tee_reader`), so it is the one route that is not deferred,
+    and only where `tee_supported` says the scratch writer can run.
     Outputs that are not resident are read at commit."""
     lazy_transformed = any(
         isinstance(ctx.caller_sources.get(name), LazySource)
         for name in transform_bearing_mask_tables(ctx.config)
     )
-    return (ctx.source_loader is not None or lazy_transformed) and route != "sequential"
+    teed = route == "sequential" and tee_supported()
+    return (ctx.source_loader is not None or lazy_transformed) and not teed
 
 
 @contextmanager

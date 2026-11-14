@@ -7,6 +7,7 @@ only, into scratch Parquet, and the gate takes its baseline from that copy. All 
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -282,13 +283,15 @@ def test_a_loader_run_completes_under_a_strict_file_policy(tmp_path: Path) -> No
     cfg, parent, child = _job(tmp_path)
     tables = {"parent": parent, "child": child}
     schemas = {name: table.schema for name, table in tables.items()}
-    cfg.pop("sources")  # a file descriptor would be a read the strict policy denies
+    # A file descriptor would be a read the strict policy denies, so the tables are declared
+    # as caller sources; the route still reads them through the loader.
+    cfg.pop("sources")
     cfg.pop("targets")
     routes = _Routes()
     with fileaccess.scope(RootedFileAccess([], allow_portable_fallback=True)):
         result = run_pipeline(
             cfg,
-            {},
+            tables,
             engine_version=ENGINE_VERSION,
             execution_mode="sequential",
             source_loader=lambda name: tables[name],
@@ -352,3 +355,49 @@ def test_a_cast_key_column_is_teed_raw_and_cast_on_the_re_read(tmp_path: Path) -
         assert got[table]["baseline"] == want[table]["baseline"] == "measured"
         assert got[table]["source"] == want[table]["source"]
     assert got["parent"]["source"]["duplicate_excess"] == 1  # "01" and "1" are one key
+
+
+# ----- where the tee cannot run, and where the run fails -------------------------------------
+
+
+def test_a_host_without_the_scratch_flags_keeps_the_deferral(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scratch writer needs POSIX descriptor flags; without them the run is deferred, as it
+    was before the tee, and is not refused."""
+    for flag in ("O_NOFOLLOW", "O_CLOEXEC", "O_DIRECTORY"):
+        monkeypatch.delattr(os, flag, raising=False)
+    assert _post_scan.tee_supported() is False
+    cfg, _, _ = _job(tmp_path)
+    result, routes = _loaded(cfg)
+    assert routes == ["sequential"]
+    assert result.quality_metrics["post_scan_gate_deferred"] == {
+        "namespace": "post_scan",
+        "code": "gate_deferred_route",
+    }
+    assert "post_scan_integrity" not in result.quality_metrics
+
+
+def test_the_tee_directory_is_removed_when_the_loader_fails_mid_route(
+    tmp_path: Path, teed_files: list[tuple[Path, int]]
+) -> None:
+    cfg, _, _ = _job(tmp_path)
+    seen: list[str] = []
+
+    def loader(name: str) -> pa.Table:
+        seen.append(name)
+        if len(seen) == 2:
+            raise RuntimeError("loader failed")
+        return pq.read_table(cfg["sources"][name]["path"])
+
+    with pytest.raises(RuntimeError, match="loader failed"):
+        run_pipeline(
+            cfg,
+            {},
+            engine_version=ENGINE_VERSION,
+            execution_mode="sequential",
+            source_loader=loader,
+            source_loader_schemas=file_schemas(cfg),
+        )
+    assert len(teed_files) == 1  # the first table was teed before the second read failed
+    assert not teed_files[0][0].parent.exists()
