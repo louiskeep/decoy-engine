@@ -15,9 +15,12 @@ from contextlib import nullcontext
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
+from decoy_engine.config import post_scan_sink_kind, post_scan_sink_refusal
 from decoy_engine.declared_casting._boundary import open_cast_run
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
 from decoy_engine.execution.out_of_core._duckdb import bind_duckdb_run, current_duckdb_run
 from decoy_engine.execution.pipeline._post_scan import attach_cast_run, tee_reader
@@ -49,6 +52,15 @@ def execute_route(
         bind_duckdb_run(ctx.out_of_core_threads) as recorder,
         bind_gate(ctx, decision.route if ctx.has_mask_table else "full_frame") as gate,
     ):
+        # Before any source read or sink write: a callable sink delivers on `write`.
+        refusal = post_scan_sink_refusal(
+            ctx.config, post_scan_sink_kind(ctx.sink), deferred=gate.deferred
+        )
+        if refusal is not None:
+            raise ExecutionError(
+                code=reasons.runtime.POST_SCAN_INTEGRITY_SINK_UNREADABLE,
+                message=reasons.get("runtime", refusal).summary,
+            )
         if ctx.has_mask_table and decision.route == "sequential":
             result = execute_sequential_route(ctx, decision)
         elif ctx.has_mask_table and decision.route == "out_of_core":

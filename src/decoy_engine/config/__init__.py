@@ -72,6 +72,7 @@ from decoy_engine.config._post_scan import (
     post_scan_output_readable,
     post_scan_resident_reason,
     post_scan_sink_kind,
+    post_scan_sink_refusal,
 )
 from decoy_engine.config._pre_scan import PreScanConfig
 from decoy_engine.config._relationships import (
@@ -168,6 +169,7 @@ __all__ = [
     "post_scan_output_readable",
     "post_scan_resident_reason",
     "post_scan_sink_kind",
+    "post_scan_sink_refusal",
     "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",
     "value_key",

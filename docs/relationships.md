@@ -70,8 +70,11 @@ of severity `fail` withholds the run as a failed key check does. A model detecto
 with the reason `route.post_scan_models_resident`, and `execution_mode: stream` refuses them.
 
 A sink the engine cannot read back (anything but its own staged Parquet sink) keeps its route and
-receives the output; the gate is then deferred, the integrity check is report-only, and the result
-carries `quality_metrics["post_scan_gate_deferred"]`.
+receives the output when only relationships are declared; the gate is then deferred and the result
+carries `quality_metrics["post_scan_gate_deferred"]`. An explicit `post_scan.integrity: true` is
+never deferred: with such a sink, or with a transform-bearing table on a staged commit, the run is
+refused (`runtime.post_scan_integrity_sink_unreadable`,
+`runtime.post_scan_integrity_transforms_unsupported`) before anything is published.
 
 ## Row errors and referential integrity
 

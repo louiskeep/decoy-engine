@@ -191,3 +191,18 @@ def post_scan_resident_reason(config: Mapping[str, Any]) -> ReasonCode | None:
     if post_scan_model_setting(config) is not None:
         return reasons.route.POST_SCAN_MODELS_RESIDENT
     return None
+
+
+def post_scan_sink_refusal(
+    config: Mapping[str, Any], sink_kind: str, *, deferred: bool
+) -> ReasonCode | None:
+    """Why an explicit `post_scan.integrity: true` run must be refused before it starts, or `None`.
+
+    Declared keys alone defer on a sink the gate cannot read (plan, Foreign sinks). The column
+    suite has no report-only fallback that blocks, so integrity with a sink present and either an
+    unreadable sink or a deferred gate refuses, fail closed."""
+    if not post_scan_integrity_requested(config) or sink_kind == NO_SINK_KIND:
+        return None
+    if deferred or not post_scan_output_readable(sink_kind):
+        return reasons.runtime.POST_SCAN_INTEGRITY_SINK_UNREADABLE
+    return None
