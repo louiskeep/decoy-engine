@@ -38,13 +38,13 @@ between analyses that inspect input and transforms that change it, applied as
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Literal, TypeVar
 
+from decoy_engine._canonical import canonical_json_bytes
 from decoy_engine.errors import DecoyError
 from decoy_engine.reasons import ReasonRef, UnknownReasonError, reason_ref_payload, require_known
 from decoy_engine.safe_output._exception import safe_error_type
@@ -478,7 +478,7 @@ def _reason_wire(ref: ReasonRef) -> dict[str, str]:
 
 def _encode(wire: dict[str, Any]) -> bytes:
     try:
-        return json.dumps(wire, sort_keys=True, separators=(",", ":")).encode()
+        return canonical_json_bytes(wire)
     except Exception:
         pass
     raise PhaseContractError("phase envelope has no canonical encoding")

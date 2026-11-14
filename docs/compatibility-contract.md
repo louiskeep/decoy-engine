@@ -431,6 +431,23 @@ raises fails the run instead of writing nulls. No seed draw moves and
 `SEED_PROTOCOL_VERSION` is unchanged. The refreeze is recorded in
 `docs/records/2026-11-13-formula-typing-refreeze.md`.
 
+**2026-11-14, one canonical JSON owner (pre-GA break, DUP-FREEZE E1).** Every digest, HMAC
+and signature input is now built by `decoy_engine._canonical.canonical_json_bytes`: sorted keys,
+compact separators, UTF-8 text written as-is, NaN and Infinity refused. The same module holds the
+one frozen seed form, `seed_fingerprint_bytes` (ASCII-escaped, byte-for-byte what
+`strategy_config_fingerprint` and the pool `_config_hash` wrote before), named under
+`SEED_PROTOCOL_VERSION`. No seed, pool seed or generated output byte moves, and no record id or
+CLI evidence manifest hash moves. Some digests change, with no shim and no flag.
+`pipeline_config_hash`, the phase envelope bytes, the pinned-plan fingerprint, the model pack
+signature scope, `profile_hash`, `PinnedEnvelope.digest` and the reproducibility `config_digest`
+move only for content that holds non-ASCII text; the physical-input identity hash and the subset
+request fingerprint move for every config (they used default separators and a `repr` fallback).
+A pinned plan or resume fingerprint made before the change
+refuses with its existing digest-mismatch code and is rebuilt; a model pack signed over non-ASCII
+manifest text is signed again. Plan compile and `subset_request_from_config` now refuse a value
+JSON cannot hold (a YAML date or timestamp, NaN, Infinity, an unpaired surrogate) with the new
+reason `config_value_not_json`; quote the value as a string. No `SEED_PROTOCOL_VERSION` change.
+
 ### 3.4 The public API + CLI contract
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and

@@ -64,3 +64,19 @@ def test_a_non_ascii_config_hash_writes_utf8_not_escapes() -> None:
     config = {"tables": [{"name": "données"}]}
     expected = hashlib.sha256('{"tables":[{"name":"données"}]}'.encode()).hexdigest()
     assert pipeline_config_hash(config) == expected
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        {"name": "c", "type": "categorical", "categories": [float("nan"), 1.0]},
+        {"name": "id", "type": "sequence", "start": float("inf")},
+        {"name": "id", "type": "sequence", "start": 1, "prefix": "\ud800"},
+    ],
+    ids=["nan-category", "infinite-start", "surrogate-prefix"],
+)
+def test_generate_column_knobs_json_cannot_hold_are_refused(column: dict[str, Any]) -> None:
+    config = {"tables": [{"name": "t", "generate_columns": [column]}]}
+    with pytest.raises(PlanCompileError) as caught:
+        pipeline_config_hash(config)
+    assert caught.value.code == reasons.config.CONFIG_VALUE_NOT_JSON

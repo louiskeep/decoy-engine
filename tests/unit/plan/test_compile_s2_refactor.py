@@ -551,18 +551,21 @@ class TestWalksGenF9HashConfigRaisesOnNonJsonNative:
     any non-JSON-native value (datetime, UUID, dataclass) was silently
     coerced to its str() repr, so two semantically different values
     that str-format identically produced the same config hash. Post-
-    fix TypeError surfaces at plan-compile time."""
+    fix a value JSON cannot hold is refused at plan-compile time with the coded
+    `config_value_not_json` (DUP-FREEZE E1; it was a bare TypeError)."""
 
-    def test_hash_config_raises_typeerror_on_datetime_in_config(self):
+    def test_hash_config_refuses_a_datetime_in_config_with_the_coded_error(self):
         from datetime import datetime as _dt
 
+        from decoy_engine.plan import PlanCompileError
         from decoy_engine.plan._compile import _hash_config
 
         config_with_datetime = {
             "global_settings": {"seed": 1, "started_at": _dt(2026, 6, 1, 0, 0)},
         }
-        with pytest.raises(TypeError):
+        with pytest.raises(PlanCompileError) as caught:
             _hash_config(config_with_datetime)
+        assert caught.value.code == "config_value_not_json"
 
     def test_hash_config_accepts_json_native_values(self):
         from decoy_engine.plan._compile import _hash_config

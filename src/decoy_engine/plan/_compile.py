@@ -25,7 +25,6 @@ constant (S3 stamped 1; the F-series corrections bumped it to 2).
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +103,7 @@ from decoy_engine.plan.checks import (
     check_generate_columns,
     check_required_strategy_settings,
 )
+from decoy_engine.plan.checks._config_json import canonical_config_bytes
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
@@ -633,9 +633,11 @@ def _hash_config(config: dict[str, Any]) -> str:
     + reproducibility tooling can match the two runs as semantically equivalent. `post_scan`
     stays in: under `ner_findings: fail` its `dismissed` list decides what blocks.
 
-    Sort_keys=True, ensure_ascii=True, separators=(",", ":") for byte
-    stability across Python runtimes. Same masking semantics produce the
-    same hash regardless of key insertion order or source/target binding.
+    The bytes come from `canonical_json_bytes` (sorted keys, compact separators, UTF-8), so the
+    same masking semantics produce the same hash regardless of key insertion order or
+    source/target binding. A value JSON cannot hold (a YAML date or timestamp, NaN, Infinity, an
+    unpaired surrogate) is refused here with `config_value_not_json`, before the seed envelope
+    and every other site that hashes the config.
     """
     semantic_config = {k: v for k, v in config.items() if k not in _UNHASHED_BLOCKS}
     global_settings = semantic_config.get("global_settings")
@@ -645,19 +647,4 @@ def _hash_config(config: dict[str, Any]) -> str:
         semantic_config["global_settings"] = {
             k: v for k, v in global_settings.items() if k not in _NON_SEMANTIC_GLOBAL_SETTINGS
         }
-    # QA walks/generators F9 (2026-06-01, LOW correctness): no
-    # default=str. Pre-fix json.dumps silently called str() on any
-    # non-JSON-native value (datetime, UUID, dataclass), so two
-    # semantically different values that str-format identically
-    # produced the same hash. In practice configs arrive via
-    # yaml.safe_load (JSON-native only) so the bug never triggered,
-    # but the silent coercion would have hidden any future code path
-    # that fed non-native types into the planner. Now any such value
-    # raises TypeError at plan-compile time.
-    canonical = json.dumps(
-        semantic_config,
-        sort_keys=True,
-        ensure_ascii=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return hashlib.sha256(canonical_config_bytes(semantic_config)).hexdigest()

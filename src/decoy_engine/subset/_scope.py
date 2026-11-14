@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
@@ -17,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 import polars as pl
 import pyarrow as pa
 
+from decoy_engine._canonical import canonical_json_bytes
 from decoy_engine._execution_error import lazy_source_changed
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._edges import linked_neighbours, reach
@@ -38,8 +38,7 @@ class SubsetRequest:
     def fingerprint(self) -> str:
         """SHA-256 over the canonical dump: the subset half of a run's identity. The run config
         drops the `subset` block, so this fingerprint is what covers the seed literals."""
-        canonical = json.dumps(dataclasses.asdict(self), sort_keys=True, default=repr)
-        return hashlib.sha256(canonical.encode()).hexdigest()
+        return hashlib.sha256(canonical_json_bytes(dataclasses.asdict(self))).hexdigest()
 
 
 @dataclass(frozen=True)
