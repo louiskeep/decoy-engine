@@ -31,6 +31,7 @@ from decoy_engine.execution.out_of_core._spill_estimate import (
     OocDiskPrediction,
     predict_ooc_disk_bytes,
 )
+from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
 
 __all__ = [
     "DISK_SAFETY_MARGIN",
@@ -39,6 +40,7 @@ __all__ = [
     "UNKNOWN_WIDTH_CEILING_BYTES",
     "ChildFkBatchJoiner",
     "LazySource",
+    "MaskedKeyStager",
     "OocDiskPrediction",
     "OutOfCoreBudget",
     "OutOfCoreCompatibility",

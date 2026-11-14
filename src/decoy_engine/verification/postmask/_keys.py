@@ -44,7 +44,16 @@ _End = tuple[str, tuple[str, ...]]
 # never written to a report or a log.
 Removed = Mapping[_End, Sequence[pa.Table]]
 
-__all__ = ["Baseline", "KeyCounts", "KeyResult", "Status", "check_keys", "key_codes", "keys_report"]
+__all__ = [
+    "Baseline",
+    "KeyCounts",
+    "KeyResult",
+    "Status",
+    "check_keys",
+    "key_codes",
+    "key_columns",
+    "keys_report",
+]
 
 
 @dataclass(frozen=True)
@@ -98,6 +107,18 @@ class KeyResult:
         if self.baseline_error_class is not None:
             out["baseline_error_class"] = self.baseline_error_class
         return out
+
+
+def key_columns(rels: Sequence[RelationshipConfig]) -> dict[str, tuple[str, ...]]:
+    """Each table's declared key columns over every end of every relationship, each column once,
+    in the order it first appears (parent end first). The one traversal of the declared keys:
+    callers that only test membership (the pandas key frames) ignore the order, and the loader
+    tee keeps it as the column order of its scratch file."""
+    out: dict[str, list[str]] = {}
+    for rel in rels:
+        for end in (rel.parent, *rel.children):
+            out.setdefault(end.table, []).extend(end.columns)
+    return {table: tuple(dict.fromkeys(cols)) for table, cols in out.items()}
 
 
 def keys_report(results: Sequence[KeyResult]) -> list[dict[str, Any]]:
