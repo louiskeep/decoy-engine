@@ -16,11 +16,13 @@ result.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import (
@@ -35,6 +37,11 @@ from decoy_engine.execution._chunked_input import SourceFacts, capture_source_fa
 from decoy_engine.execution._pipeline_sources import materialize_source
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
+from decoy_engine.execution.out_of_core._scratch import (
+    close_private,
+    open_private,
+    scratch_access_for,
+)
 from decoy_engine.internal.memory_limit import require_megabytes
 from decoy_engine.profile import LazySource
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
@@ -67,6 +74,7 @@ __all__ = [
     "bind_gate",
     "note_quarantined",
     "settle",
+    "tee_loader",
 ]
 
 # `pass_failed_with` when the commit is reached and a required gate never ran.
@@ -112,6 +120,11 @@ class PostScanGate:
         self._cast_run: Any = None
         # Writes that carry row values (the quarantine file), held until the verdict passes.
         self._held: list[Callable[[], None]] = []
+        # Baselines of tables only the route reads: key and cast columns of each table the
+        # route loaded, copied once into scratch Parquet as the route read them.
+        self._teed: dict[str, LazySource] = {}
+        self._scratch = ExitStack()
+        self._scratch_root: Path | None = None
 
     @property
     def memory_limit(self) -> str:
@@ -181,6 +194,52 @@ class PostScanGate:
         if error is not None:
             raise error
 
+    def tee_loader(self, loader: Callable[[str], pa.Table]) -> Callable[[str], pa.Table]:
+        """`loader` that also copies the key and cast columns of each declared key table, as the
+        route reads it, into scratch. The route's own read is the baseline: the loader is never
+        called a second time, and a table transformed on load is baselined after its transforms."""
+        if not self.required or self.deferred:
+            return loader
+        try:
+            wanted = _key_columns(self._relationships())
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            return loader  # an unreadable relationship is the check's to report
+
+        def teed(name: str) -> pa.Table:
+            table = loader(name)
+            if name in wanted and name not in self._teed:
+                self._tee(name, table, wanted[name])
+            return table
+
+        return teed
+
+    def _tee(self, name: str, table: pa.Table, columns: tuple[str, ...]) -> None:
+        cast = self._cast_run
+        if cast is not None and name in cast.tables():
+            columns = (*columns, *cast.declared_columns(name))
+        kept = table.select([c for c in dict.fromkeys(columns) if c in table.column_names])
+        if self._scratch_root is None:
+            self._scratch_root = self._scratch.enter_context(
+                fileaccess.protected_scratch_dir(prefix="decoy-post-scan-tee-")
+            )
+        path = self._scratch_root / f"t{len(self._teed):04d}.parquet"
+        sink = open_private(path)
+        writer = None
+        try:
+            writer = pq.ParquetWriter(sink, kept.schema)
+            writer.write_table(kept)
+        finally:
+            close_private(writer, sink)
+        self._teed[name] = LazySource(
+            path, access=scratch_access_for(self._scratch_root), field_key="engine.scratch"
+        )
+
+    def close(self) -> None:
+        """Remove the tee's scratch files."""
+        self._scratch.close()
+
     def attach_cast_run(self, cast_run: Any) -> None:
         """The run's declared casting, so a re-read of the raw inputs types them as the route did."""
         self._cast_run = cast_run
@@ -249,7 +308,8 @@ class PostScanGate:
         if not isinstance(source, LazySource):
             base = from_table(name, source)
         else:
-            expected = self._source_facts.get(name)
+            # A teed file is the engine's own copy of the route's read, not the caller's input.
+            expected = None if self._teed.get(name) is source else self._source_facts.get(name)
             if expected is None:
                 base = from_lazy(name, source)
             else:
@@ -284,7 +344,10 @@ class PostScanGate:
         with fileaccess.protected_scratch_dir(prefix="decoy-post-scan-gate-") as scratch:
             return check_keys(
                 rels,
-                {name: self._source(name, src, raw_sources) for name, src in sources.items()},
+                {
+                    name: self._source(name, src, raw_sources)
+                    for name, src in {**sources, **self._teed}.items()
+                },
                 dict(outputs),
                 scratch=scratch,
                 memory_limit=self.memory_limit,
@@ -330,21 +393,32 @@ def _staged_openers(sink: Any) -> Mapping[str, Callable[[], int]] | None:
     return staged() if callable(staged) else None
 
 
-def _deferred(ctx: PipelineRunContext) -> bool:
+def _key_columns(rels: list[RelationshipConfig]) -> dict[str, tuple[str, ...]]:
+    """Each table's declared key columns, over every end of every relationship."""
+    out: dict[str, list[str]] = {}
+    for rel in rels:
+        for end in (rel.parent, *rel.children):
+            out.setdefault(end.table, []).extend(end.columns)
+    return {table: tuple(dict.fromkeys(cols)) for table, cols in out.items()}
+
+
+def _deferred(ctx: PipelineRunContext, route: str | None = None) -> bool:
     """Whether this run's inputs cannot be read back by the gate before the route runs: a loader
     supplies tables nothing can re-read, and a lazy table that declares transforms is
-    transformed inside the route. Outputs that are not resident are read at commit."""
+    transformed inside the route. The sequential route loads each such table once through a
+    loader the gate wraps (`tee_loader`), so it is the one route that is not deferred.
+    Outputs that are not resident are read at commit."""
     lazy_transformed = any(
         isinstance(ctx.caller_sources.get(name), LazySource)
         for name in transform_bearing_mask_tables(ctx.config)
     )
-    return ctx.source_loader is not None or lazy_transformed
+    return (ctx.source_loader is not None or lazy_transformed) and route != "sequential"
 
 
 @contextmanager
-def bind_gate(ctx: PipelineRunContext) -> Iterator[PostScanGate]:
+def bind_gate(ctx: PipelineRunContext, route: str | None = None) -> Iterator[PostScanGate]:
     """Bind one gate for the run. Its lazy-input snapshot is taken here, before any route reads."""
-    deferred = _deferred(ctx)
+    deferred = _deferred(ctx, route)
     facts = (
         capture_source_facts(ctx.caller_sources, ctx.table_kinds)
         if post_scan_gate_applies(ctx.config) and not deferred
@@ -362,6 +436,14 @@ def bind_gate(ctx: PipelineRunContext) -> Iterator[PostScanGate]:
         yield gate
     finally:
         _ACTIVE.reset(token)
+        gate.close()
+
+
+def tee_loader(loader: Callable[[str], pa.Table]) -> Callable[[str], pa.Table]:
+    """The route's loader, wrapped so the run's gate takes its baseline from the route's own read.
+    Outside `bind_gate` there is no gate and the loader is returned as it is."""
+    gate = active_gate()
+    return loader if gate is None else gate.tee_loader(loader)
 
 
 def attach_cast_run(cast_run: Any) -> None:
