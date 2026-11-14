@@ -32,6 +32,9 @@ _KEY_CHARS = 60
 
 # (release, the entry's first 60 normalized characters) -> why it is not a separate break.
 TRIAGED: dict[tuple[str, str], str] = {
+    ("0.24.0", "- Two sentries hold the result: `tests/sentry/profiling/test"): (
+        "describes two internal sentries; `raise` names a source raise site, not a consumer-visible failure"
+    ),
     ("0.24.0", "The gate blocks wherever it can read the output back: the re"): (
         "the sentence says no run that succeeded before is refused for the deferred routes; the gate's own withholding is the first paragraph of this entry"
     ),
