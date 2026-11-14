@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED, Outcome, RetryClass
+from decoy_engine.reasons._types import Outcome, RetryClass
 
 __all__ = [
     "BOUNDED_READ_ERROR",
@@ -220,7 +220,7 @@ VAULT_REQUIRES_RESIDENT_OUTPUT = _d(
     "A vault writer needs resident output: pass no sink, and use run_pipeline, not a chunked entry.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since=UNRELEASED,
+    since="1.26.0",
 )
 INVALID_NATIVE_THREADS = _d("invalid_native_threads", "Invalid native threads.")
 LAZY_SOURCE_CHANGED = _d("lazy_source_changed", "Lazy source changed.")
