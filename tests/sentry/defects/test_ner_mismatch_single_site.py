@@ -35,7 +35,8 @@ class _Sites(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._scope(node, node.name)
 
-    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._scope(node, node.name)
 
     def _hit(self) -> None:
         self.found.append(".".join(self.stack))
@@ -85,7 +86,7 @@ def test_only_the_helper_names_the_code() -> None:
 
 
 def test_every_allowlist_entry_matches_a_real_site() -> None:
-    assert ALLOWED <= _real_sites()
+    assert _real_sites() >= ALLOWED
 
 
 @pytest.mark.parametrize(

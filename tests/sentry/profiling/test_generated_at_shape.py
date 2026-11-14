@@ -55,7 +55,10 @@ def shape_hits(source: str) -> list[str]:
                 isinstance(tail, ast.Constant)
                 and isinstance(tail.value, str)
                 and tail.value.startswith("Z")
-                and any(isinstance(v, ast.FormattedValue) and _has_isoformat_call(v) for v in node.values)
+                and any(
+                    isinstance(v, ast.FormattedValue) and _has_isoformat_call(v)
+                    for v in node.values
+                )
             ):
                 hits.append(f"line {node.lineno}: f-string isoformat plus Z")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -92,7 +95,7 @@ def test_no_second_generated_at_shape_in_the_source() -> None:
         "from datetime import datetime\nx = datetime.utcnow()\n",
         "from datetime import datetime as D\nx = D.utcnow()\n",
         "import datetime as dt\nx = dt.datetime.utcfromtimestamp(0)\n",
-        "x = stamp.isoformat() + \"Z\"\n",
+        'x = stamp.isoformat() + "Z"\n',
     ],
 )
 def test_the_scan_flags_each_seeded_spelling(source: str) -> None:
