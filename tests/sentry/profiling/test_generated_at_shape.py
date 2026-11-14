@@ -40,6 +40,48 @@ def _is_z(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value == "Z"
 
 
+def _const_str(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _chain(node: ast.AST) -> list[ast.AST]:
+    """The receiver chain of a call, innermost last: `a.b().c()` gives `[a.b().c(), a.b(), a]`."""
+    out: list[ast.AST] = []
+    while True:
+        out.append(node)
+        if isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.Attribute):
+            node = node.value
+        else:
+            return out
+
+
+def _on_datetime(base: ast.AST, classes: set[str], modules: set[str]) -> bool:
+    if isinstance(base, ast.Name):
+        return base.id in classes
+    return (
+        isinstance(base, ast.Attribute)
+        and base.attr == "datetime"
+        and isinstance(base.value, ast.Name)
+        and base.value.id in modules
+    )
+
+
+def _naive_clock(node: ast.AST, classes: set[str], modules: set[str]) -> bool:
+    """`datetime.now()` or `datetime.today()` called with no timezone argument."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"now", "today"}
+        and _on_datetime(node.func.value, classes, modules)
+        and not node.args
+        and not any(k.arg == "tz" for k in node.keywords)
+    )
+
+
 def shape_hits(source: str) -> list[str]:
     """Each place the source builds a `Z`-suffixed ISO stamp or calls naive `datetime` UTC."""
     tree = ast.parse(source)
@@ -63,17 +105,19 @@ def shape_hits(source: str) -> list[str]:
                 hits.append(f"line {node.lineno}: f-string isoformat plus Z")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             func = node.func
+            if func.attr == "replace" and len(node.args) == 2:
+                old, new = _const_str(node.args[0]), _const_str(node.args[1])
+                if old == "+00:00" and new == "Z" and _has_isoformat_call(func.value):
+                    hits.append(f"line {node.lineno}: isoformat offset replaced by Z")
+                continue
+            if func.attr == "isoformat" and any(
+                _naive_clock(link, classes, modules) for link in _chain(func.value)
+            ):
+                hits.append(f"line {node.lineno}: isoformat of a clock with no timezone")
+                continue
             if func.attr not in _NAIVE_UTC:
                 continue
-            base = func.value
-            on_class = isinstance(base, ast.Name) and base.id in classes
-            on_module = (
-                isinstance(base, ast.Attribute)
-                and base.attr == "datetime"
-                and isinstance(base.value, ast.Name)
-                and base.value.id in modules
-            )
-            if on_class or on_module:
+            if _on_datetime(func.value, classes, modules):
                 hits.append(f"line {node.lineno}: naive {func.attr}")
     return hits
 
@@ -108,6 +152,8 @@ def test_the_scan_flags_each_seeded_spelling(source: str) -> None:
         "from datetime import datetime, timezone\nx = datetime.now(timezone.utc).isoformat()\n",
         "import pandas as pd\nx = pd.Timestamp.utcnow()\n",
         "x = value.replace('Z', '+00:00')\n",
+        "from datetime import datetime, timezone\nx = datetime.now(tz=timezone.utc).isoformat()\n",
+        "from datetime import datetime\nx = datetime.now().year\n",
     ],
 )
 def test_the_scan_leaves_the_one_shape_and_unrelated_calls_alone(source: str) -> None:
