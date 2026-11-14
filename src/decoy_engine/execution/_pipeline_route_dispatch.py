@@ -52,11 +52,15 @@ def execute_route(
         bind_duckdb_run(ctx.out_of_core_threads) as recorder,
         bind_gate(ctx, decision.route if ctx.has_mask_table else "full_frame") as gate,
     ):
-        # Before any source read or sink write: a callable sink delivers on `write`.
+        # Before any sink write or route read: a callable sink delivers on `write`. The run
+        # context and the gate's snapshot have already read source metadata.
         refusal = post_scan_sink_refusal(
             ctx.config, post_scan_sink_kind(ctx.sink), deferred=gate.deferred
         )
         if refusal is not None:
+            # A literal symbol keeps the ad-hoc-code sentry satisfied; the guard keeps code and
+            # message in step with what the predicate returned.
+            assert refusal == reasons.runtime.POST_SCAN_INTEGRITY_SINK_UNREADABLE  # noqa: S101
             raise ExecutionError(
                 code=reasons.runtime.POST_SCAN_INTEGRITY_SINK_UNREADABLE,
                 message=reasons.get("runtime", refusal).summary,

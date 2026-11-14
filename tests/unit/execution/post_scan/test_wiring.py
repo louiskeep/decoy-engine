@@ -158,6 +158,7 @@ def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
     exc = _blocked(lambda: _run(config, mode, sink=ParquetTransactionalSink(out)))
     assert exc.reason == DUPLICATES
     assert not out.exists()
+    assert not list(tmp_path.glob("_decoy_stage_*"))
 
 
 def test_at16_integrity_with_a_sink_the_gate_cannot_read_refuses_fail_closed(
@@ -169,6 +170,7 @@ def test_at16_integrity_with_a_sink_the_gate_cannot_read_refuses_fail_closed(
         _run(_config(tmp_path, broken=True, integrity=True), "auto", sink=sink)
     assert str(getattr(caught.value, "code", "")) == "post_scan_integrity_sink_unreadable"
     assert sink.calls == []
+    assert not list(tmp_path.glob("_decoy_stage_*"))
 
 
 @pytest.mark.parametrize("route", ["sequential", "out_of_core"])

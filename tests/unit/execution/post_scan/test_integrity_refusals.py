@@ -110,6 +110,7 @@ def test_integrity_with_a_transform_bearing_table_refuses_a_staged_commit(tmp_pa
         TRANSFORMED,
     )
     assert not out.exists()
+    assert not list(tmp_path.glob("_decoy_stage_*"))
 
 
 # ----- a real finding, no monkeypatch: text_redact told to look only for SSNs leaves emails --------------------------------------------------------
