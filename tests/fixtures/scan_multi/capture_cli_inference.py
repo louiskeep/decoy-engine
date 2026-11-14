@@ -161,7 +161,7 @@ def main() -> int:
         inference = _infer_strategy_for_column(_stats(case))
         recorded.append({**case, "expected": _decision(inference, _emit_column_yaml, rewrite)})
     document = {
-        "source": "decoy CLI 8fba6af _infer_strategy_for_column (review text: one product word replaced)",
+        "source": "decoy CLI 8fba6af _infer_strategy_for_column (review text: retired product name replaced by The scan)",
         "cases": recorded,
     }
     (HERE / "cli_inference_8fba6af.json").write_text(json.dumps(document, indent=2) + "\n")
