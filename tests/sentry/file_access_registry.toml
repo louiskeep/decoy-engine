@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 197 (asserted by the sentry).
+# Count: 196 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1778,16 +1778,6 @@ disposition = "private"
 rule = "path under the per-run root `engine_scratch_root` created by `protected_scratch_dir`, named by an opaque per-run counter (s0000), never by a table, column or edge name"
 owner = "cam"
 reason = "F06 typed staging copy of a declared out-of-core source; engine-owned scratch, read back only through `scratch_access_for`"
-
-[[entry]]
-module = "decoy_engine/execution/pipeline/_post_scan.py"
-function = "PostScanGate._tee"
-sink = "pyarrow.parquet.write_table"
-ordinal = 0
-disposition = "read"
-rule = "in-memory Arrow buffer (`pa.BufferOutputStream`) of the key and cast columns of one table"
-owner = "cam"
-reason = "serializes the baseline tee to bytes; the file itself goes through `fileaccess.write_private` under the gate's `protected_scratch_dir`"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"

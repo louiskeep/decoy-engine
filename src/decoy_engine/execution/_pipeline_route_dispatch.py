@@ -20,7 +20,7 @@ from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
 from decoy_engine.execution.out_of_core._duckdb import bind_duckdb_run, current_duckdb_run
-from decoy_engine.execution.pipeline._post_scan import attach_cast_run, tee_loader
+from decoy_engine.execution.pipeline._post_scan import attach_cast_run, tee_reader
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
@@ -47,7 +47,7 @@ def execute_route(
     # block lists every connection the run opened.
     with (
         bind_duckdb_run(ctx.out_of_core_threads) as recorder,
-        bind_gate(ctx, decision.route) as gate,
+        bind_gate(ctx, decision.route if ctx.has_mask_table else "full_frame") as gate,
     ):
         if ctx.has_mask_table and decision.route == "sequential":
             result = execute_sequential_route(ctx, decision)
@@ -68,11 +68,14 @@ def execute_route(
 def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
     """Run the sequential route; the out-of-core decline (if any) is stamped on its result."""
     loader = _psrc.resolve_sequential_loader(
-        ctx.source_loader, ctx.caller_sources, config=ctx.config, prepared=ctx.prepared.prepared
+        ctx.source_loader,
+        ctx.caller_sources,
+        config=ctx.config,
+        prepared=ctx.prepared.prepared,
+        tee=tee_reader(),
     )
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
     attach_cast_run(cast_run)
-    loader = tee_loader(loader)
     try:
         sequential_result = _sequential_route(ctx, decision, loader, cast_run)
     except BaseException as failure:
