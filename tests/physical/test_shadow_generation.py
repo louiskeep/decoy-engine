@@ -35,6 +35,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from decoy_engine import reasons
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._plan import PhysicalPlan, SynthesisStage
@@ -49,7 +50,7 @@ from decoy_engine.execution.physical._shadow_generation import require_pure_gene
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._types import DriverId, ExecutionScope
 from decoy_engine.execution.physical.drivers._synthesis import SynthesisStageAdapter
-from decoy_engine.plan import compile_plan
+from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.plan._types import Plan
 from decoy_engine.profile import Profile
 from tests.physical._shadow_helpers import (
@@ -417,8 +418,6 @@ def test_positive_cross_run_determinism() -> None:
     [
         [{"name": "id", "type": "sequence", "start": "abc"}],
         [{"name": "id", "type": "sequence", "start": [1, 2]}],
-        [{"name": "id", "type": "sequence", "start": float("inf")}],
-        [{"name": "id", "type": "sequence", "start": 1, "prefix": "\ud800"}],
         [{"name": "id", "type": "sequence", "start": 1, "null_probability": "abc"}],
         [{"name": "tier", "type": "categorical", "categories": ["A", "B"], "weights": [1]}],
         [{"name": "tier", "type": "categorical", "categories": [1, "a", {"x": 1}]}],
@@ -426,8 +425,6 @@ def test_positive_cross_run_determinism() -> None:
     ids=[
         "sequence-start-non-numeric-string",
         "sequence-start-list",
-        "sequence-start-infinite",
-        "sequence-prefix-surrogate",
         "sequence-null-probability-non-numeric",
         "categorical-weights-length-mismatch",
         "categorical-mixed-category-types",
@@ -440,9 +437,31 @@ def test_malformed_leaf_knob_is_identical_rejection(columns: list[dict[str, Any]
     assert_generation_failures_match(diff)
 
 
+@pytest.mark.parametrize(
+    "columns",
+    [
+        [{"name": "id", "type": "sequence", "start": float("inf")}],
+        [{"name": "id", "type": "sequence", "start": 1, "prefix": "\ud800"}],
+    ],
+    ids=["sequence-start-infinite", "sequence-prefix-surrogate"],
+)
+@pytest.mark.usefixtures("lenient_generate_checks")
+def test_a_leaf_knob_json_cannot_hold_is_refused_before_either_route_runs(
+    columns: list[dict[str, Any]],
+) -> None:
+    """Infinity and an unpaired surrogate never reach generation: plan compile refuses them,
+    so the shadow and the oracle have nothing to reject differently."""
+    config = _generate_config(columns=columns, bypass_parse=True)
+    with pytest.raises(PlanCompileError) as caught:
+        run_generation_shadow_and_oracle(config)
+    assert caught.value.code == reasons.plan.CONFIG_VALUE_NOT_JSON
+
+
+# NaN, Infinity and surrogates are refused at compile (above), so the sweeps draw only values a
+# config can carry past the hash.
 _GARBAGE_LEAF_VALUES = st.one_of(
     st.text(min_size=0, max_size=6),
-    st.floats(allow_nan=True, allow_infinity=True, width=32),
+    st.floats(allow_nan=False, allow_infinity=False, width=32),
     st.integers(min_value=-1000, max_value=1000),
     st.lists(st.integers(min_value=-5, max_value=5), max_size=3),
     st.none(),
@@ -453,7 +472,7 @@ _GARBAGE_LEAF_VALUES = st.one_of(
 # generation, so it is not a knob this differential sweep can exercise.
 _START_GARBAGE_VALUES = st.one_of(
     st.text(min_size=0, max_size=6),
-    st.floats(allow_nan=True, allow_infinity=True, width=32),
+    st.floats(allow_nan=False, allow_infinity=False, width=32),
     st.integers(min_value=-1000, max_value=1000),
     st.lists(st.integers(min_value=-5, max_value=5), max_size=3),
 )

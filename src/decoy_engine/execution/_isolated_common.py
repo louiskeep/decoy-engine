@@ -24,6 +24,7 @@ consume.
 from __future__ import annotations
 
 import errno
+import os
 import re
 import resource
 import signal
@@ -36,6 +37,7 @@ import duckdb
 from decoy_engine import reasons
 from decoy_engine.execution._isolated_memwatch import MemoryEvidence
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.internal.env_flags import env_flag
 from decoy_engine.reasons import ReasonRecord
 from decoy_engine.validation_result import CODES
 
@@ -54,6 +56,7 @@ __all__ = [
     "classify_abnormal_exit",
     "commit_error_text",
     "exception_error_text",
+    "inside_isolated_worker",
     "is_memory_failure",
     "peak_rss_mb",
     "scrub_error_text",
@@ -70,6 +73,13 @@ __all__ = [
 # re-entrant probe then reports a non-isolated measurement and routing falls
 # back to the in-process estimator, never a grandchild).
 ISOLATED_WORKER_ENV = "DECOY_INSIDE_ISOLATED_WORKER"
+
+
+def inside_isolated_worker() -> bool:
+    """True when the marker holds an accepted true spelling; an unknown spelling raises
+    `EnvFlagError`, so a stray value fails the run before any spawn."""
+    return env_flag(ISOLATED_WORKER_ENV, os.environ.get(ISOLATED_WORKER_ENV))
+
 
 # The envelope transport contract (dennis review HIGH-1): a known FILE in
 # work_root, never the last line of stdout. Any extra child stdout (atexit

@@ -374,9 +374,8 @@ DIRTY = {
     "none_category": [
         {"name": "tier", "type": "categorical", "categories": ["A", None], "weights": [0, 1]}
     ],
-    "nan_category": [
-        {"name": "amt", "type": "categorical", "categories": [float("nan"), 1.0], "weights": [1, 0]}
-    ],
+    # A NaN category is refused at compile (`config_value_not_json`); see
+    # tests/unit/plan/test_config_value_not_json.py. No config reaches this fallback with one.
     "nested_category": [{"name": "tags", "type": "categorical", "categories": [[1, 2], [3, 4]]}],
 }
 

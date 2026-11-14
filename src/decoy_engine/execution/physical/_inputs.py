@@ -35,7 +35,6 @@ before the first byte is masked.
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -43,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine._canonical import canonical_json_bytes
 from decoy_engine.profile._readers import LazySource
 
 
@@ -90,8 +90,9 @@ def _canonical_config_json(config: Mapping[str, Any]) -> str:
     config fields `compile_plan` folds in; `classify_job` reads others (e.g.
     per-column `when` filters) that a mutation could change without moving
     `pipeline_config_hash` -- so the identity hash pins the exact config
-    content instead. `default=repr` keeps any non-JSON scalar deterministic."""
-    return json.dumps(thaw_config(config), sort_keys=True, default=repr)
+    content instead. A value JSON cannot hold raises `CanonicalJsonError` rather than hashing its
+    repr, which could differ between two runs of the same config."""
+    return canonical_json_bytes(thaw_config(config)).decode("utf-8")
 
 
 if TYPE_CHECKING:

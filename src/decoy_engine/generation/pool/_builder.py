@@ -21,7 +21,6 @@ different namespaces have different pools.
 from __future__ import annotations
 
 import hashlib
-import json
 import threading
 import time
 import weakref
@@ -30,6 +29,7 @@ from typing import Any
 import numpy as np
 
 from decoy_engine import reasons
+from decoy_engine._canonical import seed_fingerprint_bytes
 from decoy_engine.determinism import derive
 from decoy_engine.generation.pool._errors import PoolCapacityError
 from decoy_engine.generation.pool._value_pool import ValuePool, _freeze_array
@@ -38,10 +38,7 @@ from decoy_engine.providers_v2 import ProviderRegistry, ProviderSpec
 
 def _config_hash(config: dict[str, Any] | None) -> str:
     """SHA-256 over canonical JSON of the ProviderSpec.extra dict."""
-    canonical = json.dumps(
-        config or {}, sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return hashlib.sha256(seed_fingerprint_bytes(config or {})).hexdigest()
 
 
 _ADAPTER_SERIAL: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()

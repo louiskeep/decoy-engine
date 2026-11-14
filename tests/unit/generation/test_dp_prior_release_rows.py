@@ -53,11 +53,17 @@ _V0_22_0_ROWS = (
     "fcf186c32c5dd41eba586238760f12c481171e908082dbc31d3295b387be7cf0",
     "d5898d1ff084203f455907d8648e59e0156e320d0e5a12ba1e22aeba8ad6675d",
 )
-# The two rows this release certifies: the dev/CI lock with the engine at 0.23.0, and the CLI
+# The two rows v0.23.0 certified: the dev/CI lock with the engine at 0.23.0, and the CLI
 # runtime profile (with the classifier stack) on engine 0.23.0.
 _V0_23_0_ROWS = (
     "bdec8dd8c27cfa533b9cea788c7254b66957977f9670c7004a4dc90028929224",
     "73acf493827ce8dbd72c6da486eb4f30e72a66cf7abb90b0127cef3e14f75eec",
+)
+# The two rows this release certifies: the dev/CI lock with the engine at 0.24.0, and the CLI
+# runtime profile on engine 0.24.0.
+_V0_24_0_ROWS = (
+    "044f8c7b26dfaac7e0bc3973ee3a355e64379ede67a596410aceed74acf6c366",
+    "620a48a5b979d483aa3522900590c4fe5a376aeb9cedbd16a415639522c1204b",
 )
 _ALL_ROWS = (
     _V0_17_0_ROWS
@@ -68,6 +74,7 @@ _ALL_ROWS = (
     + _V0_21_0_ROWS
     + _V0_22_0_ROWS
     + _V0_23_0_ROWS
+    + _V0_24_0_ROWS
 )
 
 

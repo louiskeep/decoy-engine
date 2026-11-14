@@ -34,6 +34,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
 from decoy_engine import fileaccess
+from decoy_engine._canonical import seed_fingerprint_bytes
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.fileaccess import FileAccess, FileRole, entry_point
 
@@ -201,8 +202,7 @@ def strategy_config_fingerprint(
                 raise RuntimeError(_NO_DIGEST.format(key))
             digest = _snapshot_content_digest(str(path), key, role)
         payload[key] = digest
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(seed_fingerprint_bytes(payload)).hexdigest()
 
 
 # RNG families a generated column may drive. Each gets a disjoint sub-key so

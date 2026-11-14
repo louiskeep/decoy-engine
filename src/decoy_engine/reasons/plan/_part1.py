@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
     "ALLOW_COLLISIONS_MODE_CONFLICT",
@@ -374,23 +373,21 @@ DERIVED_AGGREGATE_OP_INVALID = _d("derived_aggregate_op_invalid", "Derived aggre
 DERIVED_AGGREGATE_OP_MISSING = _d("derived_aggregate_op_missing", "Derived aggregate op missing.")
 DERIVED_BOUNDS_INVALID = _d("derived_bounds_invalid", "Derived bounds invalid.")
 BUCKET_PERTURB_REQUIRES_NAMESPACE = _d(
-    "bucket_perturb_requires_namespace", "Bucket perturb requires namespace.", since=UNRELEASED
+    "bucket_perturb_requires_namespace", "Bucket perturb requires namespace.", since="1.26.0"
 )
 CATEGORICAL_REQUIRES_NAMESPACE = _d(
-    "categorical_requires_namespace", "Categorical requires namespace.", since=UNRELEASED
+    "categorical_requires_namespace", "Categorical requires namespace.", since="1.26.0"
 )
 DATE_SHIFT_REQUIRES_NAMESPACE = _d(
-    "date_shift_requires_namespace", "Date shift requires namespace.", since=UNRELEASED
+    "date_shift_requires_namespace", "Date shift requires namespace.", since="1.26.0"
 )
-FPE_REQUIRES_NAMESPACE = _d("fpe_requires_namespace", "FPE requires namespace.", since=UNRELEASED)
-HASH_REQUIRES_NAMESPACE = _d(
-    "hash_requires_namespace", "Hash requires namespace.", since=UNRELEASED
-)
-NESTED_STRATEGY_UNSET = _d("nested_strategy_unset", "Nested strategy unset.", since=UNRELEASED)
-NESTED_TARGET_UNSET = _d("nested_target_unset", "Nested target unset.", since=UNRELEASED)
+FPE_REQUIRES_NAMESPACE = _d("fpe_requires_namespace", "FPE requires namespace.", since="1.26.0")
+HASH_REQUIRES_NAMESPACE = _d("hash_requires_namespace", "Hash requires namespace.", since="1.26.0")
+NESTED_STRATEGY_UNSET = _d("nested_strategy_unset", "Nested strategy unset.", since="1.26.0")
+NESTED_TARGET_UNSET = _d("nested_target_unset", "Nested target unset.", since="1.26.0")
 SHUFFLE_REQUIRES_NAMESPACE = _d(
-    "shuffle_requires_namespace", "Shuffle requires namespace.", since=UNRELEASED
+    "shuffle_requires_namespace", "Shuffle requires namespace.", since="1.26.0"
 )
 TOKENIZE_REQUIRES_NAMESPACE = _d(
-    "tokenize_requires_namespace", "Tokenize requires namespace.", since=UNRELEASED
+    "tokenize_requires_namespace", "Tokenize requires namespace.", since="1.26.0"
 )
