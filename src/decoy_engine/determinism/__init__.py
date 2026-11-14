@@ -12,6 +12,9 @@ Public API:
         derive,
         derive_index,
         derive_value,
+        fresh_seed,
+        resolve_seed,
+        seed_bytes_to_int,
         Domain,
         IdentityDomain,
         SEED_PROTOCOL_VERSION,
@@ -42,6 +45,7 @@ from decoy_engine.determinism._derive import (
     derive_index,
     derive_value,
 )
+from decoy_engine.determinism._seeds import fresh_seed, resolve_seed, seed_bytes_to_int
 
 __all__ = [
     "SEED_PROTOCOL_VERSION",
@@ -51,4 +55,7 @@ __all__ = [
     "derive",
     "derive_index",
     "derive_value",
+    "fresh_seed",
+    "resolve_seed",
+    "seed_bytes_to_int",
 ]

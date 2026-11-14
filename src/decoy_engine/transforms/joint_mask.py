@@ -251,6 +251,7 @@ def apply_joint_mask(
     job_seed: bytes,
     namespace: str | None = None,
     key_series: pd.Series | None = None,
+    table: str | None = None,
 ) -> pd.DataFrame:
     """Apply joint_mask to ``df``, writing all target columns in one pass.
 
