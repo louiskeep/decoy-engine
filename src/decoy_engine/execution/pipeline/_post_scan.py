@@ -209,11 +209,22 @@ class PostScanGate:
 
         def teed(name: str) -> pa.Table:
             table = loader(name)
-            if name in wanted and name not in self._teed:
+            if name in wanted and name not in self._teed and self._unreadable(name):
                 self._tee(name, table, wanted[name])
             return table
 
         return teed
+
+    def _unreadable(self, name: str) -> bool:
+        """Whether the gate cannot re-read `name` itself: the loader supplies it, or its lazy
+        file is transformed as it loads. Any other input is re-read under the identity check, so
+        a file that changed after the route read it is still caught."""
+        source = self._sources.get(name)
+        if source is None:
+            return True
+        return isinstance(source, LazySource) and name in transform_bearing_mask_tables(
+            self._config
+        )
 
     def _tee(self, name: str, table: pa.Table, columns: tuple[str, ...]) -> None:
         cast = self._cast_run
