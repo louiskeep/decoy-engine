@@ -32,10 +32,10 @@ from decoy_engine.generation import synthesize
 from tests.parity._f2_mixed_support import (
     CHILD,
     PARENT,
+    RecordingSink,
     child_table,
     mixed_config,
     oracle,
-    readable_recording_sink,
     run,
 )
 
@@ -86,7 +86,7 @@ def test_mixed_route_matches_the_oracle_in_values_and_schema(tmp_path: Path) -> 
 
 def test_mixed_route_sink_publication_matches_the_oracle(tmp_path: Path) -> None:
     config, child = _job(tmp_path, [ID, COUNT, KIND], rows=5)
-    sink = readable_recording_sink()
+    sink = RecordingSink()
     run(config, {CHILD: child}, sink=sink)
     want = oracle(config, {CHILD: child}).outputs
     assert sink.published is not None
@@ -121,7 +121,7 @@ def test_a_zero_row_generated_parent_matches_the_oracle_exactly(tmp_path: Path) 
     assert [str(f.type) for f in got.outputs[PARENT].schema] == ["null", "null"]
     assert got.outputs[PARENT].num_rows == 0
 
-    sink = readable_recording_sink()
+    sink = RecordingSink()
     run(config, {CHILD: child}, sink=sink)
     assert sink.calls == []
     _assert_same_values_and_fields(got.outputs, oracle(config, {CHILD: child}).outputs)
@@ -221,7 +221,7 @@ def test_pregenerated_path_does_not_touch_the_sink(tmp_path: Path) -> None:
     """The declined route returns its outputs in the result, as the full-frame route does; the
     sink sees no write, so the returned tables are the publication."""
     config, child = _job(tmp_path, [ID, ALL_NULL, KIND], rows=5)
-    sink = readable_recording_sink()
+    sink = RecordingSink()
     got = run(config, {CHILD: child}, sink=sink)
     assert sink.calls == []
     _assert_same_values_and_fields(got.outputs, oracle(config, {CHILD: child}).outputs)

@@ -309,31 +309,26 @@ class DriverSpy:
         monkeypatch.setattr(StreamFkJoiner, "__init__", r_init)
 
 
-def CountingSink(target: Path) -> Any:
-    """The engine's own sink with its publish and abort calls counted.
+class CountingSink(ParquetTransactionalSink):
+    """A real sink that counts the publish/abort calls."""
 
-    Declared keys are gated before commit and the gate reads back only the exact engine sink
-    class, so the counting is wrapped on the instance rather than added by a subclass."""
-    sink: Any = ParquetTransactionalSink(target)
-    real_batches, real_commit, real_abort = sink.write_batches, sink.commit, sink.abort
-    sink.commits = 0
-    sink.aborts = 0
-    sink.staged = []
+    def __init__(self, target: Path) -> None:
+        super().__init__(target)
+        self.commits = 0
+        self.aborts = 0
+        self.staged: list[str] = []
 
-    def write_batches(table: str, batches: Any, *, schema: pa.Schema) -> None:
-        sink.staged.append(table)
-        real_batches(table, batches, schema=schema)
+    def write_batches(self, table: str, batches: Any, *, schema: pa.Schema) -> None:
+        self.staged.append(table)
+        super().write_batches(table, batches, schema=schema)
 
-    def commit() -> None:
-        sink.commits += 1
-        real_commit()
+    def commit(self) -> None:
+        self.commits += 1
+        super().commit()
 
-    def abort() -> None:
-        sink.aborts += 1
-        real_abort()
-
-    sink.write_batches, sink.commit, sink.abort = write_batches, commit, abort
-    return sink
+    def abort(self) -> None:
+        self.aborts += 1
+        super().abort()
 
 
 # ---------------------------------------------------------------------------

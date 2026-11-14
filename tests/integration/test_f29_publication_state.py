@@ -9,7 +9,6 @@ the engine did not check.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pyarrow as pa
 import pytest
@@ -27,22 +26,17 @@ from decoy_engine.reasons import (
     RetryClass,
 )
 
-from ._f29_jobs import ENGINE_VERSION, PLAIN_LANE, fk_job, plain_job
+from ._f29_jobs import ENGINE_VERSION, fk_job
 
 
-def _counting_sink(target: Path) -> Any:
-    """The engine's own sink counting its aborts. The post-scan gate reads back only the exact
-    engine class, so the count is set on the instance, not added by a subclass."""
-    sink: Any = ParquetTransactionalSink(target)
-    real_abort = sink.abort
-    sink.aborts = 0
+class _CountingSink(ParquetTransactionalSink):
+    def __init__(self, target: Path) -> None:
+        super().__init__(target)
+        self.aborts = 0
 
-    def abort() -> None:
-        sink.aborts += 1
-        real_abort()
-
-    sink.abort = abort
-    return sink
+    def abort(self) -> None:
+        self.aborts += 1
+        super().abort()
 
 
 class _PlainSink:
@@ -76,13 +70,6 @@ def _run(tmp_path: Path, sink):
     )
 
 
-def _run_plain(tmp_path: Path, sink):
-    """A custom sink is never read back, so a job with declared keys never reaches it. This one
-    declares none and streams into the sink through the chunk lane."""
-    cfg, sources = plain_job(tmp_path)
-    return run_pipeline(cfg, sources, engine_version=ENGINE_VERSION, sink=sink, **PLAIN_LANE)
-
-
 def test_post_commit_failure_preserves_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -92,7 +79,7 @@ def test_post_commit_failure_preserves_output(
     monkeypatch.setattr(
         "decoy_engine.execution._sequential.finalize_committed_quarantine", sidecar_fails
     )
-    sink = _counting_sink(tmp_path / "out")
+    sink = _CountingSink(tmp_path / "out")
     with pytest.raises(OSError) as info:
         _run(tmp_path, sink)
     # The committed tables survive, and the committed output was never aborted.
@@ -113,7 +100,7 @@ def test_post_commit_failure_preserves_output(
 def test_a_custom_sink_without_evidence_is_unknown_and_attempted(tmp_path: Path) -> None:
     sink = _PlainSink(fail_commit=True)
     with pytest.raises(RuntimeError, match="commit exploded") as info:
-        _run_plain(tmp_path, sink)
+        _run(tmp_path, sink)
     assert sink.aborts == 1  # the failed commit is aborted, exactly as before
     record = reason_from_exception(info.value)
     assert record.context.operation is Operation.COMMIT
@@ -126,7 +113,7 @@ def test_a_custom_sink_without_evidence_is_unknown_and_attempted(tmp_path: Path)
 def test_a_failing_abort_never_masks_the_primary_failure(tmp_path: Path) -> None:
     sink = _PlainSink(fail_commit=True, fail_abort=True)
     with pytest.raises(RuntimeError, match="commit exploded") as info:  # the primary, not the abort
-        _run_plain(tmp_path, sink)
+        _run(tmp_path, sink)
     record = reason_from_exception(info.value)
     assert record.context.cleanup_state is CleanupState.FAILED
     assert record.code != "cleanup_failed"  # cleanup failure is secondary state, not the reason

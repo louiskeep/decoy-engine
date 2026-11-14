@@ -42,13 +42,13 @@ from tests.parity._f2_mixed_support import (
     COMPANION_PRESENT,
     FK,
     PARENT,
+    RecordingSink,
     assert_outputs_identical,
     child_table,
     ipc_bytes,
     mask_evidence,
     mixed_config,
     oracle,
-    readable_recording_sink,
     run,
     warning_signature,
 )
@@ -447,7 +447,7 @@ def test_dirty_non_key_column_falls_back_to_full_frame_without_regenerating(
     assert got.route.startswith("declined:mixed_runtime_declined:"), got.route
     assert got.calls == 1  # the fallback reuses the generated outputs
     # A decline happens before any sink write.
-    sink = readable_recording_sink()
+    sink = RecordingSink()
     run(config, {CHILD: child}, sink=sink)
     assert sink.calls == []
 
@@ -963,7 +963,7 @@ def test_fail_raises_the_oracle_error_and_publishes_nothing(
         f"policy:fail/{kind}", config, {CHILD: child}, static_reasons, generate_calls
     )
     assert got.error is not None and got.error.code == "orphan_fk_violation"
-    sink = readable_recording_sink()
+    sink = RecordingSink()
     with pytest.raises(ExecutionError) as err:
         run(config, {CHILD: child}, sink=sink)
     assert err.value.code == "orphan_fk_violation"

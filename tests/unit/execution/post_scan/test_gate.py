@@ -117,11 +117,10 @@ def test_before_commit_after_a_run_lets_the_commit_through() -> None:
     assert gate.ran
 
 
-def test_before_commit_with_a_sink_it_cannot_read_refuses_an_unrun_gate() -> None:
+def test_before_commit_with_a_sink_it_cannot_read_defers_the_gate() -> None:
     gate = PostScanGate(KEYS)
-    exc = blocked(lambda: gate.before_commit(object()))
-    assert exc.reason == "post_scan.check_error"
-    assert not gate.ran and not gate.deferred
+    gate.before_commit(object())
+    assert gate.output_unreadable and gate.ran and not gate.deferred
 
 
 def test_before_commit_with_no_sink_on_a_required_unrun_gate_refuses() -> None:

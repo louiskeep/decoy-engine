@@ -530,7 +530,6 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
         engine_version=ctx.engine_version,
         prepared_tables=ctx.prepared.prepared,
         mixed_admitted=mixed is not None,
-        sink=ctx.sink,
     )
     execution_plan_decision, route_chunked, keep_lazy = _pipeline_routing.decide_chunk_route(
         ctx.config,

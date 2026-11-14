@@ -307,55 +307,70 @@ def test_at27_an_unchanged_lazy_input_passes_the_staged_gate(tmp_path: Path) -> 
     assert "post_scan_gate_deferred" not in result.quality_metrics
 
 
-# ----- AT-28: a sink the gate cannot read keeps the run resident --------------------------------
+# ----- AT-28: a sink the gate cannot read is deferred, never moved resident ---------------------
 
 
 def _callable_sink(seen: list[str]) -> Any:
     return _transactional_sink._CallableSinkAdapter(lambda table, data: seen.append(table))
 
 
-def test_at28_a_callable_sink_with_keys_stays_resident_and_blocks_before_commit(
+def _unreadable_warnings(result: Any) -> list[Any]:
+    return [w for w in result.warnings if w.code is reasons.warning.POST_SCAN_OUTPUT_UNREADABLE]
+
+
+def test_at28_a_callable_sink_with_keys_keeps_its_route_and_is_written_once(
     tmp_path: Path,
 ) -> None:
     seen: list[str] = []
-    exc = _blocked(lambda: _run(_config(tmp_path, broken=True), "auto", sink=_callable_sink(seen)))
-    assert exc.reason == DUPLICATES
-    assert seen == []
-    control: list[str] = []
-    result, routes = _run(_config(tmp_path), "auto", sink=_callable_sink(control))
-    assert routes == ["full_frame"]
-    # The same job into a sink the gate can read takes the bounded route.
-    _, readable = _run(_config(tmp_path), "auto", sink=ParquetTransactionalSink(tmp_path / "ok"))
-    assert readable != ["full_frame"]
-    assert control == [] and set(result.outputs) == {"child", "parent"}
+    result, routes = _run(_config(tmp_path), "auto", sink=_callable_sink(seen))
+    assert routes != ["full_frame"]
+    assert sorted(seen) == ["child", "parent"]
+    assert result.outputs == {}
+    assert result.quality_metrics["post_scan_gate_deferred"]["code"] == "gate_deferred_route"
+    assert len(_unreadable_warnings(result)) == 1
+
+
+def test_at28_a_foreign_sink_class_is_written_and_committed_once(tmp_path: Path) -> None:
+    sink = RecordingSink()
+    result, routes = _run(_config(tmp_path), "auto", sink=sink)
+    assert routes != ["full_frame"]
+    assert [c for c in sink.calls if c[0] == "commit"] == [("commit",)]
+    assert {c[1] for c in sink.calls if c[0].startswith("write")} == {"child", "parent"}
+    assert "post_scan_gate_deferred" in result.quality_metrics
+    assert len(_unreadable_warnings(result)) == 1
+
+
+@pytest.mark.parametrize("route", ["sequential", "out_of_core"])
+def test_at28_an_explicit_route_with_a_foreign_sink_runs_deferred(
+    tmp_path: Path, route: str
+) -> None:
+    seen: list[str] = []
+    result, routes = _run(_config(tmp_path), route, sink=_callable_sink(seen))
+    assert routes == [route]
+    assert sorted(seen) == ["child", "parent"]
+    assert "post_scan_gate_deferred" in result.quality_metrics
+    assert len(_unreadable_warnings(result)) == 1
+
+
+def test_at28_a_readable_sink_is_not_deferred(tmp_path: Path) -> None:
+    result, _ = _run(_config(tmp_path), "auto", sink=ParquetTransactionalSink(tmp_path / "ok"))
     assert "post_scan_gate_deferred" not in result.quality_metrics
+    assert _unreadable_warnings(result) == []
 
 
-def test_at28_a_foreign_sink_class_is_never_read_back(tmp_path: Path) -> None:
-    _, routes = _run(_config(tmp_path), "auto", sink=RecordingSink())
-    assert routes == ["full_frame"]
-
-
-def test_at28_the_resident_reason_by_sink_kind() -> None:
+def test_at28_the_resident_reason_ignores_the_sink() -> None:
     keys = {"relationships": [{"x": 1}]}
     assert post_scan_resident_reason(keys) is None
-    assert post_scan_resident_reason(keys, sink_kind=READABLE) is None
-    assert post_scan_resident_reason(keys, sink_kind="x.Foreign") is (
-        reasons.route.POST_SCAN_KEYS_RESIDENT
-    )
-    assert post_scan_resident_reason({}, sink_kind="x.Foreign") is None
+    assert post_scan_resident_reason({}) is None
     both = {**keys, "post_scan": {"integrity": True}}
-    assert post_scan_resident_reason(both, sink_kind="x.Foreign") is (
-        reasons.route.POST_SCAN_INTEGRITY_REQUESTED
-    )
+    assert post_scan_resident_reason(both) is reasons.route.POST_SCAN_INTEGRITY_REQUESTED
 
 
-def test_at28_a_commit_the_gate_cannot_read_refuses_instead_of_deferring() -> None:
+def test_at28_a_commit_the_gate_cannot_read_defers_instead_of_refusing() -> None:
     sink = RecordingSink()
     gate = PostScanGate({"relationships": [{"x": 1}]})
-    with pytest.raises(PostScanBlockedError) as caught:
-        gate.before_commit(sink)
-    assert caught.value.reason == "post_scan.check_error"
+    gate.before_commit(sink)
+    assert gate.output_unreadable and gate.ran
     assert sink.calls == []
 
 

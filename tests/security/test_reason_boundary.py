@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import errno
 import json
-from typing import Any
 
 import pytest
 
@@ -237,36 +236,24 @@ def test_a_hostile_callback_exception_never_reaches_events_results_or_logs(
     from decoy_engine import progress
     from decoy_engine.execution import run_pipeline
     from decoy_engine.execution._isolated_run import run_pipeline_isolated
-    from tests.integration._f29_jobs import ENGINE_VERSION, PLAIN_LANE, fk_job, plain_job
+    from tests.integration._f29_jobs import ENGINE_VERSION, fk_job
 
     leak = "ZXQ-CALLBACK-LEAK-9921"
     hostile = type("Leak9921Error", (RuntimeError,), {})
 
-    class HostileSink:
-        """A custom sink is never read back, so the job declares no keys and streams into it."""
+    def callback(table: str, data: pa.Table) -> None:
+        raise hostile(f"{leak} postgres://u:p@h/db")
 
-        def write(self, table: str, data: pa.Table) -> None:
-            raise hostile(f"{leak} postgres://u:p@h/db")
-
-        def write_batches(self, table: str, batches: Any, *, schema: pa.Schema) -> None:
-            raise hostile(f"{leak} postgres://u:p@h/db")
-
-        def commit(self) -> None:
-            pass
-
-        def abort(self) -> None:
-            pass
-
-    cfg, sources = plain_job(tmp_path)
+    cfg, sources = fk_job(tmp_path)
     events: list[progress.ProgressEvent] = []
     with caplog.at_level(logging.DEBUG), pytest.raises(RuntimeError) as info:
         run_pipeline(
             cfg,
             sources,
             engine_version=ENGINE_VERSION,
-            sink=HostileSink(),
+            execution_mode="sequential",
+            sink=callback,
             progress=progress.CallbackSink(events.append),
-            **PLAIN_LANE,
         )
     secret_cfg, secret_sources = fk_job(tmp_path, mask_secret_ref=f"env:{leak.replace('-', '_')}")
     with caplog.at_level(logging.DEBUG):

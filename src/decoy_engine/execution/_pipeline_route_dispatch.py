@@ -57,7 +57,7 @@ def execute_route(
             result = execute_mixed_route(ctx, decision)
         else:
             result = _pipeline_full_frame.run_full_frame_route(ctx, decision)
-        settle(gate, ctx, result)
+        result = settle(gate, ctx, result)
         block = result.quality_metrics.get("resources", {}).get("out_of_core")
         if block is not None:
             block["applied"] = [asdict(pair) for pair in recorder.applied()]

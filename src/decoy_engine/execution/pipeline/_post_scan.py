@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final
 
 import pyarrow as pa
@@ -35,6 +36,7 @@ from decoy_engine.execution._chunked_input import SourceFacts, capture_source_fa
 from decoy_engine.execution._pipeline_sources import materialize_source
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
+from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.internal.memory_limit import require_megabytes
 from decoy_engine.profile import LazySource
 from decoy_engine.profiling import MEMORY_LIMIT, passes_through
@@ -95,6 +97,9 @@ class PostScanGate:
         # True on a route whose inputs or output the gate cannot read back yet: the run is then
         # checked report-only, as before the gate, and says so on its result.
         self.deferred = deferred and self.required
+        # Set when a commit arrives for a sink the gate cannot read back: the run delivers
+        # through it as it would without the gate, deferred, and says so on its result.
+        self.output_unreadable = False
         self.ran = False
         self.report: dict[str, Any] | None = None
         self.verdict: PostScanVerdict | None = None
@@ -230,10 +235,16 @@ class PostScanGate:
 
     def before_commit(self, sink: Any) -> None:
         """A required gate that has not run when a sink commits reads the sink's staged files
-        back and judges them before anything is published. A sink it cannot read, or a run whose
-        column suite needs the whole output, is refused: fail closed. With no sink (the
-        post-condition after the route) a gate that never ran is a wiring fault and refuses."""
+        back and judges them before anything is published. A sink it cannot read (a foreign
+        class, never trusted) is deferred: the run delivers through it and the result says the
+        output went unchecked. A run whose column suite needs the whole output is refused, fail
+        closed. With no sink (the post-condition after the route) a gate that never ran is a
+        wiring fault and refuses."""
         if self.ran or not self.required or self.deferred:
+            return
+        if sink is not None and not post_scan_output_readable(post_scan_sink_kind(sink)):
+            self.output_unreadable = True
+            self.ran = True
             return
         openers = _staged_openers(sink)
         if openers is not None and not post_scan_integrity_requested(self._config):
@@ -393,7 +404,7 @@ def publish_after_gate(write: Callable[[], None]) -> None:
         gate._held.append(write)
 
 
-def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult) -> None:
+def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult) -> ExecutionResult:
     """After a route returns: run the gate over the outputs when no route did, refuse a required
     gate that still has not run, publish what waited on the verdict, and stamp the report."""
     if not gate.ran:
@@ -405,7 +416,18 @@ def settle(gate: PostScanGate, ctx: PipelineRunContext, result: ExecutionResult)
         write()
     if gate.report is not None:
         result.quality_metrics["post_scan_integrity"] = gate.report
-    if gate.deferred:
+    if gate.deferred or gate.output_unreadable:
         result.quality_metrics["post_scan_gate_deferred"] = reason_ref_payload(
             reasons.post_scan.GATE_DEFERRED_ROUTE.spec.ref
         )
+    if gate.output_unreadable:
+        return replace(
+            result,
+            warnings=(
+                *result.warnings,
+                QualityWarning(
+                    code=reasons.warning.POST_SCAN_OUTPUT_UNREADABLE, provider="post_scan"
+                ),
+            ),
+        )
+    return result

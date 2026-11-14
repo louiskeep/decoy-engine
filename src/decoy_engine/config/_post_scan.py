@@ -181,15 +181,12 @@ def post_scan_output_readable(sink_kind: str) -> bool:
     return sink_kind in _READABLE_SINK_KINDS
 
 
-def post_scan_resident_reason(
-    config: Mapping[str, Any], *, sink_kind: str = NO_SINK_KIND
-) -> ReasonCode | None:
+def post_scan_resident_reason(config: Mapping[str, Any]) -> ReasonCode | None:
     """Why a job must stay on the resident route for the post-scan gate, or `None`.
 
     `post_scan.integrity` needs the whole output (the column suite is not streamed yet). Declared
-    keys need an output the gate can read back, so a sink it cannot read keeps the run resident."""
+    keys never move a route: a sink the gate cannot read keeps the route it takes on main and the
+    gate is deferred for it, because a resident run never writes a sink (plan, Foreign sinks)."""
     if post_scan_integrity_requested(config):
         return reasons.route.POST_SCAN_INTEGRITY_REQUESTED
-    if config.get("relationships") and not post_scan_output_readable(sink_kind):
-        return reasons.route.POST_SCAN_KEYS_RESIDENT
     return None

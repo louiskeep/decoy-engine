@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.config import NO_SINK_KIND, post_scan_resident_reason
+from decoy_engine.config import post_scan_resident_reason
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reasons import ReasonCode
 
@@ -77,10 +77,7 @@ def reject_any_per_table_transforms(config: Mapping[str, Any], *, route: str) ->
         reject_per_table_transforms(config, table=table, route=route)
 
 
-def post_scan_resident_for(
-    config: Mapping[str, Any], *, sink_kind: str = NO_SINK_KIND
-) -> ReasonCode | None:
+def post_scan_resident_for(config: Mapping[str, Any]) -> ReasonCode | None:
     """The one place a routing site asks whether the post-scan gate keeps the job resident:
-    every runtime, compiler and estimator site calls this. `sink_kind` is the class token of the
-    run's sink; an estimator has no sink and takes the default."""
-    return post_scan_resident_reason(config, sink_kind=sink_kind)
+    every runtime, compiler and estimator site calls this."""
+    return post_scan_resident_reason(config)

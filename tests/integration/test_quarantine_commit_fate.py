@@ -68,19 +68,25 @@ _AGE = ["10", "20", "30", "40", "50", "badX"]
 _IDS = ["p0", "p1", "p2", "p3", "p4", "p5"]
 
 
-def _commit_boom_sink(inner: ParquetTransactionalSink) -> Any:
-    """`inner` with `commit()` always raising: a late sink-side commit failure (e.g. disk full)
-    after every table has already staged. Declared keys are gated before commit and the gate
-    reads back only the engine's own sink class, so the failure is set on the instance and the
-    class stays exact (a wrapper or subclass is foreign and keeps the run resident, which never
-    touches the sink)."""
+class _CommitBoomSink:
+    """Wraps a real `ParquetTransactionalSink`; `write()`/`abort()` delegate
+    to it unchanged, but `commit()` always raises -- simulating a late
+    sink-side commit failure (e.g. disk full) after every table has already
+    staged successfully. Satisfies `_has_transactional_write_contract`
+    (write/commit/abort callables) so `run_sequential` dispatches it as a
+    transactional sink, not the non-transactional `_CallableSinkAdapter`."""
 
-    def commit() -> None:
+    def __init__(self, inner: ParquetTransactionalSink) -> None:
+        self._inner = inner
+
+    def write(self, table: str, data: pa.Table) -> None:
+        self._inner.write(table, data)
+
+    def commit(self) -> None:
         raise RuntimeError("commit boom")
 
-    sink: Any = inner
-    sink.commit = commit
-    return sink
+    def abort(self) -> None:
+        self._inner.abort()
 
 
 def _faker_col(name: str, namespace: str) -> dict[str, Any]:
@@ -176,7 +182,7 @@ class TestQuarantinePublishedOnlyOnSinkCommit:
         config = _config(tmp_path, qpath)
         sources = _sources(config)
         real = ParquetTransactionalSink(tmp_path / "out")
-        sink = _commit_boom_sink(real)
+        sink = _CommitBoomSink(real)
 
         with pytest.raises(RuntimeError, match="commit boom"):
             run_pipeline(
@@ -371,10 +377,7 @@ class TestCallableSinkWithSpecialQuarantinePath:
             config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
         )
 
-        # Declared keys keep a sink the gate cannot read resident (post-scan plan 4.7, AT-28):
-        # the callable is never invoked and the tables come back on the result instead.
-        assert seen == {}
-        assert set(result.outputs) == {"parent", "child"}
+        assert set(seen) == {"parent", "child"}
         assert result.quality_metrics["quarantine"]["total_quarantined"] == 1
 
 
@@ -385,21 +388,26 @@ class TestCallableSinkWithSpecialQuarantinePath:
 # ---------------------------------------------------------------------------
 
 
-def _abort_tracking_sink(inner: ParquetTransactionalSink) -> Any:
-    """`inner` with `abort()` recording whether it was ever called, so a test can assert the
-    fix #2 contract directly rather than relying on ParquetTransactionalSink.abort() happening
-    to be a harmless no-op when self._staging is already None post-commit. Set on the instance
-    so the class stays the one the post-scan gate can read back."""
-    sink: Any = inner
-    real_abort = inner.abort
-    sink.abort_called = False
+class _AbortTrackingSink:
+    """Wraps a real ParquetTransactionalSink; write()/commit() delegate to it
+    unchanged, but abort() records whether it was ever called, so a test can
+    assert the fix #2 contract directly rather than relying on
+    ParquetTransactionalSink.abort() happening to be a harmless no-op when
+    self._staging is already None post-commit."""
 
-    def abort() -> None:
-        sink.abort_called = True
-        real_abort()
+    def __init__(self, inner: ParquetTransactionalSink) -> None:
+        self._inner = inner
+        self.abort_called = False
 
-    sink.abort = abort
-    return sink
+    def write(self, table: str, data: pa.Table) -> None:
+        self._inner.write(table, data)
+
+    def commit(self) -> None:
+        self._inner.commit()
+
+    def abort(self) -> None:
+        self.abort_called = True
+        self._inner.abort()
 
 
 class TestAbortNotCalledAfterSuccessfulCommit:
@@ -420,7 +428,7 @@ class TestAbortNotCalledAfterSuccessfulCommit:
         config = _config(tmp_path, qpath)
         sources = _sources(config)
         real = ParquetTransactionalSink(tmp_path / "out")
-        sink = _abort_tracking_sink(real)
+        sink = _AbortTrackingSink(real)
 
         with pytest.raises(ValueError, match="refusing to publish quarantine"):
             run_pipeline(
@@ -525,7 +533,7 @@ class TestSinkCommitFailureWritesNoQuarantineAnywhere:
         config = _config(tmp_path, qpath)
         sources = _sources(config)
         real = ParquetTransactionalSink(tmp_path / "out")
-        sink = _commit_boom_sink(real)
+        sink = _CommitBoomSink(real)
 
         from decoy_engine import quarantine as quarantine_mod
 
@@ -568,15 +576,27 @@ class TestSinkCommitFailureWritesNoQuarantineAnywhere:
 # ---------------------------------------------------------------------------
 
 
-def _duck_typed_sink(inner: ParquetTransactionalSink) -> Any:
-    """`inner` shaped like a custom TransactionalSink that does NOT advertise
-    `committed_table_path`. `guard_quarantine_not_aliasing_committed_table`'s
-    `getattr(sink, "committed_table_path", None)` returns None for it, so that guard is a no-op
-    here by design -- the exclusive-create publish in `publish_staged_jsonl` is the only
-    remaining line of defense. Set on the instance so the class stays the one the gate reads."""
-    sink: Any = inner
-    sink.committed_table_path = None
-    return sink
+class _DuckTypedTransactionalSink:
+    """Wraps a real ParquetTransactionalSink; delegates write/commit/abort,
+    but deliberately does NOT expose `committed_table_path` -- the shape of
+    an arbitrary custom TransactionalSink implementation that satisfies the
+    write/commit/abort protocol without also advertising its committed
+    table paths. `guard_quarantine_not_aliasing_committed_table`'s
+    `getattr(sink, "committed_table_path", None)` returns None for this
+    sink, so that guard is a no-op here by design -- the exclusive-create
+    publish in `publish_staged_jsonl` is the only remaining line of defense."""
+
+    def __init__(self, inner: ParquetTransactionalSink) -> None:
+        self._inner = inner
+
+    def write(self, table: str, data: pa.Table) -> None:
+        self._inner.write(table, data)
+
+    def commit(self) -> None:
+        self._inner.commit()
+
+    def abort(self) -> None:
+        self._inner.abort()
 
 
 class TestDuckTypedSinkAliasingCommittedTable:
@@ -596,8 +616,8 @@ class TestDuckTypedSinkAliasingCommittedTable:
         config = _config(tmp_path, qpath)
         sources = _sources(config)
         real = ParquetTransactionalSink(target)
-        sink = _duck_typed_sink(real)
-        assert getattr(sink, "committed_table_path", None) is None
+        sink = _DuckTypedTransactionalSink(real)
+        assert not hasattr(sink, "committed_table_path")
 
         with pytest.raises(ValueError, match="refusing to publish quarantine"):
             run_pipeline(

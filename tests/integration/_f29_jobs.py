@@ -68,15 +68,3 @@ def fk_job(
         "customers": pa.Table.from_pandas(customers, preserve_index=False),
         "orders": pa.Table.from_pandas(orders, preserve_index=False),
     }
-
-
-# A foreign sink is never read back, so a job that declares keys stays resident and never
-# touches it. These jobs declare none, and the chunk lane makes the run stream into the sink.
-PLAIN_LANE: dict[str, Any] = {"auto_chunk_threshold_rows": 1, "chunk_size_rows": 2}
-
-
-def plain_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
-    """`fk_job` without its relationship: two independent masked tables."""
-    cfg, sources = fk_job(tmp_path)
-    cfg["relationships"] = []
-    return cfg, sources

@@ -33,8 +33,9 @@ def _blob(record: reasons.ReasonRecord) -> str:
 
 def _run(tmp_path: Path, sink, **kw):
     cfg, sources = fk_job(tmp_path)
-    kw.setdefault("execution_mode", "sequential")
-    return run_pipeline(cfg, sources, engine_version=ENGINE_VERSION, sink=sink, **kw)
+    return run_pipeline(
+        cfg, sources, engine_version=ENGINE_VERSION, execution_mode="sequential", sink=sink, **kw
+    )
 
 
 def test_missing_mask_secret_keeps_its_code_and_requires_configuration_repair(
@@ -132,17 +133,22 @@ def test_a_failed_commit_rename_publishes_nothing_and_says_so(
     assert "ZXQ" not in _blob(record)
 
 
-def test_a_callback_sink_with_declared_keys_is_never_invoked(tmp_path: Path) -> None:
-    """The gate reads back only the engine's own sink class, so a job with declared keys keeps a
-    callback sink resident (post-scan plan 4.7, AT-28): nothing is published through it and no
-    callback failure, publication state or cleanup state can arise. The tables come back on the
-    result instead."""
+def test_an_unknown_callback_exception_leaves_the_publication_state_unknown(tmp_path: Path) -> None:
     calls: list[str] = []
 
     def callback(table: str, data: pa.Table) -> None:
         calls.append(table)
-        raise RuntimeError(f"callback exploded {SECRET_PATH}")
+        if len(calls) == 2:
+            raise RuntimeError(f"callback exploded {SECRET_PATH}")
 
-    result = _run(tmp_path, callback, execution_mode="auto")
-    assert calls == []
-    assert set(result.outputs) == {"customers", "orders"}
+    with pytest.raises(RuntimeError) as info:
+        _run(tmp_path, callback)
+    record = reason_from_exception(info.value)
+    assert (record.namespace, record.code) == ("decoy", "unexpected_error")
+    assert record.phase is Phase.PUBLISH
+    assert record.retry_class is RetryClass.UNKNOWN
+    assert record.context.operation is Operation.WRITE
+    # The callable published its first table as it went: the outcome is not knowable, not "clean".
+    assert record.context.publication_state is PublicationState.UNKNOWN
+    assert record.context.cleanup_state is CleanupState.UNKNOWN
+    assert "ZXQ" not in _blob(record)

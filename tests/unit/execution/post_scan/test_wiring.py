@@ -117,15 +117,15 @@ def test_at16_a_blocking_verdict_commits_nothing_on_every_no_sink_route(
     assert not list(tmp_path.glob("*.out.parquet"))
 
 
-def test_at16_a_commit_with_no_output_the_gate_can_read_is_refused() -> None:
+def test_at16_a_commit_into_a_sink_the_gate_cannot_read_is_deferred_and_goes_through() -> None:
     sink = RecordingSink()
     gate = PostScanGate({"relationships": [{"x": 1}]})
     token = _post_scan._ACTIVE.set(gate)
     try:
-        exc = _blocked(lambda: observed_commit(sink))
+        observed_commit(sink)
     finally:
         _post_scan._ACTIVE.reset(token)
-    assert exc.reason == "post_scan.check_error" and sink.calls == []
+    assert gate.output_unreadable and sink.calls == [("commit",)]
 
 
 def test_at16_a_gate_that_ran_lets_the_commit_through() -> None:
@@ -160,13 +160,14 @@ def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
 
 
 @pytest.mark.parametrize("route", ["sequential", "out_of_core"])
-def test_at16_a_bounded_route_cannot_take_a_sink_the_gate_cannot_read(
+def test_at16_a_bounded_route_with_a_sink_the_gate_cannot_read_runs_deferred(
     tmp_path: Path, route: str
 ) -> None:
+    """Plan AT-28: a foreign sink keeps its route and delivers; the gate is deferred for it."""
     sink = RecordingSink()
-    with pytest.raises(Exception, match="post_scan_keys_resident"):
-        _run(_config(tmp_path, broken=True), route, sink=sink)
-    assert sink.calls == []
+    result = _run(_config(tmp_path, broken=True), route, sink=sink)[0]
+    assert ("commit",) in sink.calls
+    assert "post_scan_gate_deferred" in result.quality_metrics
 
 
 def test_at16_integrity_with_a_sink_and_lazy_inputs_still_withholds_on_a_failing_finding(
@@ -307,9 +308,9 @@ def test_the_gate_is_bound_for_the_run_and_unbound_after(
     seen: list[PostScanGate | None] = []
     real = _post_scan.settle
 
-    def spy(gate: PostScanGate, *args: Any) -> None:
+    def spy(gate: PostScanGate, *args: Any) -> Any:
         seen.append(_post_scan.active_gate())
-        real(gate, *args)
+        return real(gate, *args)
 
     monkeypatch.setattr(_post_scan, "settle", spy)
     _run(_config(tmp_path), "full_frame")
@@ -500,14 +501,14 @@ def test_at20_the_mixed_route_with_no_sink_is_checked_over_its_stitched_outputs(
     assert {k["table"] for k in report["keys"]} == {"people", "accounts"}
 
 
-def test_at20_a_mixed_job_with_a_sink_the_gate_cannot_read_is_gated_resident(
+def test_at20_a_mixed_job_with_a_sink_the_gate_cannot_read_keeps_its_route_deferred(
     tmp_path: Path,
 ) -> None:
     sink = RecordingSink()
     result, routes = _mixed_run(tmp_path, sink=sink)
-    assert "mixed" not in routes
-    assert "post_scan_gate_deferred" not in result.quality_metrics
-    assert result.quality_metrics["post_scan_integrity"]["verdict"]["blocking"] is False
+    assert "mixed" in routes
+    assert ("commit",) in sink.calls
+    assert "post_scan_gate_deferred" in result.quality_metrics
 
 
 def test_at24_an_excluded_edge_to_a_generated_parent_leaves_inherited_orphans_unblocked(
