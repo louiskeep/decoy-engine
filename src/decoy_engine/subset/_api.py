@@ -18,6 +18,7 @@ import polars as pl
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._canonical import CanonicalJsonError
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.fileaccess.adapters import serial
 from decoy_engine.plan import job_seed_for_config
@@ -317,11 +318,33 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
         edge_directions=edge_directions,
         allow_dangling=bool(subset_block.get("allow_dangling", False)),
     )
-    return SubsetRequest(
+    request = SubsetRequest(
         relationships=relationships,
         seeds=tuple(seeds),
         policy=policy,
         excluded_edges=excluded,
+    )
+    _require_json_literals(request)
+    return request
+
+
+def _require_json_literals(request: SubsetRequest) -> None:
+    """Refuse a seed literal JSON cannot hold, so no run starts from an unhashable request.
+
+    The `subset:` block is left out of plan compilation, so its predicate values and seed keys
+    never meet `pipeline_config_hash`. The request fingerprint is their one hash, so a value it
+    cannot write (NaN, Infinity, an unpaired surrogate) stops here, before any selection
+    begins. A naive timestamp is not refused: it is the only literal a zone-less column takes.
+    """
+    try:
+        request.fingerprint()
+    except CanonicalJsonError:
+        pass
+    else:
+        return
+    raise SubsetConfigError(
+        code=reasons.config.CONFIG_VALUE_NOT_JSON,
+        message="A subset value is not a finite number, text, date or timestamp JSON can hold.",
     )
 
 

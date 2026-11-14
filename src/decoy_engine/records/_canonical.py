@@ -1,29 +1,26 @@
 """The one canonical JSON form and the two digests built on it.
 
-Sorted keys, no whitespace, UTF-8 without ASCII escaping, and no NaN or infinity. This is the
-form the CLI evidence manifest hash already uses (``ensure_ascii=False`` matches the platform's
-canonical JSON), so a record id and a manifest hash agree on the bytes of the same content.
+The form is ``decoy_engine._canonical.canonical_json_bytes``: sorted keys, no whitespace, UTF-8
+without ASCII escaping, and no NaN or infinity. It matches the platform's canonical JSON and the
+CLI evidence manifest hash, so a record id and a manifest hash agree on the bytes of the same
+content.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 from typing import Any
+
+from decoy_engine._canonical import canonical_json_bytes
 
 __all__ = ["canonical_bytes", "payload_digest", "record_id", "sha256_tag"]
 
 
 def canonical_bytes(value: Any) -> bytes:
-    """The canonical UTF-8 bytes of a JSON value. Raises ``ValueError`` on NaN or infinity."""
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-        ensure_ascii=False,
-    ).encode("utf-8")
+    """The canonical UTF-8 bytes of a JSON value. Raises ``ValueError`` on NaN, infinity or a
+    value JSON cannot hold (``CanonicalJsonError`` is a ``ValueError``)."""
+    return canonical_json_bytes(value)
 
 
 def sha256_tag(data: bytes) -> str:

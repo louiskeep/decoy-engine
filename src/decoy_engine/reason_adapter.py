@@ -47,6 +47,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.errors", "ValidationError", "config"),
     ("decoy_engine.relationships._namespace", "NamespaceConfigError", "config"),
     ("decoy_engine.subset._errors", "SubsetConfigError", "config"),
+    ("decoy_engine._canonical._json", "CanonicalJsonError", "config"),
     ("decoy_engine.plan._errors", "PlanCompileError", "plan"),
     ("decoy_engine.contracts._declared_base", "DeclaredCastContractError", "plan"),
     ("decoy_engine.execution._errors", "DeclaredCastRouteError", "route"),
