@@ -1782,12 +1782,12 @@ reason = "F06 typed staging copy of a declared out-of-core source; engine-owned 
 [[entry]]
 module = "decoy_engine/execution/pipeline/_post_scan.py"
 function = "PostScanGate._tee"
-sink = "pyarrow.parquet.ParquetWriter"
+sink = "pyarrow.parquet.write_table"
 ordinal = 0
-disposition = "private"
-rule = "path under the gate's own `protected_scratch_dir`, named by a per-run counter (t0000), never by a table or column name; created 0600 through `open_private`"
+disposition = "read"
+rule = "in-memory Arrow buffer (`pa.BufferOutputStream`) of the key and cast columns of one table"
 owner = "cam"
-reason = "post-scan baseline tee: key and cast columns of a loader-supplied or transformed table, read back only through `scratch_access_for`"
+reason = "serializes the baseline tee to bytes; the file itself goes through `fileaccess.write_private` under the gate's `protected_scratch_dir`"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"

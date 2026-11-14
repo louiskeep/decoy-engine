@@ -38,11 +38,8 @@ from decoy_engine.execution._chunked_input import SourceFacts, capture_source_fa
 from decoy_engine.execution._pipeline_sources import materialize_source
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
-from decoy_engine.execution.out_of_core._scratch import (
-    close_private,
-    open_private,
-    scratch_access_for,
-)
+from decoy_engine.execution.out_of_core._scratch import scratch_access_for
+from decoy_engine.fileaccess import FileRequest, FileRole
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.internal.memory_limit import require_megabytes
 from decoy_engine.profile import LazySource
@@ -241,13 +238,13 @@ class PostScanGate:
                 fileaccess.protected_scratch_dir(prefix="decoy-post-scan-tee-")
             )
         path = self._scratch_root / f"t{len(self._teed):04d}.parquet"
-        sink = open_private(path)
-        writer = None
-        try:
-            writer = pq.ParquetWriter(sink, kept.schema)
-            writer.write_table(kept)
-        finally:
-            close_private(writer, sink)
+        # Serialized in memory and written by `write_private`: 0600 from creation, one rename.
+        buffer = pa.BufferOutputStream()
+        pq.write_table(kept, buffer)
+        fileaccess.write_private(
+            FileRequest(FileRole.CONFIG, "write", str(path), "engine.scratch"),
+            buffer.getvalue().to_pybytes(),
+        )
         self._teed[name] = LazySource(
             path, access=scratch_access_for(self._scratch_root), field_key="engine.scratch"
         )
