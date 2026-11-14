@@ -134,8 +134,13 @@ def test_shipped_route_reason_resolves(code: str, replacement: str | None) -> No
     # A tombstone may point at another tombstone (its shipped pin cannot move); the chain must
     # end at a live identity.
     live = reasons.get("route", replacement)
-    if live.deprecated_in is not None and live.replaced_by is not None:
+    seen = {live.identity}
+    for _ in range(3):  # a tombstone's shipped pin cannot move, so a chain may be a few links
+        if live.deprecated_in is None or live.replaced_by is None:
+            break
         live = reasons.get(*live.replaced_by)
+        assert live.identity not in seen, "a replacement chain loops"
+        seen.add(live.identity)
     assert live.deprecated_in is None, "a replacement chain must end at a live identity"
     assert live.kind is spec.kind and live.rules == spec.rules
 
@@ -155,8 +160,13 @@ def test_no_tombstone_without_a_live_replacement() -> None:
             continue
         assert spec.replaced_by is not None, f"{spec.identity} is retired with no replacement"
         end = reasons.get(*spec.replaced_by)
-        if end.deprecated_in is not None and end.replaced_by is not None:
-            end = reasons.get(*end.replaced_by)  # a tombstone whose shipped pin cannot move
+        seen = {spec.identity, end.identity}
+        for _ in range(3):  # a tombstone's shipped pin cannot move, so a chain may be a few links
+            if end.deprecated_in is None or end.replaced_by is None:
+                break
+            end = reasons.get(*end.replaced_by)
+            assert end.identity not in seen, f"{spec.identity} chain loops"
+            seen.add(end.identity)
         assert end.deprecated_in is None, f"{spec.identity} chain has no live end"
 
 

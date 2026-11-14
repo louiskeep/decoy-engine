@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pyarrow as pa
+import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
@@ -150,6 +151,36 @@ def test_post_scan_integrity_on_a_chunked_sink_job_still_produces_the_report(tmp
     assert result.quality_metrics["execution"]["outputs_streamed"] is True
     assert (target / "t.parquet").exists()
     assert result.outputs == {}
+
+
+def test_post_scan_integrity_on_a_foreign_sink_job_refuses_instead_of_skipping(tmp_path) -> None:
+    # The same silent skip, for a sink the gate cannot read back: the explicit check refuses
+    # before the sink is touched rather than delivering unchecked output.
+    from decoy_engine.execution import ExecutionError
+    from tests.unit.execution import _auto_chunk_support as support
+    from tests.unit.execution import _b6a_support as b6a
+
+    src = pa.table(
+        {
+            "h": pa.array([f"u{i}@x.example" for i in range(support.ROWS)]),
+            "r": pa.array([f"s{i}" for i in range(support.ROWS)]),
+        }
+    )
+    path = support.write_source(src, tmp_path / "s.parquet")
+    raw = {
+        "version": 2,
+        "global_settings": {"seed": 42},
+        "post_scan": {"integrity": True},
+        "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
+        "tables": [{"name": "t", "columns": [support.hash_col("h"), support.redact_col("r")]}],
+        "targets": {"t": {"type": "file", "format": "parquet", "path": "/dev/null"}},
+    }
+    cfg = PipelineConfig.model_validate(raw).model_dump()
+    sink = b6a.RecordingSink()
+    with pytest.raises(ExecutionError) as caught:
+        b6a.run_streamed(cfg, src, sink, auto_chunk_threshold_rows=1, chunk_size_rows=2)
+    assert str(caught.value.code) == "post_scan_integrity_sink_unreadable"
+    assert sink.calls == []
 
 
 def test_generate_mask_job_with_post_scan_integrity_keeps_the_mixed_route_and_reports(

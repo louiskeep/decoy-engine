@@ -2,7 +2,7 @@
 
 `GATE_TESTS` is keyed on the imported `ROUTES` plus `stream` and `isolated`. Each value is
 `path::test_function`; the function must exist in that file, the file must name the route as a
-string constant, and the function must read the report's `keys`. A route added to `ROUTES`
+key of the file's `CELLS` dict, and the function must read the report's `keys`. A route added to `ROUTES`
 without an entry here, or an entry whose test went away, is a site.
 """
 
@@ -20,7 +20,9 @@ GATE_TESTS: dict[str, str] = {route: CELLS for route in (*ROUTES, *EXTRA_ROUTES)
 
 
 def coverage_sites(
-    gate_tests: Mapping[str, str] | None = None, routes: tuple[str, ...] = ROUTES
+    gate_tests: Mapping[str, str] | None = None,
+    routes: tuple[str, ...] = ROUTES,
+    sources: Mapping[str, str] | None = None,
 ) -> list[str]:
     declared = GATE_TESTS if gate_tests is None else gate_tests
     found: list[str] = []
@@ -28,22 +30,33 @@ def coverage_sites(
         target = declared.get(route)
         if target is None:
             found.append(f"route-coverage::{route}::missing-entry::0")
-        elif not _proves_the_gate(route, target):
+        elif not _proves_the_gate(route, target, sources or {}):
             found.append(f"route-coverage::{route}::no-gate-proof::0")
     return found
 
 
-def _proves_the_gate(route: str, target: str) -> bool:
+def _proves_the_gate(route: str, target: str, sources: Mapping[str, str]) -> bool:
     path, _, name = target.partition("::")
     file = ROOT / path
-    if not file.is_file():
+    if path not in sources and not file.is_file():
         return False
-    tree = ast.parse(file.read_text(encoding="utf-8"))
+    tree = ast.parse(sources.get(path) or file.read_text(encoding="utf-8"))
     func = next(
         (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name), None
     )
     if func is None:
         return False
-    strings = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)}
     inside = {n.value for n in ast.walk(func) if isinstance(n, ast.Constant)}
-    return route in strings and {"keys", "post_scan_integrity"} <= inside
+    return route in _cell_keys(tree) and {"keys", "post_scan_integrity"} <= inside
+
+
+def _cell_keys(tree: ast.Module) -> set[object]:
+    """The string keys of the module's `CELLS` dict literal."""
+    keys: set[object] = set()
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [getattr(node, "target", None)]
+        if any(isinstance(t, ast.Name) and t.id == "CELLS" for t in targets):
+            value = getattr(node, "value", None)
+            if isinstance(value, ast.Dict):
+                keys |= {k.value for k in value.keys if isinstance(k, ast.Constant)}
+    return keys

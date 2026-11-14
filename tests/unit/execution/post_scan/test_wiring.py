@@ -159,15 +159,15 @@ def test_at16_a_resident_sink_run_is_gated_before_the_sink_is_touched(
     assert sink.calls == []
 
 
-def test_at16_integrity_with_a_sink_the_gate_cannot_read_keeps_its_route_deferred(
+def test_at16_integrity_with_a_sink_the_gate_cannot_read_refuses_fail_closed(
     tmp_path: Path,
 ) -> None:
-    """Regex integrity no longer forces the resident route, so a foreign sink is written and the
-    gate is deferred for it (plan, Foreign sinks), as for declared keys."""
+    """An explicit integrity check is never deferred: the run refuses before the sink is used."""
     sink = RecordingSink()
-    result, routes = _run(_config(tmp_path, broken=True, integrity=True), "auto", sink=sink)
-    assert routes != ["full_frame"] and ("commit",) in sink.calls
-    assert "post_scan_gate_deferred" in result.quality_metrics
+    with pytest.raises(Exception) as caught:
+        _run(_config(tmp_path, broken=True, integrity=True), "auto", sink=sink)
+    assert str(getattr(caught.value, "code", "")) == "post_scan_integrity_sink_unreadable"
+    assert sink.calls == []
 
 
 @pytest.mark.parametrize("route", ["sequential", "out_of_core"])

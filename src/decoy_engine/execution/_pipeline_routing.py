@@ -139,8 +139,7 @@ def _sequential_eligible(
     if post_validation:
         return False, reasons.route.POST_VALIDATION_REQUESTED
     if post_scan_resident is not None:
-        # The post-scan gate needs the output and inputs it can read: integrity wants the whole
-        # output resident, declared keys want output and inputs readable (config._post_scan).
+        # Only a model post-scan ask needs the whole output resident (config._post_scan).
         return False, post_scan_resident
     if vault_writer is not None:
         return False, reasons.route.VAULT_WRITER_REQUESTED

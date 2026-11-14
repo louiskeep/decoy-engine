@@ -2,8 +2,9 @@
 
 `GATE_TESTS` in `tests/sentry/post_scan/_route_coverage.py` names `test_gate_cell` for every route
 in `ROUTES` plus `stream` and `isolated`, so a route added without a cell fails the sentry. The
-spies count only inside the gate's key and column-suite reads: the route itself may read what it
-likes. All values are made up.
+spies count only inside the gate's key scan and its staged column suite: the route itself may read
+what it likes. The resident column suite still materializes its sources (the outputs are already
+resident), so it is not under the spy. All values are made up.
 """
 
 from __future__ import annotations
@@ -156,6 +157,7 @@ def _watch_whole_reads(monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], list
         _post_scan, "materialize_source", trap("materialize_source", _post_scan.materialize_source)
     )
     scoped("check_keys")
+    scoped("run_post_mask_tables")
     return hits, limits
 
 
@@ -172,5 +174,8 @@ def test_gate_cell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str) 
     assert "keys" in report and report["verdict"]["blocking"] is False
     if declares_keys:
         assert report["keys"], route
+    if route == "chunked":
+        assert metrics["execution"]["outputs_streamed"] is True
+        assert took == "chunked"
     assert hits == []
     assert all(require_megabytes(m) <= 512 for m in limits)

@@ -329,3 +329,12 @@ def test_a_new_route_without_a_cell_is_flagged() -> None:
 def test_an_entry_naming_a_missing_test_is_flagged() -> None:
     gone = {**coverage.GATE_TESTS, "stream": coverage.CELLS.replace("test_gate_cell", "nope")}
     assert coverage.coverage_sites(gone) == ["route-coverage::stream::no-gate-proof::0"]
+
+
+def test_dropping_a_cells_key_from_the_cell_module_is_flagged() -> None:
+    path = coverage.CELLS.partition("::")[0]
+    text = (scan.ROOT / path).read_text(encoding="utf-8")
+    assert '    "mixed": (' in text
+    planted = text.replace('    "mixed": (', '    "mixed_gone": (', 1)
+    found = coverage.coverage_sites(sources={path: planted})
+    assert found == ["route-coverage::mixed::no-gate-proof::0"]
