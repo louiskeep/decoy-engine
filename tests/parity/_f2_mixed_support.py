@@ -8,8 +8,11 @@ inputs, and a strict table comparison that also checks the Arrow IPC bytes.
 
 from __future__ import annotations
 
+import atexit
 import copy
 import importlib.util
+import shutil
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -21,6 +24,7 @@ import pytest
 from decoy_engine import run_pipeline
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionResult
+from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.keyprovider import SecretKeyProvider
 from tests._declared_schema import declare_rest
 
@@ -225,6 +229,69 @@ class RecordingSink:
         self.calls.append(("abort", ""))
         self.aborted += 1
         self.staged = {}
+
+
+def readable_recording_sink(fail_on: str | None = None, *, abort_raises: bool = False) -> Any:
+    """The engine's own `ParquetTransactionalSink` with every call recorded.
+
+    Declared keys are gated before commit, and the gate reads back only the engine's own sink
+    class (a subclass or a wrapper is a foreign producer and keeps the run resident, which
+    never touches the sink). The mixed route's publish contract is therefore checked against a
+    real sink whose methods are wrapped on the instance: the class stays exact. It exposes the
+    `RecordingSink` surface (`calls`, `staged`, `published`, `aborted`, `committed`) and takes
+    the same `fail_on` names; `abort_raises` makes a recorded abort raise after it ran."""
+    root = tempfile.mkdtemp(prefix="f2-sink-")
+    atexit.register(shutil.rmtree, root, True)
+    sink: Any = ParquetTransactionalSink(Path(root) / "out")
+    real_write, real_batches = sink.write, sink.write_batches
+    real_commit, real_abort = sink.commit, sink.abort
+    sink.calls = []
+    sink.staged = {}
+    sink.published = None
+    sink.aborted = 0
+    sink.committed = 0
+
+    def maybe_fail(op: str, table: str = "") -> None:
+        if fail_on in (op, f"{op}:{table}"):
+            raise RuntimeError(f"injected sink failure on {op} {table}".strip())
+
+    def write(table: str, data: pa.Table) -> None:
+        sink.calls.append(("write", table))
+        maybe_fail("write", table)
+        real_write(table, data)
+        sink.staged[table] = data
+
+    def write_batches(table: str, batches: Any, *, schema: pa.Schema) -> None:
+        sink.calls.append(("write_batches", table))
+        maybe_fail("write_batches", table)
+        if fail_on == "write_batches_late":
+            # Stage one masked batch, then fail: the generate table and a masked batch
+            # are both already staged when the session breaks.
+            first = next(iter(batches))
+            real_batches(table, [first], schema=schema)
+            sink.staged[table] = pa.Table.from_batches([first], schema=schema)
+            raise RuntimeError("injected sink failure after a staged masked batch")
+        listed = list(batches)
+        real_batches(table, listed, schema=schema)
+        sink.staged[table] = pa.Table.from_batches(listed, schema=schema)
+
+    def commit() -> None:
+        sink.calls.append(("commit", ""))
+        maybe_fail("commit")
+        real_commit()
+        sink.committed += 1
+        sink.published = dict(sink.staged)
+
+    def abort() -> None:
+        sink.calls.append(("abort", ""))
+        sink.aborted += 1
+        sink.staged = {}
+        real_abort()
+        if abort_raises:
+            raise OSError("cleanup failed")
+
+    sink.write, sink.write_batches, sink.commit, sink.abort = write, write_batches, commit, abort
+    return sink
 
 
 def lazy_source(tmp_path: Path, table: pa.Table, *, row_group_size: int) -> Any:

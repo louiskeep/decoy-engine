@@ -23,11 +23,11 @@ from tests.parity._f2_mixed_support import (
     CHILD,
     FK,
     PARENT,
-    RecordingSink,
     assert_outputs_identical,
     child_table,
     mixed_config,
     oracle,
+    readable_recording_sink,
     run,
 )
 
@@ -393,7 +393,7 @@ def test_a_dirty_non_key_column_on_a_coupled_parent_falls_back_without_regenerat
     )
     want = oracle(config, {CHILD: child})
     generate_calls.clear()
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     got = run(config, {CHILD: child}, sink=sink)
     assert len(generate_calls) == 1  # the fallback reuses the generated outputs
     execution = got.quality_metrics["execution"]
@@ -411,7 +411,7 @@ def test_a_dirty_column_on_an_independent_generate_table_falls_back_without_rege
     config = mixed_config(tmp_path, child, coupled=False, parent_columns=DIRTY[dirt])
     want = oracle(config, {CHILD: child})
     generate_calls.clear()
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     got = run(config, {CHILD: child}, sink=sink)
     assert len(generate_calls) == 1
     assert got.quality_metrics["execution"]["route_reason"].startswith("mixed_runtime_declined:")
@@ -464,7 +464,7 @@ def test_a_changed_lazy_source_declines_before_publishing(
         return result
 
     monkeypatch.setattr(_mixed_static, "admit_mixed_static", admit_then_change)
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     got = run(config, {CHILD: lazy}, sink=sink)
     assert (
         got.quality_metrics["execution"]["route_reason"]

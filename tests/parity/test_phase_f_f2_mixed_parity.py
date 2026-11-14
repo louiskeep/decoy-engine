@@ -22,7 +22,6 @@ from tests.parity._f2_mixed_support import (
     FK,
     NEEDS_COMPANION,
     PARENT,
-    RecordingSink,
     assert_outputs_identical,
     child_table,
     chunk_count,
@@ -32,6 +31,7 @@ from tests.parity._f2_mixed_support import (
     mask_evidence,
     mixed_config,
     oracle,
+    readable_recording_sink,
     run,
     warning_signature,
 )
@@ -128,7 +128,7 @@ def test_fail_policy_raises_the_oracle_error_and_publishes_nothing(tmp_path: Pat
     config = mixed_config(tmp_path, child, policy="fail")
     with pytest.raises(ExecutionError) as want:
         oracle(config, {CHILD: child})
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     with pytest.raises(ExecutionError) as got:
         run(config, {CHILD: child}, sink=sink)
     assert got.value.code == want.value.code == "orphan_fk_violation"
@@ -183,7 +183,7 @@ def test_lazy_source_with_uneven_batches_nulls_and_a_partial_final_chunk(
     config = mixed_config(tmp_path, child, policy="preserve")
     want = oracle(config, {CHILD: child})
     lazy = lazy_source(tmp_path, child, row_group_size=row_group)
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     got = run(config, {CHILD: lazy}, sink=sink)
     assert got.quality_metrics["execution"]["outputs_streamed"] is True
     assert (
@@ -200,7 +200,7 @@ def test_streamed_and_resident_outputs_are_the_same_bytes(tmp_path: Path) -> Non
     child = child_table(pa.array(STRING_KEYS, pa.string()))
     config = mixed_config(tmp_path, child)
     resident = run(config, {CHILD: child})
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     streamed = run(config, {CHILD: child}, sink=sink)
     assert resident.quality_metrics["execution"]["outputs_streamed"] is False
     assert streamed.quality_metrics["execution"]["outputs_streamed"] is True
@@ -264,7 +264,7 @@ def test_streamed_warn_policy_still_emits_one_edge_warning(tmp_path: Path) -> No
     child = child_table(pa.array(keys, pa.string()))
     config = mixed_config(tmp_path, child, policy="warn")
     want = oracle(config, {CHILD: child})
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     got = run(config, {CHILD: child}, sink=sink)
     assert [w.code for w in got.warnings].count("orphan_fk") == 1
     assert warning_signature(got) == warning_signature(want)

@@ -21,11 +21,11 @@ from decoy_engine.execution.native.chunked import _core as _native_core
 from tests.parity._f2_mixed_support import (
     CHILD,
     PARENT,
-    RecordingSink,
     assert_outputs_identical,
     child_table,
     mixed_config,
     oracle,
+    readable_recording_sink,
     run,
 )
 
@@ -41,7 +41,7 @@ def test_success_writes_parent_then_child_into_one_session_and_commits_once(
     tmp_path: Path,
 ) -> None:
     config, child = _job(tmp_path)
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     result = run(config, {CHILD: child}, sink=sink)
     assert sink.calls == [("write", PARENT), ("write_batches", CHILD), ("commit", "")]
     assert sink.committed == 1 and sink.aborted == 0
@@ -52,7 +52,7 @@ def test_success_writes_parent_then_child_into_one_session_and_commits_once(
 
 def test_a_generate_write_failure_aborts_before_any_masked_write(tmp_path: Path) -> None:
     config, child = _job(tmp_path)
-    sink = RecordingSink(fail_on=f"write:{PARENT}")
+    sink = readable_recording_sink(fail_on=f"write:{PARENT}")
     with pytest.raises(RuntimeError, match="injected sink failure on write people"):
         run(config, {CHILD: child}, sink=sink)
     assert sink.aborted == 1 and sink.committed == 0 and sink.published is None
@@ -62,7 +62,7 @@ def test_a_generate_write_failure_aborts_before_any_masked_write(tmp_path: Path)
 
 def test_a_failure_after_generate_and_a_masked_batch_are_staged_aborts(tmp_path: Path) -> None:
     config, child = _job(tmp_path)
-    sink = RecordingSink(fail_on="write_batches_late")
+    sink = readable_recording_sink(fail_on="write_batches_late")
     with pytest.raises(RuntimeError, match="after a staged masked batch"):
         run(config, {CHILD: child}, sink=sink)
     assert ("write", PARENT) in sink.calls and ("write_batches", CHILD) in sink.calls
@@ -73,7 +73,7 @@ def test_a_failure_after_generate_and_a_masked_batch_are_staged_aborts(tmp_path:
 
 def test_a_commit_failure_aborts_and_surfaces_the_original_error(tmp_path: Path) -> None:
     config, child = _job(tmp_path)
-    sink = RecordingSink(fail_on="commit")
+    sink = readable_recording_sink(fail_on="commit")
     with pytest.raises(RuntimeError, match="injected sink failure on commit"):
         run(config, {CHILD: child}, sink=sink)
     assert sink.aborted == 1 and sink.committed == 0 and sink.published is None
@@ -82,12 +82,7 @@ def test_a_commit_failure_aborts_and_surfaces_the_original_error(tmp_path: Path)
 def test_an_abort_that_raises_does_not_mask_the_original_error(tmp_path: Path) -> None:
     config, child = _job(tmp_path)
 
-    class BrokenAbort(RecordingSink):
-        def abort(self) -> None:
-            super().abort()
-            raise OSError("cleanup failed")
-
-    sink = BrokenAbort(fail_on="commit")
+    sink = readable_recording_sink(fail_on="commit", abort_raises=True)
     with pytest.raises(RuntimeError, match="injected sink failure on commit"):
         run(config, {CHILD: child}, sink=sink)
     assert sink.aborted == 1
@@ -98,7 +93,7 @@ def test_a_session_that_never_commits_is_not_swallowed(
 ) -> None:
     config, child = _job(tmp_path)
     monkeypatch.setattr(output_sink.OutputPublish, "commit", lambda self: None)
-    sink = RecordingSink()
+    sink = readable_recording_sink()
     with pytest.raises(ExecutionError) as excinfo:
         run(config, {CHILD: child}, sink=sink)
     assert excinfo.value.code == "internal_publish_not_committed"
