@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
+    "ENV_FLAG_INVALID",
     "GENERATE_COLUMN_DUPLICATE",
     "GENERATE_FORMULA_INVALID",
     "GENERATE_OPTION_RANGE",
@@ -89,4 +91,13 @@ PIPELINE_NAME_INVALID = _d(
     "Pipeline name must be 1 to 64 letters, digits, dot, dash or underscore, start with a letter or "
     "digit, not end in a dot and not be a Windows device name.",
     since="1.12.0",
+)
+
+# The variable name is a fixed engine constant; the refusal text never carries the value read.
+_d = _catalog.config("EnvFlagError")
+
+ENV_FLAG_INVALID = _d(
+    "env_flag_invalid",
+    "An environment flag has a value outside the accepted spellings.",
+    since=UNRELEASED,
 )

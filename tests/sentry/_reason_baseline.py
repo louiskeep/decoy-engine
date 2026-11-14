@@ -25,6 +25,7 @@ FIXTURES = scan.ROOT / "tests" / "fixtures" / "f29"
 # sees the code on; the same wire string may exist in two namespaces without renaming either.
 FAMILY_NAMESPACE: dict[str, str] = {
     "PipelineValidationError": "config",
+    "EnvFlagError": "config",
     "ValidationError": "config",
     "ValidationMessage": "config",
     "SubsetConfigError": "config",

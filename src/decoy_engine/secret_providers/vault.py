@@ -31,6 +31,7 @@ from typing import Any, Literal
 
 from decoy_engine._opaque import OpaqueBox
 from decoy_engine.errors import DecoyError
+from decoy_engine.internal.env_flags import env_flag
 from decoy_engine.secret_providers._buffer import SecretBuffer
 from decoy_engine.secret_providers._errors import (
     SecretAccessDenied,
@@ -51,7 +52,7 @@ from decoy_engine.secret_providers._types import (
     SystemClock,
 )
 
-_TRUTHY = frozenset({"1", "true", "t", "yes", "y", "on"})
+_SKIP_VERIFY_ENV = "VAULT_SKIP_VERIFY"
 
 
 class VaultClientConfigError(DecoyError):
@@ -82,7 +83,7 @@ def client_from_env(
     # inside the client call expression.
     box = OpaqueBox(os.environ if environ is None else environ)
     del environ
-    if str(box.open()[0].get("VAULT_SKIP_VERIFY", "")).strip().lower() in _TRUTHY:
+    if env_flag(_SKIP_VERIFY_ENV, str(box.open()[0].get(_SKIP_VERIFY_ENV, ""))):
         raise VaultClientConfigError(
             "VAULT_SKIP_VERIFY is not honored: disabling TLS verification requires an explicit "
             "in-code override (insecure_skip_tls_verify=True)."

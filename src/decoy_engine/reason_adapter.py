@@ -69,6 +69,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.errors", "FpeChecksumError", "runtime"),
     ("decoy_engine.errors", "MaskKeyDerivationError", "runtime"),
     ("decoy_engine.errors", "MaskKeyRequiredError", "runtime"),
+    ("decoy_engine.errors", "EnvFlagError", "config"),
     ("decoy_engine.errors", "PKDuplicatesError", "runtime"),
     ("decoy_engine.keyprovider", "MaskSecretError", "runtime"),
     ("decoy_engine.vault", "VaultError", "runtime"),
