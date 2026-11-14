@@ -1,4 +1,4 @@
-"""Shared NER config resolution + model-version enforcement for text_redact.
+"""Shared NER config resolution + model-version enforcement for text_redact and text_mask.
 
 De-duplication (2026-10-25): the full-frame `TextRedactHandler`
 (`_text_redact.py`) and the out-of-core Group (b) kernel
@@ -15,11 +15,10 @@ over a batch) stay independent, because each is the other's differential oracle.
 Only this config/version plumbing is shared; the span logic is not.
 
 `strategy` is a parameter rather than hard-coded because the same two steps also
-appear in the `text_mask` handlers (`_text_mask.py` /
-`out_of_core/_mask_group_c.py`), which raise the identical
-`ner_model_version_mismatch` code under `strategy="text_mask"`. Those sites can
-adopt this module without a behavior change; this slice wires the text_redact
-pair only (its stated scope).
+appear in the `text_mask` handlers (`_text_mask.py` and `out_of_core/_mask_group_c.py`), which
+raise the identical `ner_model_version_mismatch` code under `strategy="text_mask"`. The
+text_redact pair and both text_mask routes call `enforce_ner_model_version`, so the message is
+one text; the one raise of the code lives here.
 """
 
 from __future__ import annotations

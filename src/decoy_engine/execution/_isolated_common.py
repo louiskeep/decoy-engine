@@ -30,7 +30,7 @@ import resource
 import signal
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import duckdb
 
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 __all__ = [
+    "ISOLATED_OUTCOMES",
     "ISOLATED_WORKER_ENV",
     "RESULT_FILENAME",
     "RLIMIT_KINDS",
@@ -93,7 +94,9 @@ def inside_isolated_worker() -> bool:
 # parent directory).
 RESULT_FILENAME = "result.json"
 
-IsolatedRunOutcome = Literal["completed", "oom_killed", "crashed"]
+IsolatedRunOutcome = Literal["completed", "oom_killed", "crashed", "blocked"]
+# The envelope outcomes a driver accepts; anything else (a bool, a new token) is a dead child.
+ISOLATED_OUTCOMES: tuple[str, ...] = get_args(IsolatedRunOutcome)
 
 # Same two rlimit knobs fk_memory_probe exposes (`_RLIMITS`): 'data' (default)
 # caps brk + anonymous mmaps on Linux >= 4.7 -- the allocations that actually
@@ -363,7 +366,8 @@ class IsolatedRunResult:
     `isolated_execution_enabled`) consumes this directly: `outcome`
     dispatches the reroute ladder (`completed` -> publish; `oom_killed` ->
     reroute to a bounded route; `crashed` -> surface `error` to the job
-    record), `peak_rss_mb` feeds the B5 telemetry loop (a per-job, fresh-
+    record; `blocked` -> the post-scan gate withheld the output, nothing was
+    committed, and `quality_metrics` keeps the report), `peak_rss_mb` feeds the B5 telemetry loop (a per-job, fresh-
     `execve` peak -- exactly what a shared warm worker cannot produce, per
     spec §11's contamination finding), and `isolated=False` tells the
     telemetry loop this sample is NOT trustworthy (the in-process fallback

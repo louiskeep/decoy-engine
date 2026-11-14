@@ -10,6 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from decoy_engine.execution._isolated_common import (
+    IsolatedRunOutcome,
+    IsolatedRunResult,
+    exception_error_text,
+    is_memory_failure,
+    peak_rss_mb,
+)
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import (
     CleanupState,
@@ -20,8 +27,61 @@ from decoy_engine.reasons import (
     ReasonRecord,
 )
 from decoy_engine.reasons import decoy as _decoy
+from decoy_engine.verification.postmask import PostScanBlockedError
 
-__all__ = ["commit_reason", "reason_from_envelope"]
+__all__ = [
+    "commit_reason",
+    "envelope_failure",
+    "in_process_failure",
+    "reason_from_envelope",
+]
+
+
+def _blocked_metrics(metrics: Any) -> dict[str, Any]:
+    """The only result a blocked run keeps: its post-scan report, and only when it is a mapping.
+    The envelope is untrusted input, so a wrong-typed field is dropped, never repaired."""
+    report = metrics.get("post_scan_integrity") if isinstance(metrics, dict) else None
+    return {"post_scan_integrity": dict(report)} if isinstance(report, dict) else {}
+
+
+def in_process_failure(exc: BaseException) -> IsolatedRunResult:
+    """A run that raised in this process. A post-scan block is its own outcome and keeps the
+    report; every other failure is a memory kill or a crash with the safe text and reason."""
+    outcome: IsolatedRunOutcome = "oom_killed" if is_memory_failure(exc) else "crashed"
+    metrics: dict[str, Any] = {}
+    if isinstance(exc, PostScanBlockedError):
+        outcome, metrics = "blocked", _blocked_metrics({"post_scan_integrity": exc.report})
+    return IsolatedRunResult(
+        outcome=outcome,
+        peak_rss_mb=round(peak_rss_mb(), 1),
+        outputs=None,
+        quality_metrics=metrics,
+        table_kinds={},
+        returncode=None,
+        signal_number=None,
+        error=exception_error_text(exc),
+        isolated=False,
+        reason=reason_from_exception(exc),
+    )
+
+
+def envelope_failure(envelope: dict[str, Any], *, pid: int) -> IsolatedRunResult:
+    """The result of a child that reported a failure. A `blocked` child also hands back its
+    report."""
+    blocked = envelope["outcome"] == "blocked"
+    return IsolatedRunResult(
+        outcome=envelope["outcome"],
+        peak_rss_mb=envelope.get("peak_rss_mb"),
+        outputs=None,
+        quality_metrics=_blocked_metrics(envelope.get("quality_metrics")) if blocked else {},
+        table_kinds={},
+        returncode=0,
+        signal_number=None,
+        error=envelope.get("error"),
+        isolated=True,
+        pid=pid,
+        reason=reason_from_envelope(envelope),
+    )
 
 
 def reason_from_envelope(envelope: dict[str, Any]) -> ReasonRecord:
