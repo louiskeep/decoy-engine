@@ -222,8 +222,8 @@ def test_at20_a_job_with_no_keys_and_no_integrity_gets_no_report(tmp_path: Path)
 
 
 def test_at20_integrity_adds_the_column_suite_to_the_same_report(tmp_path: Path) -> None:
-    result, routes = _run(_config(tmp_path, integrity=True))
-    assert routes == ["full_frame"]  # the column suite needs the whole output
+    result, routes = _run(_config(tmp_path, integrity=True), "full_frame")
+    assert routes == ["full_frame"]
     report = result.quality_metrics["post_scan_integrity"]
     assert {"keys", "verdict", "residual_pii", "fk_preservation"} <= set(report)
 

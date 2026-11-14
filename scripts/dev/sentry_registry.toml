@@ -143,3 +143,7 @@ baseline = "tests/sentry/baselines/post-scan-model-predicate.json"
 [[sentry]]
 id = "post-scan-readability"
 baseline = "tests/sentry/baselines/post-scan-readability.json"
+
+[[sentry]]
+id = "post-scan-route-coverage"
+baseline = "tests/sentry/baselines/post-scan-route-coverage.json"

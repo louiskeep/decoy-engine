@@ -405,8 +405,9 @@ def test_at28_the_resident_reason_ignores_the_sink() -> None:
     keys = {"relationships": [{"x": 1}]}
     assert post_scan_resident_reason(keys) is None
     assert post_scan_resident_reason({}) is None
-    both = {**keys, "post_scan": {"integrity": True}}
-    assert post_scan_resident_reason(both) is reasons.route.POST_SCAN_INTEGRITY_REQUESTED
+    both = {**keys, "post_scan": {"integrity": True, "detectors": ["regex", "ner"]}}
+    assert str(post_scan_resident_reason(both)) == "post_scan_models_resident"
+    assert post_scan_resident_reason({**keys, "post_scan": {"integrity": True}}) is None
 
 
 def test_at28_a_commit_the_gate_cannot_read_defers_instead_of_refusing() -> None:
