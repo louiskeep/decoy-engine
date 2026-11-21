@@ -37,9 +37,6 @@
   },
   "subset/_api.py::run_subset": {
    "reason": "existing entry of defects/test_canonical_json_choke_point.py, registered in EW1 when the baseline scan began to read sentry subfolders; may only shrink"
-  },
-  "vault/_writer.py::VaultWriter.serialize": {
-   "reason": "existing entry of defects/test_canonical_json_choke_point.py, registered in EW1 when the baseline scan began to read sentry subfolders; may only shrink"
   }
  }
 }

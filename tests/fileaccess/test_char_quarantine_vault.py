@@ -17,7 +17,8 @@ from decoy_engine.quarantine import (
     publish_staged_jsonl,
     write_jsonl_staged,
 )
-from decoy_engine.vault import VaultError, VaultWriter, load_vault
+from decoy_engine.vault import VaultError, load_vault
+from tests.unit.vault._support import vault_writer
 
 RECORDS = [{"a": 1, "b": "x"}, {"a": 2, "b": None}]
 
@@ -74,10 +75,10 @@ def test_vault_write_refuses_an_existing_vault_and_keeps_it(tmp_path: Path) -> N
 
     key = b"12345678" * 4
     path = tmp_path / "v.dcyvault"
-    first = VaultWriter(key)
+    first = vault_writer(key)
     first.add([("ns", "m1", "s1")])
     assert first.write(path) == 1
-    second = VaultWriter(key)
+    second = vault_writer(key)
     second.add([("ns", "m2", "s2"), ("ns", "m3", "s3")])
     with pytest.raises(VaultError) as exc:
         second.write(str(path))
@@ -87,7 +88,7 @@ def test_vault_write_refuses_an_existing_vault_and_keeps_it(tmp_path: Path) -> N
 
 
 def test_vault_write_into_a_missing_directory_fails_with_the_os_error(tmp_path: Path) -> None:
-    writer = VaultWriter(b"12345678" * 4)
+    writer = vault_writer(b"12345678" * 4)
     writer.add([("ns", "m", "s")])
     with pytest.raises(FileNotFoundError):
         writer.write(tmp_path / "nope" / "v.dcyvault")
@@ -95,7 +96,7 @@ def test_vault_write_into_a_missing_directory_fails_with_the_os_error(tmp_path: 
 
 def test_vault_wrong_key_is_a_typed_error(tmp_path: Path) -> None:
     path = tmp_path / "v.dcyvault"
-    writer = VaultWriter(b"12345678" * 4)
+    writer = vault_writer(b"12345678" * 4)
     writer.add([("ns", "m", "s")])
     writer.write(path)
     with pytest.raises(VaultError) as info:

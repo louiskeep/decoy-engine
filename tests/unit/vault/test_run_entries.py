@@ -14,6 +14,7 @@ import pytest
 from decoy_engine import run_pipeline
 from decoy_engine.keyprovider import SecretKeyProvider
 from tests._declared_schema import declared_schema
+from tests.unit.vault._support import prepared, vault_writer
 
 _EV = "vault-run-entries"
 _JOB_SEED = (42).to_bytes(8, "big")
@@ -142,11 +143,13 @@ class TestEveryRunEntryRefusesWeakVaultWriter:
         self, tmp_path, monkeypatch, route
     ):
         from decoy_engine.plan import job_seed_for_config
-        from decoy_engine.vault import VaultError, VaultWriter
+        from decoy_engine.vault import VaultError
 
         cfg, tables = _unkeyed_fk_job(tmp_path)
-        writer = VaultWriter(b"\x07" * 32)
-        writer._mask_key = job_seed_for_config(cfg)  # the run's own key on a non-keyed job
+        writer = vault_writer(b"\x07" * 32)
+        writer._prepared = prepared(
+            job_seed_for_config(cfg)
+        )  # the run's own key on a non-keyed job
         calls = _route_work_spy(monkeypatch)
         with pytest.raises(VaultError) as exc:
             _run_route(route, cfg, tables, writer)
@@ -155,10 +158,10 @@ class TestEveryRunEntryRefusesWeakVaultWriter:
 
     def test_direct_out_of_core_guard_refuses_weak_writer_FAIL_BEFORE(self):
         from decoy_engine.execution.out_of_core._vault_collect import assert_vault_inputs
-        from decoy_engine.vault import VaultError, VaultWriter
+        from decoy_engine.vault import VaultError
 
-        writer = VaultWriter(b"\x07" * 32)
-        writer._mask_key = _JOB_SEED
+        writer = vault_writer(b"\x07" * 32)
+        writer._prepared = prepared(_JOB_SEED)
         with pytest.raises(VaultError) as exc:
             assert_vault_inputs(writer, {"tables": []}, _JOB_SEED)
         assert exc.value.code == "weak_mask_secret"
@@ -174,10 +177,10 @@ class TestEveryRunEntryRefusesWeakVaultWriter:
         ],
     )
     def test_strong_key_each_route_still_completes(self, tmp_path, monkeypatch, route):
-        from decoy_engine.vault import VaultWriter, load_vault
+        from decoy_engine.vault import load_vault
 
         cfg, tables = _unkeyed_fk_job(tmp_path)
-        writer = VaultWriter(_SECRET.mask_key())
+        writer = vault_writer(_SECRET.mask_key())
         calls = _route_work_spy(monkeypatch)
         _run_route(route, cfg, tables, writer, key_provider=_SECRET)
         assert calls

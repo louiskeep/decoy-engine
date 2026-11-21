@@ -157,9 +157,9 @@ def check_vault_columns(config: dict[str, Any]) -> None:
     Compile-check ownership table row #14 (deferred follow-up 1,
     2026-06-12). Rules:
 
-    - the `cryptography` package (the optional `vault` extra) must be
-      installed: the vault is Fernet-encrypted, so without it the run
-      would fail only at vault-write time, potentially hours in (F14a,
+    - the `nacl` module (PyNaCl, a base dependency of Decoy) must be
+      importable: the vault is a libsodium secretstream, so without it the
+      run would fail only at vault-write time, potentially hours in (F14a,
       2026-06-26);
     - a vaulted column needs a `namespace`: the vault's lookup key is
       `(namespace, masked_value)`, so without one the entry could never
@@ -186,20 +186,20 @@ def check_vault_columns(config: dict[str, Any]) -> None:
             if not isinstance(col_entry, dict) or not col_entry.get("vault"):
                 continue
             col_name = col_entry.get("name", "?")
-            # F14a: vault is Fernet-encrypted via the `cryptography` package. If
+            # F14a: the vault is a libsodium secretstream via PyNaCl (`nacl`). If
             # it is absent the run would fail only at vault-write time; fail at
             # compile instead. Checked once, reported on the first vaulted column.
             if crypto_ok is None:
-                crypto_ok = importlib.util.find_spec("cryptography") is not None
+                crypto_ok = importlib.util.find_spec("nacl") is not None
             if not crypto_ok:
                 raise PlanCompileError(
                     code=reasons.plan.VAULT_REQUIRES_CRYPTOGRAPHY,
                     path=f"tables.{table_name}.columns.{col_name}.vault",
                     message=(
                         f"column {col_name!r} in table {table_name!r} declares "
-                        "vault: true but the `cryptography` package is not installed. "
-                        "The token vault is Fernet-encrypted; install it with "
-                        "`pip install 'decoy-engine[vault]'` and re-run."
+                        "vault: true but the PyNaCl package (`nacl`) is not installed. "
+                        "The token vault needs it and it ships with Decoy; reinstall "
+                        "`decoy-engine` and re-run."
                     ),
                 )
             if col_entry.get("strategy") == "fpe":

@@ -88,10 +88,12 @@ __all__ = [
     "UNKNOWN_TRANSFORM_OP",
     "VAULT_COMMIT_FAILED",
     "VAULT_CRYPTO_NOT_INSTALLED",
+    "VAULT_ENTRY_TOO_LARGE",
     "VAULT_EXISTS",
     "VAULT_FORMAT_UNSUPPORTED",
     "VAULT_KEY_MISMATCH",
     "VAULT_PROTOCOL_VERSION_MISMATCH",
+    "VAULT_TAMPERED",
     "VAULT_UNREADABLE",
     "VAULT_WRITER_UNSUPPORTED",
     "WEAK_MASK_SECRET",
@@ -298,6 +300,20 @@ VAULT_PROTOCOL_VERSION_MISMATCH = _d(
     "Vault protocol version mismatch.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+)
+VAULT_ENTRY_TOO_LARGE = _d(
+    "vault_entry_too_large",
+    "One vault entry is larger than a vault segment can hold.",
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+    since=UNRELEASED,
+)
+VAULT_TAMPERED = _d(
+    "vault_tampered",
+    "The vault file was changed or cut short after it was written.",
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+    since=UNRELEASED,
 )
 VAULT_UNREADABLE = _d(
     "vault_unreadable",

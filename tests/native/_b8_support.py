@@ -37,7 +37,6 @@ from decoy_engine.profile import (
 )
 from decoy_engine.profile._declared_columns import arrow_columns
 from decoy_engine.providers_v2 import get_default_registry
-from decoy_engine.vault import VaultWriter
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
@@ -47,6 +46,7 @@ from tests.native._chunked_entry_support import (
     make_config,
     vault_key,
 )
+from tests.unit.vault._support import vault_writer
 
 FORCE = "cat_force"
 FORCE_REASON = f"fallback_policy_not_native:{FORCE}:python_only"
@@ -153,7 +153,7 @@ def run_one(
     when the run raises, so an expected-error leg can still prove which route it took."""
     sink: list[Any] = []
     ev: list[Any] = route_evidence_sink if route_evidence_sink is not None else []
-    writer = VaultWriter(vault_key()) if vault else None
+    writer = vault_writer(vault_key()) if vault else None
     entry = _run_mask_chunked_below_gate if writer is not None else run_mask_chunked_below_gate
     out = list(
         entry(

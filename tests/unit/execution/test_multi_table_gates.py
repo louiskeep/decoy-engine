@@ -20,6 +20,7 @@ from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.generation.pool import PoolCache
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _multi_table_support as mt
+from tests.unit.vault._support import vault_writer
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -433,7 +434,7 @@ def test_vault_writer_keyed_differently_is_rejected_before_any_table_masks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from decoy_engine.keyprovider import SecretKeyProvider
-    from decoy_engine.vault import VaultError, VaultWriter
+    from decoy_engine.vault import VaultError
 
     cfg, sources = mt.build_job(
         tmp_path,
@@ -451,7 +452,7 @@ def test_vault_writer_keyed_differently_is_rejected_before_any_table_masks(
             run_pipeline(
                 cfg,
                 sources=sources,
-                vault_writer=VaultWriter(b"\x42" * 32),
+                vault_writer=vault_writer(b"\x42" * 32),
                 key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
                 **mt.kw(**extra),
             )

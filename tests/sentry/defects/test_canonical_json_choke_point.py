@@ -29,10 +29,6 @@ _DUMPERS = ("dumps", "dump")
 
 # (src-relative path, qualified function) -> (kind, why it stays). Keyed on exact site identity.
 ALLOWLIST: dict[tuple[str, str], tuple[str, str]] = {
-    ("vault/_writer.py", "VaultWriter.serialize"): (
-        "stored file header",
-        "frozen vault file format, not a digest input",
-    ),
     ("declared_casting/_quarantine_local.py", "LocalProtectedQuarantineSink._write_header"): (
         "stored file header",
         "the DQA1 header is written, not hashed",

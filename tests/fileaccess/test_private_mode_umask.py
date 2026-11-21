@@ -19,6 +19,7 @@ from decoy_engine import fileaccess
 from decoy_engine.fileaccess import FileRequest, FileRole, RootedFileAccess
 from decoy_engine.quarantine import publish_staged_jsonl, write_jsonl_staged
 from decoy_engine.vault import VaultWriter
+from tests.unit.vault._support import vault_writer
 
 UMASKS = pytest.mark.parametrize(
     "umask", [0o000, 0o077, 0o700, 0o770, 0o777], ids=lambda m: f"umask{m:03o}"
@@ -113,6 +114,6 @@ def test_strict_fchmod_failure_leaves_no_stage(
 
 
 def _vault(policy: RootedFileAccess | None = None) -> VaultWriter:
-    writer = VaultWriter(b"12345678" * 4, file_access=policy)
+    writer = vault_writer(b"12345678" * 4, file_access=policy)
     writer.add([("ns", "m", "s")])
     return writer

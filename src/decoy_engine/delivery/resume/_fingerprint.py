@@ -18,15 +18,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from decoy_engine.detection.ner import installed_model_version
-from decoy_engine.internal.crypto import hmac_hex
+from decoy_engine.internal.crypto import RESUME_KEY_CHECK_LABEL, key_check_value
 from decoy_engine.keyprovider import KeyProvider, mask_key_from_provider
 from decoy_engine.plan import job_seed_for_config, pipeline_config_hash, run_ner_models
 from decoy_engine.records import payload_digest
 
 __all__ = ["RunFingerprint", "binding_digest", "build_fingerprint"]
 
-_KEY_CHECK_LABEL = "decoy-resume-key-check/v1"
-_KEY_CHECK_HEX = 16
 # The version of a key the engine derives from the job seed, mirroring `SeedKeyProvider`.
 _SEED_KEY_VERSION = "seed"
 # Engine-owned component names: a caller cannot supply one, so it cannot forge or hide a model.
@@ -105,16 +103,15 @@ def build_fingerprint(
     pairs = tuple(sorted((pair[0], pair[1]) for pair in [*given, *_ner_components(config)]))
     config_hash = pipeline_config_hash(config)
     version = key_provider.key_version if key_provider is not None else _SEED_KEY_VERSION
-    # The key goes straight into the reviewed `hmac_hex` frame, so no frame here ever names it.
-    digest = hmac_hex(
-        mask_key_from_provider(key_provider, job_seed_for_config(config)), _KEY_CHECK_LABEL
+    # The key is produced inside `key_check_value`'s MAC call, so no frame here names it.
+    key_check = key_check_value(
+        lambda: mask_key_from_provider(key_provider, job_seed_for_config(config)),
+        RESUME_KEY_CHECK_LABEL,
     )
-    if digest is None:
-        raise ValueError("the key check label is empty")
     return RunFingerprint(
         config_hash=config_hash,
         components=pairs,
-        key_check=digest[:_KEY_CHECK_HEX],
+        key_check=key_check,
         key_version=version,
         chunk_size=chunk_size,
     )

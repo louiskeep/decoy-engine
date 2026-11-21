@@ -37,6 +37,7 @@ from tests.native._chunked_entry_support import (
     passthrough,
     vault_key,
 )
+from tests.unit.vault._support import prepared
 
 __all__ = [
     "FORCE",
@@ -109,7 +110,8 @@ class _CountingVault(VaultWriter):
     """A real `VaultWriter` (the entry point type-checks it) that counts `add` calls."""
 
     def __init__(self, outcome: Outcome) -> None:
-        super().__init__(vault_key())
+        with prepared(vault_key()) as secret:
+            super().__init__(secret)
         self._outcome = outcome
 
     def add(self, entries: Any) -> None:

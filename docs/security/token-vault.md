@@ -10,17 +10,18 @@ what an operator must protect.
 
 An encrypted file containing `(namespace, masked_value) ->
 source_value` triples for every column declared `vault: true`. Each
-bounded chunk of entries is serialized as a Parquet table and encrypted
-with Fernet (AES-128-CBC + HMAC-SHA256, encrypt-then-MAC, per the
-Fernet spec) from the `cryptography` package, a base dependency since
-Task 5.2 promoted it out of the optional `vault` extra (FF1 needs AES
-unconditionally, not just vault; the `[vault]` extra is now a no-op
-compatibility alias). The file is a sequence of such encrypted chunks, so the
-full plaintext source-value table is never materialized as a single
-serialized blob before encryption (F13 privacy fix, 2026-06-26).
+bounded segment of entries is serialized as a Parquet table. The segments
+are one libsodium secretstream (`crypto_secretstream_xchacha20poly1305`,
+XChaCha20-Poly1305) through PyNaCl, a base dependency. Decoy writes no
+cipher or framing of its own. The stream detects any change, reorder, drop,
+duplicate or cut, and the header is bound to every segment as additional
+data. No segment holds the full plaintext source-value table, so it is never
+one serialized blob before encryption (F13 privacy fix, 2026-06-26).
 
 The key derives from the keyed-mask IKM (`mask_key`): `derive(mask_key,
-"vault", b"vault-key/v1")` (`src/decoy_engine/vault.py`, `_fernet`). Under
+"vault", b"vault-key/v2" + uint32be(32) + vault_id)` (`src/decoy_engine/vault/_format.py`).
+`vault_id` is 32 fresh random bytes drawn on every write, so two vaults under
+one secret never share a key. Under
 a configured secret, `mask_key` is the 32-byte `SecretKeyProvider` HKDF
 mask root. There is no no-secret fallback: every key that writes, opens or
 is matched against a vault must be exactly that 32-byte mask root,
@@ -37,33 +38,47 @@ that FPE, hash, and the other keyed strategies draw from (see
 [key derivation](key-derivation.md)), so a vault is bound to the run's
 masking key, not to the public seed. The derivation mixes
 `SEED_PROTOCOL_VERSION`, so a vault written under one protocol version
-is undecryptable under another. The key label itself stays at `vault-key/v1`
-across the v1 to v2 format bump because only the file layout changed, not
-the key derivation.
+is undecryptable under another. The key label moved from `vault-key/v1` to
+`vault-key/v2` with the v3 format, because the key is now per vault.
 
-## File format (decoy-vault/v2)
+## File format (decoy-vault/v3)
 
-Magic bytes `DCYVAULT2\n`, then a length-prefixed unencrypted JSON header,
-then a sequence of length-prefixed Fernet tokens (one per bounded chunk of
-up to 65 536 sorted entries). The 4-byte big-endian length prefix is the
-same idiom used in the determinism layer.
+Magic bytes `DCYVAULT3\n`, a length-prefixed canonical JSON header (at most
+4096 bytes), then one length-prefixed secretstream ciphertext per segment of
+up to 65 536 sorted entries. The last segment carries the stream's final tag,
+and a vault with no entries still has one (empty) final segment. The 4-byte
+big-endian length prefix is the same idiom used in the determinism layer.
 
-Unencrypted header fields:
+Header fields (a closed set; any other key is refused):
 
 | Field | Type | Description |
 |---|---|---|
-| `format` | string | `"decoy-vault/v2"` |
+| `format` | string | `"decoy-vault/v3"` |
 | `seed_protocol_version` | int | `SEED_PROTOCOL_VERSION` at write time |
+| `key_version` | string | The non-secret label of the mask secret that wrote the vault |
+| `key_check` | string | 16 hex characters: a key check value bound to `vault_id` |
+| `vault_id` | string | 64 hex characters: the vault's random id, input to its key |
+| `stream_header` | string | 48 hex characters: the secretstream header |
 | `ambiguous_dropped` | int | Entries dropped due to masked-value collisions |
-| `chunk_rows` | int | Maximum rows per encrypted chunk |
-| `chunk_count` | int | Total number of chunks |
+| `entry_count` | int | Total rows across all segments |
+| `segment_rows` | int | Maximum rows per segment |
 
-The header is read before any decryption. A `seed_protocol_version`
-mismatch raises `VaultError(code="vault_protocol_version_mismatch")`
-immediately, with a clear message naming both versions. This is a
-diagnosability improvement: a cross-version vault is also undecryptable
-(the version byte is mixed into the vault key), but without the guard
-the failure would surface as an opaque `vault_key_mismatch`.
+The SHA-256 of the magic and the header frame is the additional data of every
+segment. The reader checks, in order: the magic, the header and its field rules,
+the key check, and then the stream. A `seed_protocol_version` mismatch raises
+`vault_protocol_version_mismatch` before any decryption. A key check mismatch
+raises `vault_key_mismatch` before any segment is decrypted, and names the
+recorded `key_version`. Once the key is right, any damage raises `vault_tampered`
+and returns no rows.
+
+A `decoy-vault/v2` file (Fernet) is still read, read-only: the reader picks v2 or v3 from the
+magic bytes, and a v2 vault opens under the same mask secret as before. Nothing writes v2, and a v2
+file is never adopted as a current vault. A `decoy-vault/v1` file is refused with
+`vault_format_unsupported`.
+
+The key check value reveals nothing about a strong secret, but a weak
+passphrase can be tested offline against it, as with the resume store's key
+check. The key floor is on length, not entropy. Choose a strong secret.
 
 ## Threat model
 
@@ -139,22 +154,24 @@ the failure would surface as an opaque `vault_key_mismatch`.
 
 ## Error codes
 
-`VaultError` is the typed exception raised by `vault.py`. The `code`
+`VaultError` is the typed exception raised by the `vault` package. The `code`
 attribute is machine-readable.
 
 | Code | When raised |
 |---|---|
-| `vault_crypto_not_installed` | The `cryptography` package is absent from a broken or partial install. `cryptography` is a base dependency (Task 5.2); a normal `pip install decoy-engine` always has it, and in practice `decoy_engine` fails to import at all before this code path is reached. |
-| `vault_unreadable` | The file is missing, has a bad magic header, or is truncated. |
+| `vault_crypto_not_installed` | The PyNaCl package is absent from a broken or partial install. PyNaCl is a base dependency; a normal `pip install decoy-engine` always has it. |
+| `vault_unreadable` | The file is missing, has a bad magic header, or has a header that is cut short, too long, not JSON, or breaks a field rule. |
+| `vault_tampered` | The header was understood and the key check passed, but the file was changed or cut short: a segment edited, reordered, dropped, duplicated or cut, no final segment, bytes after the final segment, or a row count that differs from `entry_count`. No rows are returned. |
+| `vault_entry_too_large` | One entry is larger than a segment can hold (64 MiB of Parquet). Raised by the writer before any file exists. |
 | `vault_exists` | `write` found an existing vault at the target. Nothing was written and the existing vault is unchanged. |
 | `vault_commit_failed` | `write` could not write, `fsync` or link the stage, or `fsync` the directory after the link. Before the link no vault exists; after it the vault is kept (it may not survive a power loss). The text names no path and no errno. Publish no output it would reverse. |
-| `vault_format_unsupported` | The `format` field in the header names a version this engine does not consume. |
+| `vault_format_unsupported` | The file has another vault magic (for example `DCYVAULT2\n`) or a `format` field this engine does not consume. Re-run the mask with `--vault` under this version. |
 | `vault_protocol_version_mismatch` | The header's `seed_protocol_version` differs from the running `SEED_PROTOCOL_VERSION`. Cross-version unmask is not supported; re-mask under the correct engine version. |
-| `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written under a different `mask_key` (a different mask secret, or an older engine's `job_seed`). |
+| `vault_key_mismatch` | The key check failed. Either the mask secret differs from the one that wrote the vault, or the `key_check` or `vault_id` header field was edited (restore the stored copy). Raised before any segment is decrypted. |
 | `weak_mask_secret` | The key handed to `VaultWriter`, `load_vault` or the run-entry key-match guard is not 32 bytes, as bytes (for example the 8-byte `job_seed`, or a longer key the key derivation cannot take). Raised before any file is created, changed or read. |
 
 Note: `vault_protocol_version_mismatch` is checked before any decryption
-attempt. A cross-version vault also fails decryption (the protocol version
+attempt. A cross-version vault also fails the key check (the protocol version
 byte is mixed into the derived vault key), but the pre-decrypt check
 returns a clear typed error rather than a generic `vault_key_mismatch`.
 

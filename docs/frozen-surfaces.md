@@ -19,8 +19,10 @@ pinning test says `accepted-known-limit: <id>`, and the id is listed under
 | Surface | Completeness source | Owning code | Pinning test or snapshot |
 |---|---|---|---|
 | `distribution-snapshot/v1` | contract 3.1 | `src/decoy_engine/quality/snapshot.py` | `tests/snapshots/test_distribution_snapshot_baseline.py`, `tests/integration/compat_corpus/test_compat_corpus.py` |
-| `decoy-vault/v2` | contract 3.1, 3.2 | `src/decoy_engine/vault/` | `tests/unit/test_vault.py`, `tests/integration/compat_corpus/test_compat_corpus.py` |
-| `vault-key/v1` | contract 3.1, 3.2 | `src/decoy_engine/vault/` | `tests/unit/test_vault.py`, `tests/integration/compat_corpus/test_compat_corpus.py` |
+| `decoy-vault/v3` | contract 3.1, 3.2 | `src/decoy_engine/vault/` | `tests/unit/vault/test_v3_known_answer.py`, `tests/integration/compat_corpus/test_compat_corpus.py` |
+| `decoy-vault/v2` (read-only) | contract 3.2 | `src/decoy_engine/vault/_v2_reader.py` | `tests/unit/vault/test_v2_compat_and_bytes.py`, `tests/integration/compat_corpus/test_compat_corpus.py` |
+| `vault-key/v1` (read-only) | contract 3.2 | `src/decoy_engine/vault/_v2_reader.py` | `tests/unit/vault/test_v2_compat_and_bytes.py`, `tests/integration/compat_corpus/test_compat_corpus.py` |
+| `vault-key/v2` | contract 3.1, 3.2 | `src/decoy_engine/vault/` | `tests/unit/vault/test_v3_known_answer.py`, `tests/integration/compat_corpus/test_compat_corpus.py` |
 | `ff1-key/v1` | contract 3.1 | `src/decoy_engine/transforms/fpe.py` | `tests/native/test_determinism_protocol.py`, `tests/unit/execution/test_fpe_strategy.py` |
 | `quality-report/v1` | contract 3.1 | `src/decoy_engine/quality/report.py` | `tests/snapshots/test_quality_report_baseline.py` |
 | `synth-report/v1` | contract 3.1 | `src/decoy_engine/quality/synth_report.py` | `tests/unit/quality/test_synth_report_characterization.py` |

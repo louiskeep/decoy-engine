@@ -16,7 +16,6 @@ from decoy_engine.errors import ConfigError
 from decoy_engine.execution import _transforms, _transforms_table
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.profile._readers import LazySource
-from decoy_engine.vault import VaultWriter
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
@@ -31,6 +30,7 @@ from tests.unit.execution._transform_testkit import (
     validated,
     write_parquet,
 )
+from tests.unit.vault._support import vault_writer
 
 _REJECT = "fk_full_frame_oom_risk_rejected"
 _VALIDATORS = [
@@ -184,7 +184,7 @@ def _special_kwargs(kind: str) -> dict[str, Any]:
     if kind == "post_validation":
         return {"post_validation": True}
     if kind == "vault":
-        return {"vault_writer": VaultWriter(THROWAWAY_KEY_PROVIDER.mask_key())}
+        return {"vault_writer": vault_writer(THROWAWAY_KEY_PROVIDER.mask_key())}
     return {}
 
 

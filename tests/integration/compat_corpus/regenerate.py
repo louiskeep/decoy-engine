@@ -13,7 +13,7 @@ GA, capture real artifacts from each released `/vN` here and set synthetic=False
 the test then becomes a blocking gate (see test_compat_corpus.py, which keys off
 decoy_engine.RELEASE_PHASE).
 
-The vault is Fernet-encrypted with a random IV, so its bytes are not
+The vault carries a random vault_id and stream header, so its bytes are not
 reproducible run to run. That is fine: the locked file is committed once and the
 test reads THAT file. Re-running this script mints a fresh (equally valid) file;
 do it only when intentionally re-baselining.
@@ -25,12 +25,12 @@ import json
 from pathlib import Path
 
 import pandas as pd
+from tests.unit.vault._support import vault_writer
 
 import decoy_engine
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.generation.statistical import load_spec
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
-from decoy_engine.vault import VaultWriter
 
 HERE = Path(__file__).resolve().parent
 
@@ -81,14 +81,14 @@ _SNAPSHOT_COL_CFGS = [
 
 
 def _vault_artifact() -> dict:
-    vault_path = HERE / "decoy-vault-v2__synthetic.vault"
-    writer = VaultWriter(_SYNTHETIC_MASK_KEY)
+    vault_path = HERE / "decoy-vault-v3__synthetic.vault"
+    writer = vault_writer(_SYNTHETIC_MASK_KEY)
     writer.add(_SYNTHETIC_ENTRIES)
     written = writer.write(vault_path)
     expected = {f"{ns}\x1f{masked}": source for ns, masked, source in _SYNTHETIC_ENTRIES}
     print(f"wrote {vault_path.name} ({written} entries)")
     return {
-        "tag": "decoy-vault/v2",
+        "tag": "decoy-vault/v3",
         "kind": "vault",
         "synthetic": True,
         "produced_by_engine_version": decoy_engine.__version__,
@@ -134,6 +134,13 @@ def _distribution_snapshot_artifact() -> dict:
     }
 
 
+def _frozen_vault_v2_artifact() -> dict:
+    """The v2 entry, carried forward as it is: no engine writes v2, so it cannot be minted again."""
+    old = json.loads((HERE / "manifest.json").read_text(encoding="utf-8"))["artifacts"]
+    (kept,) = [a for a in old if a["tag"] == "decoy-vault/v2"]
+    return kept
+
+
 def main() -> None:
     # NOTE: masked CSV/Parquet output is intentionally NOT frozen here -- the
     # engine never reads its own masked output back, so there is no decoy-owned
@@ -152,6 +159,7 @@ def main() -> None:
         ),
         "artifacts": [
             _vault_artifact(),
+            _frozen_vault_v2_artifact(),
             _distribution_snapshot_artifact(),
         ],
     }

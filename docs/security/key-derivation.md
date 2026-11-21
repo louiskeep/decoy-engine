@@ -13,7 +13,7 @@ for the finding and the migration (excluded from the built docs site; see
 
 Every keyed strategy handler -- `fpe`, `hash`, `date_shift`, `code_set`,
 `joint_mask`, deterministic `faker`/`categorical`/composites, and the token
-vault's Fernet key -- consumes a single per-job value: `StrategyContext.mask_key`
+vault's stream key -- consumes a single per-job value: `StrategyContext.mask_key`
 (bytes). Handlers draw from `mask_key`, **never** from `job_seed` (the
 8-byte generation-reproducibility seed). This is a one-slot substitution: the
 same `derive(...)` domain separation by namespace and per-purpose label that
@@ -101,8 +101,8 @@ global_settings:
 - `src/decoy_engine/execution/_pipeline.py`: `run_pipeline` resolves the
   provider once (fail-fast) and threads it into every route.
 - `src/decoy_engine/config/_global_settings.py`: the `mask_secret_ref` field.
-- `src/decoy_engine/vault.py`: the token vault's Fernet key derives from
-  `mask_key`, not `job_seed` -- see [token vault](token-vault.md).
+- `src/decoy_engine/vault/_format.py`: each token vault's stream key derives from
+  `mask_key` and the vault's own id, not `job_seed` -- see [token vault](token-vault.md).
 
 ## The legacy `derive_key` resolver (superseded)
 

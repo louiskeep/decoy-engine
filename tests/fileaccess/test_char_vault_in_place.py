@@ -13,12 +13,13 @@ from pathlib import Path
 import pytest
 
 from decoy_engine.vault import VaultWriter
+from tests.unit.vault._support import vault_writer
 
 KEY = b"12345678" * 4
 
 
 def _writer() -> VaultWriter:
-    writer = VaultWriter(KEY)
+    writer = vault_writer(KEY)
     writer.add([("ns", "m", "s")])
     return writer
 

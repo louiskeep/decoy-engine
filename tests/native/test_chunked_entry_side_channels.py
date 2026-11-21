@@ -22,7 +22,7 @@ from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.providers_v2 import get_default_registry
-from decoy_engine.vault import VaultWriter, collect_vault_entries
+from decoy_engine.vault import collect_vault_entries
 from tests._declared_schema import declared_schema
 from tests.native._b8_support import (
     _mask_pipeline_chunked_below_gate,
@@ -50,6 +50,7 @@ from tests.native._chunked_entry_support import (
     vault_key,
 )
 from tests.unit.execution.test_chunked_fk_gate_kills import _hash_config as _fk_config
+from tests.unit.vault._support import vault_writer
 
 
 def _forced_columns(config: dict[str, Any]) -> list[str]:
@@ -133,7 +134,7 @@ def test_every_oracle_parameter_reaches_the_shared_state(monkeypatch: pytest.Mon
 
     registry = copy.copy(get_default_registry())
     adapter = _RecordingAdapter()
-    vault = VaultWriter(vault_key())
+    vault = vault_writer(vault_key())
     sink: list[Any] = []
     kp = key_provider()
     source = _oracle_route_source()
@@ -356,7 +357,7 @@ def test_eager_oracle_checks_fail_the_same_way_with_no_side_effects(
         }
     )
     kp: Any = key_provider()
-    vault = VaultWriter(vault_key())
+    vault = vault_writer(vault_key())
     if case == "keyed_no_secret":
         config, kp = _keyed_config(), None
     elif case == "bad_corpus":
@@ -365,7 +366,7 @@ def test_eager_oracle_checks_fail_the_same_way_with_no_side_effects(
         config = _bucket_without_namespace()
     else:
         config = make_config([redact("s"), passthrough("p")])
-        vault = VaultWriter(b"\x09" * 32)
+        vault = vault_writer(b"\x09" * 32)
     source = first.select(
         [c for c in first.column_names if c in {c["name"] for c in config["tables"][0]["columns"]}]
     )
@@ -441,7 +442,7 @@ def test_native_route_vault_entries_match_the_oracle_route(with_hash: bool) -> N
     source = _vault_source().select(names)
     chunks = split(source, 3)
 
-    native_vault, oracle_vault = VaultWriter(vault_key()), VaultWriter(vault_key())
+    native_vault, oracle_vault = vault_writer(vault_key()), vault_writer(vault_key())
     evidence: list[NativeRouteEvidence] = []
     native_out = list(
         _entry(config, chunks, vault_writer=native_vault, route_evidence_sink=evidence)
@@ -466,7 +467,7 @@ def test_vault_writer_keyed_differently_is_rejected_on_both_routes(route: str) -
         source = source.append_column(
             "c", pa.array([FORCE_ORACLE_VALUE] * source.num_rows, pa.string())
         )
-    wrong = VaultWriter(b"\x07" * 32)
+    wrong = vault_writer(b"\x07" * 32)
     code = _failure(lambda: _entry(make_config(columns), split(source, 3), vault_writer=wrong))
     assert code[1] == "vault_key_mismatch"
     assert wrong._entries == set()

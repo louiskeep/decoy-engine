@@ -30,6 +30,7 @@ import pytest
 from decoy_engine import reasons
 from decoy_engine.fileaccess import FileRequest, FileRole, Root, RootedFileAccess
 from decoy_engine.vault import VaultError, VaultWriter, load_vault
+from tests.unit.vault._support import vault_writer
 
 KEY = b"12345678" * 4
 LEAF = "v.dcyvault"
@@ -62,7 +63,7 @@ class _Route:
             )
 
     def writer(self, entries: Any = (("ns", "m", "s"),)) -> VaultWriter:
-        writer = VaultWriter(KEY, file_access=self.policy)
+        writer = vault_writer(KEY, file_access=self.policy)
         writer.add(list(entries))
         return writer
 

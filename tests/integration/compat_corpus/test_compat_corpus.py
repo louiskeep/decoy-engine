@@ -108,12 +108,12 @@ def test_harness_bites_on_corruption(tmp_path: Path) -> None:
     assert vaults, "expected at least one vault artifact in the corpus"
     art = vaults[0]
     blob = bytearray((HERE / art["path"]).read_bytes())
-    blob[-1] ^= 0xFF  # flip the last byte of the ciphertext
+    blob[-1] ^= 0xFF  # flip the last byte of the final segment
     tampered = tmp_path / "tampered.vault"
     tampered.write_bytes(bytes(blob))
     with pytest.raises(VaultError) as exc:
         load_vault(tampered, bytes.fromhex(art["mask_key_hex"]))
-    assert exc.value.code == "vault_key_mismatch"
+    assert exc.value.code == "vault_tampered"
 
 
 def test_harness_bites_on_corruption_snapshot(tmp_path: Path) -> None:
@@ -135,3 +135,20 @@ def test_harness_bites_on_corruption_snapshot(tmp_path: Path) -> None:
     with pytest.raises(StatisticalSpecError) as exc:
         _load_snapshot(str(tampered))
     assert exc.value.code == "statistical_snapshot_schema_mismatch"
+
+
+def test_corpus_keeps_both_vault_formats() -> None:
+    """v2 is read-only but never dropped: a user's old vault must still unmask."""
+    tags = {a["tag"] for a in _artifacts() if a["kind"] == "vault"}
+    assert {"decoy-vault/v2", "decoy-vault/v3"} <= tags
+
+
+def test_harness_bites_on_v2_corruption(tmp_path: Path) -> None:
+    art = next(a for a in _artifacts() if a["tag"] == "decoy-vault/v2")
+    blob = bytearray((HERE / art["path"]).read_bytes())
+    blob[-1] ^= 0xFF
+    tampered = tmp_path / "tampered-v2.vault"
+    tampered.write_bytes(bytes(blob))
+    with pytest.raises(VaultError) as exc:
+        load_vault(tampered, bytes.fromhex(art["mask_key_hex"]))
+    assert exc.value.code == "vault_key_mismatch"

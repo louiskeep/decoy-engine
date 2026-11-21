@@ -84,10 +84,14 @@ def _unlink(path, *args, **kw):  # type: ignore[no-untyped-def]
 os.open, os.write, os.fsync, os.link, os.unlink = _open, _write, _fsync, _link, _unlink  # type: ignore[assignment]
 
 from decoy_engine.fileaccess import FileRequest, FileRole, Root, RootedFileAccess  # noqa: E402
+from decoy_engine.secret_providers import PreparedSecret  # noqa: E402
+from decoy_engine.secret_providers._buffer import SecretBuffer  # noqa: E402
 from decoy_engine.vault import VaultWriter  # noqa: E402
 
+PREPARED = PreparedSecret(SecretBuffer.adopt(bytearray(KEY)), key_version="v1", requirement_ids=())
+
 if ROUTE == "ambient":
-    writer = VaultWriter(KEY)
+    writer = VaultWriter(PREPARED)
     writer.add(ENTRIES)
     writer.write(os.path.join(DIRECTORY, LEAF))
 else:
@@ -95,7 +99,7 @@ else:
     policy = RootedFileAccess(
         [Root("main", root, frozenset({FileRole.VAULT}), frozenset({"read", "write", "stat"}))]
     )
-    writer = VaultWriter(KEY, file_access=policy)
+    writer = VaultWriter(PREPARED, file_access=policy)
     writer.add(ENTRIES)
     writer.write(policy.output_dir(FileRequest(FileRole.VAULT, "write", LEAF, "vault")))
 sys.exit(0)

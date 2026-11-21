@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from decoy_engine import fileaccess, vault
+from decoy_engine import fileaccess
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.profiling.model_pack import provenance
 from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
@@ -29,6 +29,7 @@ from decoy_engine.secret_providers._local import EnvSecretProvider
 from decoy_engine.secret_providers._types import SecretRef
 from tests.fileaccess.census_support import engine_frames, leaks
 from tests.fileaccess.support import RootRelative
+from tests.unit.vault._support import vault_writer
 
 KEY = b"R6-SIGNING-CANARY-" + b"q" * 14  # 32 bytes
 MASTER_SHORT = b"R6-MASTER-CANARY-short"  # an invalid (non-32-byte) master
@@ -230,7 +231,7 @@ def test_vault_writer_refused_by_the_installed_policy_keeps_no_key(tmp_path: Pat
     policy = RootRelative(tmp_path / "root")
     try:
         with fileaccess.scope(policy), pytest.raises(fileaccess.FileAccessUnavailable) as info:
-            vault.VaultWriter(KEY, file_access=fileaccess.LocalFileAccess())
+            vault_writer(KEY, file_access=fileaccess.LocalFileAccess())
     finally:
         policy.close()
     assert leaks(info.value, KEY) == []
@@ -247,7 +248,7 @@ def test_the_dedicated_cells_cover_what_the_bomb_cells_cannot() -> None:
         ("ModelPackLoader._check_signature", "key_box"),
         ("derive_pack_signing_key", "master"),
         ("sign_pack", "key"),
-        ("VaultWriter.__init__", "mask_key"),
+        ("VaultWriter.assert_keyed_with", "mask_key"),
         ("native_text_mask.mask", "mask_key"),
         ("ShadowContext", "mask_key"),
         ("ProviderSpec", "seed"),

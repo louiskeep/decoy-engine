@@ -35,7 +35,6 @@ from decoy_engine.execution.native._dispatch import (
 
 # A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
 from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
-from decoy_engine.vault import VaultWriter
 from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -51,6 +50,7 @@ from tests.native._chunked_entry_support import (
     truncate,
     vault_key,
 )
+from tests.unit.vault._support import vault_writer
 
 
 def _oracle(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
@@ -77,7 +77,7 @@ def _drive(
     evidence: list[NativeRouteEvidence] | None = None,
 ) -> Outcome:
     sink: list[Any] = []
-    vault = VaultWriter(vault_key())
+    vault = vault_writer(vault_key())
     out: list[pa.Table] = []
     code: str | None = None
     try:
@@ -418,7 +418,7 @@ def _leading_null_chunks() -> list[pa.Table]:
 
 def _drive_with_state(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[Outcome, Any]:
     sink: list[Any] = []
-    vault = VaultWriter(vault_key())
+    vault = vault_writer(vault_key())
     out: list[pa.Table] = []
     caught: Exception | None = None
     try:

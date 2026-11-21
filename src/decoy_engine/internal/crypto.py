@@ -12,7 +12,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import warnings
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Final
 
 
 def deterministic_hash(value: Any, seed: int = 0) -> str | None:
@@ -72,3 +73,26 @@ def hmac_seed(key: bytes, value: Any) -> int:
     except BaseException:
         del key
         raise
+
+
+# The two key check labels. Each is frozen: the resume store's value is on disk, the vault's goes
+# into every vault header.
+RESUME_KEY_CHECK_LABEL = "decoy-resume-key-check/v1"
+VAULT_KEY_CHECK_LABEL = "decoy-vault-key-check/v1"
+_KEY_CHECK_HEX = 16
+# The shape of a key check value, derived from its length so a header or record declares no copy.
+KEY_CHECK_PATTERN: Final = rf"[0-9a-f]{{{_KEY_CHECK_HEX}}}"
+
+
+def key_check_value(key_source: Callable[[], bytes], label: str, context: str = "") -> str:
+    """A short MAC of a fixed label under a key: proves "same key" without storing it.
+
+    Pattern: key check value (KCV, payment HSM practice; PKCS#11 `CKA_CHECK_VALUE`). `key_source`
+    is a zero-argument callable, so the key is produced inside the MAC call and no frame here
+    binds it. `context` binds the check to one object (a vault id) so two objects under one key
+    do not share a value.
+    """
+    digest = hmac_hex(key_source(), label if not context else f"{label}\x1f{context}")
+    if digest is None:
+        raise ValueError("the key check label is empty")
+    return digest[:_KEY_CHECK_HEX]

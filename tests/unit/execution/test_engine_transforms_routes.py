@@ -36,6 +36,7 @@ from tests.unit.execution._transform_testkit import (
     validated,
     write_parquet,
 )
+from tests.unit.vault._support import vault_writer
 
 _NEEDS_TRANSFORMS = "per_table_transforms_present"
 
@@ -618,7 +619,6 @@ class TestInvalidTransforms:
         ],
     )
     def test_full_frame_raises_and_writes_nothing(self, tmp_path, ops, code):
-        from decoy_engine.vault import VaultWriter
 
         tbl = base_table()
         cfg = single_table_config(tmp_path, tbl, transforms=ops)
@@ -628,7 +628,7 @@ class TestInvalidTransforms:
             "triggers": ["validation_fail"],
         }
         cfg["validators"] = [{"name": "regex_match", "columns": {"t": ["s"]}, "params": {}}]
-        vault = VaultWriter(THROWAWAY_KEY_PROVIDER.mask_key())
+        vault = vault_writer(THROWAWAY_KEY_PROVIDER.mask_key())
         before = sorted(p.name for p in tmp_path.iterdir())
         with pytest.raises(PipelineValidationError if code == MISSING else TransformError) as exc:
             _run(cfg, {"t": tbl}, vault_writer=vault, key_provider=THROWAWAY_KEY_PROVIDER)

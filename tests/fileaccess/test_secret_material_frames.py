@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -25,6 +26,7 @@ from decoy_engine import determinism, fileaccess, keyprovider, vault
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.secret_providers import REQUIREMENTS, SecretBuffer
 from tests.fileaccess.locals_support import _strings
+from tests.unit.vault._support import vault_writer
 
 _TESTS = os.sep + "tests" + os.sep
 
@@ -93,9 +95,17 @@ def _keyed_config(ref: str, **extra: Any) -> dict[str, Any]:
 # --- vault ------------------------------------------------------------------------------------
 
 
-def _vault_derived(key: bytes) -> list[bytes]:
-    fernet_key = determinism.derive(key, vault.VAULT_NAMESPACE, vault.VAULT_KEY_LABEL)
-    return [key, fernet_key, base64.urlsafe_b64encode(fernet_key)]
+def _vault_derived(key: bytes, path: Path | None = None) -> list[bytes]:
+    """The key, and the stream key of the vault at `path` (its key depends on its `vault_id`)."""
+    found = [key]
+    if path is not None:
+        blob = path.read_bytes()
+        start = len(b"DCYVAULT3\n")
+        length = int.from_bytes(blob[start : start + 4], "big")
+        vault_id = bytes.fromhex(json.loads(blob[start + 4 : start + 4 + length])["vault_id"])
+        context = vault.VAULT_KEY_LABEL + len(vault_id).to_bytes(4, "big") + vault_id
+        found.append(determinism.derive(key, vault.VAULT_NAMESPACE, context))
+    return found
 
 
 def test_load_vault_without_a_handle(tmp_path: Path) -> None:
@@ -112,40 +122,46 @@ def test_load_vault_missing_file(tmp_path: Path) -> None:
 
 def test_load_vault_wrong_key(tmp_path: Path) -> None:
     path = tmp_path / "v.vault"
-    writer = vault.VaultWriter(OTHER_KEY)
+    writer = vault_writer(OTHER_KEY)
     writer.add([("ns", "m", "s")])
     writer.write(str(path))
     with pytest.raises(vault.VaultError) as info:
         vault.load_vault(str(path), VAULT_KEY)
     assert info.value.code == "vault_key_mismatch"
-    _assert_no_frame_holds(info.value, *_vault_derived(VAULT_KEY), *_vault_derived(OTHER_KEY))
+    _assert_no_frame_holds(
+        info.value, *_vault_derived(VAULT_KEY, path), *_vault_derived(OTHER_KEY, path)
+    )
 
 
-def test_fernet_construction_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import cryptography.fernet
+def test_stream_open_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from nacl import bindings
 
-    monkeypatch.setattr(cryptography.fernet, "Fernet", _raise)
+    path = tmp_path / "v.vault"
+    writer = vault_writer(VAULT_KEY)
+    writer.add([("ns", "m", "s")])
+    writer.write(str(path))
+    monkeypatch.setattr(bindings, "crypto_secretstream_xchacha20poly1305_init_pull", _raise)
     with pytest.raises(RuntimeError) as info:
-        vault.load_vault(str(tmp_path / "absent.vault"), VAULT_KEY)
-    _assert_no_frame_holds(info.value, *_vault_derived(VAULT_KEY))
+        vault.load_vault(str(path), VAULT_KEY)
+    _assert_no_frame_holds(info.value, *_vault_derived(VAULT_KEY, path))
 
 
 def test_vault_writer_construction_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fileaccess, "capture", _raise)
     with pytest.raises(RuntimeError) as info:
-        vault.VaultWriter(VAULT_KEY)
+        vault_writer(VAULT_KEY)
     _assert_no_frame_holds(info.value, VAULT_KEY)
 
 
 def test_vault_writer_key_mismatch() -> None:
     with pytest.raises(vault.VaultError) as info:
-        vault.VaultWriter(VAULT_KEY).assert_keyed_with(OTHER_KEY)
+        vault_writer(VAULT_KEY).assert_keyed_with(OTHER_KEY)
     _assert_no_frame_holds(info.value, VAULT_KEY, OTHER_KEY)
 
 
 @pytest.mark.parametrize("writer", ["duck", "other_key"])
 def test_assert_vault_writer_keyed(writer: str) -> None:
-    candidate = object() if writer == "duck" else vault.VaultWriter(OTHER_KEY)
+    candidate = object() if writer == "duck" else vault_writer(OTHER_KEY)
     with pytest.raises(vault.VaultError) as info:
         vault.assert_vault_writer_keyed(candidate, VAULT_KEY)
     _assert_no_frame_holds(info.value, VAULT_KEY, OTHER_KEY)
@@ -383,3 +399,42 @@ def test_client_from_env_from_the_process_environment(monkeypatch: pytest.Monkey
         client_from_env()
     for function, name, text in _all_locals(info.value):
         assert TOKEN not in text, f"{function}() local {name!r} holds the token"
+
+
+def test_open_vault_tampered(tmp_path: Path) -> None:
+    from tests.unit.vault._support import prepared
+
+    path = tmp_path / "v.vault"
+    writer = vault_writer(VAULT_KEY)
+    writer.add([("ns", "m", "s")])
+    writer.write(str(path))
+    blob = bytearray(path.read_bytes())
+    blob[-1] ^= 0xFF
+    path.write_bytes(bytes(blob))
+    secret = prepared(VAULT_KEY)
+    with pytest.raises(vault.VaultError) as info:
+        vault.open_vault(path, secret)
+    assert info.value.code == "vault_tampered"
+    _assert_no_frame_holds(info.value, *_vault_derived(VAULT_KEY, path))
+
+
+def test_open_vault_wrong_secret(tmp_path: Path) -> None:
+    from tests.unit.vault._support import prepared
+
+    path = tmp_path / "v.vault"
+    writer = vault_writer(OTHER_KEY)
+    writer.add([("ns", "m", "s")])
+    writer.write(str(path))
+    with pytest.raises(vault.VaultError) as info:
+        vault.open_vault(path, prepared(VAULT_KEY))
+    assert info.value.code == "vault_key_mismatch"
+    _assert_no_frame_holds(info.value, *_vault_derived(VAULT_KEY, path))
+
+
+def test_key_check_value_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from decoy_engine.internal import crypto
+
+    monkeypatch.setattr(crypto, "hmac_hex", _raise)
+    with pytest.raises(RuntimeError) as info:
+        crypto.key_check_value(lambda: VAULT_KEY, crypto.VAULT_KEY_CHECK_LABEL, "id")
+    _assert_no_frame_holds(info.value, VAULT_KEY)

@@ -10,6 +10,7 @@ from decoy_engine.secret_providers._buffer import SecretBuffer
 from decoy_engine.secret_providers._cache import SecretCache, default_cache
 from decoy_engine.secret_providers._errors import (
     SecretAccessDenied,
+    SecretClosedError,
     SecretExpired,
     SecretLeaseUnsupported,
     SecretMaterialInvalid,
@@ -36,6 +37,7 @@ from decoy_engine.secret_providers._requirements import (
     AES_GCM_V1,
     FERNET_V1,
     HMAC_SHA256_V1,
+    MASK_ROOT,
     MASK_ROOT_V1,
     REQUIREMENTS,
     KeyedColumn,
@@ -65,6 +67,7 @@ __all__ = [
     "EXPIRY_SKEW_SECONDS",
     "FERNET_V1",
     "HMAC_SHA256_V1",
+    "MASK_ROOT",
     "MASK_ROOT_V1",
     "MAX_CACHE_TTL_SECONDS",
     "REQUIREMENTS",
@@ -79,6 +82,7 @@ __all__ = [
     "SecretBuffer",
     "SecretCache",
     "SecretCachePolicy",
+    "SecretClosedError",
     "SecretDescriptor",
     "SecretExpired",
     "SecretLeaseUnsupported",

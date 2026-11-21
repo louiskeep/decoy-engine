@@ -8,15 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import pyarrow as pa
-
 from decoy_engine import fileaccess, reasons
+from decoy_engine._canonical import canonical_json_bytes
 from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.fileaccess import (
@@ -28,27 +27,41 @@ from decoy_engine.fileaccess import (
     OutputDir,
 )
 from decoy_engine.fileaccess.adapters import serial
+from decoy_engine.internal.crypto import VAULT_KEY_CHECK_LABEL, key_check_value
 from decoy_engine.keyprovider import (
     KEY_REQUIRED_GUIDANCE,
     KeyedStrategyRequiresSecret,
+    is_key_version_label,
+)
+from decoy_engine.secret_providers import (
+    MASK_ROOT_V1,
+    PreparedSecret,
+    SecretBuffer,
+    SecretClosedError,
 )
 
 if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
 
+from decoy_engine.vault import _format
 from decoy_engine.vault._format import (
-    _CHUNK_ROWS,
+    _HEADER,
     _MAGIC,
-    _SCHEMA,
+    _VAULT_ID_BYTES,
     VAULT_FORMAT_VERSION,
     VaultError,
-    _fernet,
+    _check_key,
     _frame,
+    _HeaderRecord,
     _key_size,
+    _open_stream,
     _require_vault_key,
+    _segment_frames,
 )
 
 _ISSUER = object()
+# The key version a bare `bytes` key records: the version every pre-v3 writer stamped.
+_LEGACY_KEY_VERSION = "v1"
 
 
 @dataclass(frozen=True)
@@ -72,36 +85,84 @@ def issue_commit(blob: bytes, entry_count: int, *, adopted: bool) -> VaultCommit
     return VaultCommit(digest, len(blob), entry_count, adopted, _ISSUER)
 
 
+def _prepared_from_key(mask_key: bytes | bytearray) -> PreparedSecret:
+    """A `PreparedSecret` over a raw mask root, as the key-provider bridge builds one.
+
+    No length check here: the writer's floor refuses a short key as `weak_mask_secret`, the same
+    code and text as before v3.
+    """
+    try:
+        return PreparedSecret(
+            SecretBuffer.adopt(bytearray(mask_key)),
+            key_version=_LEGACY_KEY_VERSION,
+            requirement_ids=(MASK_ROOT_V1,),
+        )
+    except BaseException:
+        del mask_key  # a traceback keeps this frame: the key must not be among its locals
+        raise
+
+
 class VaultWriter:
     """Accumulate vault entries across chunks, encrypt per chunk at `write()`.
 
     Entries live in memory deduplicated until `write()`, so the in-memory
     footprint is bounded by the number of DISTINCT (namespace, masked,
     source) triples, not by row count. At `write()` the sorted entries are
-    serialized + Fernet-encrypted one bounded chunk at a time (F13), so the
+    serialized and encrypted one bounded segment at a time (F13), so the
     full plaintext table is never materialized as a single serialized blob
     before encryption.
     """
 
-    def __init__(self, mask_key: bytes, *, file_access: FileAccess | None = None) -> None:
-        # Stored as a `bytes` copy so a caller-held buffer cannot change the key after
-        # admission. The policy lookup below can raise; this frame must not hold the key then.
+    def __init__(
+        self, prepared: PreparedSecret | bytes, *, file_access: FileAccess | None = None
+    ) -> None:
+        # `bytes` is the frozen pre-v3 form, `VaultWriter(mask_key)`. It is prepared the way a
+        # `PreparedSecret` is built, then follows the one path below, so both give the same vault.
+        lent = None
+        if isinstance(prepared, (bytes, bytearray)):
+            # Rebinding the name drops this frame's reference to the key bytes.
+            prepared = lent = _prepared_from_key(prepared)
         try:
-            _require_vault_key(_key_size(mask_key))
-            self._mask_key = bytes(mask_key)
+            self._admit(prepared, file_access)
+        finally:
+            if lent is not None:
+                lent.close()
+
+    def _admit(self, prepared: PreparedSecret, file_access: FileAccess | None) -> None:
+        # The writer owns a clone, so closing the caller's secret (the admission scope does)
+        # does not stop a write that happens later. Every check below runs before the clone.
+        if not isinstance(prepared, PreparedSecret):
+            raise TypeError("a VaultWriter is built from a PreparedSecret or the mask key bytes")
+        if prepared.closed:
+            raise SecretClosedError
+        if not is_key_version_label(prepared.key_version):
+            raise ValueError("the prepared secret's key version is not a valid label")
+        _require_vault_key(_key_size(prepared.mask_key()))
+        self._prepared = prepared.clone()
+        try:
             self._entries: set[tuple[str, str, str]] = set()
             # The writer writes after the entry point that built it returned, so it keeps the
             # policy it was built under and never looks one up later.
             self._access = fileaccess.capture(file_access)
         except BaseException:
-            del mask_key
+            self._prepared.close()
             raise
+
+    def close(self) -> None:
+        """Wipe the writer's copy of the secret. Later writes raise `SecretClosedError`."""
+        self._prepared.close()
+
+    def __enter__(self) -> VaultWriter:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def assert_keyed_with(self, mask_key: bytes) -> None:
         """Fail closed if this writer's key does not match `mask_key`.
 
         DE-02 (Codex BLOCKER 5): the vault holds reversible plaintext PII, so it
-        MUST be Fernet-encrypted under the SAME keyed-mask secret the masking run
+        MUST be encrypted under the SAME keyed-mask secret the masking run
         used -- never the public `job_seed` while the output masks under a real
         secret. `run_pipeline` calls this against the run's resolved `mask_key`
         before any masking. Constant-time compare; never echoes the key bytes.
@@ -112,9 +173,9 @@ class VaultWriter:
         code a weak writer gets, not as a key mismatch.
         """
         try:
-            _require_vault_key(_key_size(self._mask_key))
+            _require_vault_key(_key_size(self._prepared.mask_key()))
             _require_vault_key(_key_size(mask_key))
-            if not hmac.compare_digest(self._mask_key, mask_key):
+            if not hmac.compare_digest(self._prepared.mask_key(), mask_key):
                 raise VaultError(
                     code=reasons.runtime.VAULT_KEY_MISMATCH,
                     message=(
@@ -141,17 +202,13 @@ class VaultWriter:
 
         Conflicting sources for one `(namespace, masked)` key are
         dropped (see the module docstring's ambiguity policy); the
-        dropped-key count rides in the unencrypted header.
+        dropped-key count rides in the authenticated header.
 
-        F13 (2026-06-26): the plaintext source values are serialized and
-        encrypted one bounded chunk at a time, never as a single full-table
-        plaintext Parquet blob. The distinct-triple dedup set is unchanged
-        (it is the correct memory bound); what this removes is the second
-        full plaintext copy (the whole-table Parquet bytes) and the window
-        where it sat unencrypted in heap before `fernet.encrypt`.
+        F13 (2026-06-26): the plaintext source values are serialized and encrypted one bounded
+        segment at a time, never as a single full-table plaintext Parquet blob.
 
         Raises:
-            VaultError: ``code='vault_crypto_not_installed'`` when the `cryptography` package is
+            VaultError: ``code='vault_crypto_not_installed'`` when PyNaCl is
                 missing; ``weak_mask_secret`` when the key is not the mask root's size;
                 ``vault_exists`` when the target exists; ``vault_commit_failed`` when the
                 write, fsync or link failed, or a chain fsync failed after the link (the leaf is
@@ -187,32 +244,34 @@ class VaultWriter:
         return rows, ambiguous
 
     def serialize(self) -> tuple[bytes, int]:
-        """The vault file's bytes and its entry count; nothing is written."""
-        rows, ambiguous = self._fold()
-        import pyarrow.parquet as pq
+        """The vault file's bytes and its entry count; nothing is written.
 
-        # Build the Fernet first: a missing `cryptography` fails before any chunk work.
-        fernet = self._fernet()
-        # chunk_rows/chunk_count are debug metadata only: load_vault reads the framed token
-        # stream to its end, so a tampered count cannot make it over- or under-read.
-        chunk_count = (len(rows) + _CHUNK_ROWS - 1) // _CHUNK_ROWS
-        header = {
-            "format": VAULT_FORMAT_VERSION,
-            "seed_protocol_version": SEED_PROTOCOL_VERSION,
-            "ambiguous_dropped": ambiguous,
-            "chunk_rows": _CHUNK_ROWS,
-            "chunk_count": chunk_count,
-        }
-        parts: list[bytes] = [_MAGIC, _frame(json.dumps(header, sort_keys=True).encode("utf-8"))]
-        for start in range(0, len(rows), _CHUNK_ROWS):
-            window = rows[start : start + _CHUNK_ROWS]
-            chunk_table = pa.Table.from_pylist(
-                [dict(zip(_SCHEMA.names, r, strict=True)) for r in window], schema=_SCHEMA
-            )
-            buf = pa.BufferOutputStream()
-            pq.write_table(chunk_table, buf)
-            # Encrypt this chunk and drop its plaintext before the next one.
-            parts.append(_frame(fernet.encrypt(buf.getvalue().to_pybytes())))
+        Every call draws a fresh `vault_id`, so two calls give different keys, stream headers and
+        ciphertexts for the same rows; adoption compares rows through `reads_as_own`, not bytes.
+        """
+        rows, ambiguous = self._fold()
+        # The crypto import and the key floor come first: a missing PyNaCl fails before any work.
+        _check_key(self._prepared.mask_key)
+        vault_id = os.urandom(_VAULT_ID_BYTES)
+        state, stream_header = _open_stream(self._prepared.mask_key, vault_id)
+        record = _HeaderRecord(
+            format=VAULT_FORMAT_VERSION,
+            seed_protocol_version=SEED_PROTOCOL_VERSION,
+            key_version=self._prepared.key_version,
+            key_check=key_check_value(
+                self._prepared.mask_key, VAULT_KEY_CHECK_LABEL, vault_id.hex()
+            ),
+            vault_id=vault_id.hex(),
+            stream_header=stream_header.hex(),
+            ambiguous_dropped=ambiguous,
+            entry_count=len(rows),
+            segment_rows=_format._SEGMENT_ROWS,
+        )
+        header_frame = _frame(canonical_json_bytes(_HEADER.dump(record)))
+        # The header is bound to every segment: the digest covers the magic and the frame bytes
+        # as written, which are the bytes the reader hashes.
+        ad = hashlib.sha256(_MAGIC + header_frame).digest()
+        parts = [_MAGIC, header_frame, *_segment_frames(state, rows, ad, record.segment_rows)]
         return b"".join(parts), len(rows)
 
     def publish(self, out: OutputDir) -> VaultCommit:
@@ -225,14 +284,15 @@ class VaultWriter:
     def reads_as_own(self, handle: FileHandle) -> bool:
         """Whether `handle` opens under this key to exactly this writer's rows and dropped count."""
         try:
-            mapping, ambiguous = load_vault(None, self._mask_key, vault=handle)
+            opened = open_vault(None, self._prepared, vault=handle)
         except VaultError:
             return False
+        if opened.header.format != VAULT_FORMAT_VERSION:  # a v2 file reads, but is never adopted
+            return False
         rows, own_ambiguous = self._fold()
-        return ambiguous == own_ambiguous and mapping == {(n, m): v for n, m, v in rows}
-
-    def _fernet(self) -> Any:
-        return _fernet(OpaqueBox(self._mask_key), _key_size(self._mask_key))
+        return opened.ambiguous_dropped == own_ambiguous and opened.mapping == {
+            (n, m): v for n, m, v in rows
+        }
 
 
 def _publish(out: OutputDir, data: bytes) -> None:
@@ -302,17 +362,28 @@ def vault_writer_for_config(
     compiler's rules, so a bad `global_settings.seed` fails the same way it does on a run.
     """
     from decoy_engine.plan._seed import _normalize_job_seed
-    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
+    from decoy_engine.secret_providers import (
+        MASK_ROOT,
+        AdmissionScope,
+        admit_mask_key,
+        prepare_legacy,
+    )
 
     _normalize_job_seed(config)
     # F13: the secret is admitted through the shared preflight. A-4: the writer carries the
-    # caller's policy. No job_seed fallback exists for a vault in any release phase.
+    # caller's policy. No job_seed fallback exists for a vault in any release phase. The writer
+    # clones the admitted secret, so the scope can close the original on exit.
     with AdmissionScope() as scope:
-        provider = scope.adopt(admit_mask_key(config, key_provider=key_provider)).key_provider
-        if provider is None:
+        admitted = scope.adopt(admit_mask_key(config, key_provider=key_provider))
+        if admitted.key_provider is None:
             raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
-        key = OpaqueBox(provider.mask_key())
-    return VaultWriter(key.open()[0], file_access=file_access)
+        if admitted.prepared is not None:
+            return VaultWriter(admitted.prepared, file_access=file_access)
+        legacy = prepare_legacy(admitted.key_provider, (MASK_ROOT,))
+        try:
+            return VaultWriter(legacy, file_access=file_access)
+        finally:
+            legacy.close()
 
 
-from decoy_engine.vault._reader import load_vault  # noqa: E402
+from decoy_engine.vault._reader import open_vault  # noqa: E402

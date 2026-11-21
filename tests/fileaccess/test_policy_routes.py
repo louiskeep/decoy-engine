@@ -36,11 +36,11 @@ from decoy_engine.fileaccess import (
     scope,
 )
 from decoy_engine.profile._readers import LazySource
-from decoy_engine.vault import VaultWriter
 from tests._declared_schema import chunked_entry_kwargs, declared_schema
 from tests.fileaccess import route_corpus as rc
 from tests.fileaccess.support import RecordingFileAccess, RootRelative
 from tests.unit.execution import _auto_chunk_support as support
+from tests.unit.vault._support import vault_writer
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -336,7 +336,7 @@ def test_a_delayed_vault_writer_writes_through_the_policy_it_was_built_under(
     policy_a = RootRelative(root_a)
     policy_b = RootRelative(root_b)
     try:
-        writer = VaultWriter(b"12345678" * 4, file_access=policy_a)
+        writer = vault_writer(b"12345678" * 4, file_access=policy_a)
         writer.add([("ns", "m", "s")])
         out_a = policy_a.output_dir(
             FileRequest(FileRole.VAULT, "write", str(root_a / "job_1.dcyvault"), "vault")

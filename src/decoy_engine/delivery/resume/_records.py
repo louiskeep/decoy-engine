@@ -41,6 +41,7 @@ from decoy_engine._canonical import (
     parse_or_token,
 )
 from decoy_engine.delivery.resume._fingerprint import RunFingerprint
+from decoy_engine.internal.crypto import KEY_CHECK_PATTERN
 from decoy_engine.keyprovider import KEY_VERSION_PATTERN, is_key_version_label
 from decoy_engine.publication import (
     ARTIFACT_FIELDS,
@@ -101,12 +102,11 @@ _INVOCATION_ID_PATTERN: Final = (
     r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
 _COMPONENT_PATTERN: Final = r"[A-Za-z0-9][A-Za-z0-9._:+!-]{0,63}"
-_KEY_CHECK_PATTERN: Final = r"[0-9a-f]{16}"
 _TAGGED_PATTERN: Final = r"sha256:[0-9a-f]{64}"
 _RUN_ID = re.compile(_RUN_ID_PATTERN)
 _INVOCATION_ID = re.compile(_INVOCATION_ID_PATTERN)
 _COMPONENT = re.compile(_COMPONENT_PATTERN)
-_KEY_CHECK = re.compile(_KEY_CHECK_PATTERN)
+_KEY_CHECK = re.compile(KEY_CHECK_PATTERN)
 _TAGGED = re.compile(_TAGGED_PATTERN)
 
 
@@ -158,7 +158,7 @@ _COUNT = CountSpec(MAX_COUNT)
 _FINGERPRINT_FIELDS: Final[tuple[tuple[str, Spec], ...]] = (
     ("config_hash", ShapedSpec(r"[0-9a-f]{64}", is_hex64)),
     ("components", ListSpec(ListSpec(_COMPONENT_SPEC))),
-    ("key_check", ShapedSpec(_KEY_CHECK_PATTERN, _fullmatch(_KEY_CHECK))),
+    ("key_check", ShapedSpec(KEY_CHECK_PATTERN, _fullmatch(_KEY_CHECK))),
     ("key_version", _KEY_VERSION_SPEC),
     ("chunk_size", _COUNT),
 )

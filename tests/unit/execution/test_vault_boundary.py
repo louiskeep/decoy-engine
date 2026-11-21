@@ -21,6 +21,7 @@ from decoy_engine import reasons
 from decoy_engine.execution import ExecutionError
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution._b6a_support import RecordingSink
+from tests.unit.vault._support import vault_writer
 
 CODE = "vault_requires_resident_output"
 
@@ -35,9 +36,8 @@ def _vault_cfg(tmp_path: Path) -> tuple[dict[str, Any], pa.Table]:
 
 
 def _writer() -> Any:
-    from decoy_engine.vault import VaultWriter
 
-    return VaultWriter(bytes(range(32)))
+    return vault_writer(bytes(range(32)))
 
 
 class _LoudSource:

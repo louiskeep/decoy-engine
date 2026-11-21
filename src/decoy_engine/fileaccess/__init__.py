@@ -132,6 +132,7 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.validation._config.validate_config",
     "decoy_engine.validation.starter_review.apply_review",
     "decoy_engine.vault._reader.load_vault",
+    "decoy_engine.vault._reader.open_vault",
     "decoy_engine.vault._writer.vault_writer_for_config",
 )
 

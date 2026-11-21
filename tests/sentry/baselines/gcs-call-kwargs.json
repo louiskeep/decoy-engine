@@ -256,10 +256,10 @@
     "decoy_engine/fileaccess/_reclaim.py::_judge::open::0": {
       "reason": "os.open on a local path, not a GCS Blob"
     },
-    "decoy_engine/fileaccess/_reclaim.py::_push_dir::open::0": {
+    "decoy_engine/fileaccess/_reclaim.py::_open_scope::open::0": {
       "reason": "os.open on a local path, not a GCS Blob"
     },
-    "decoy_engine/fileaccess/_reclaim.py::_open_scope::open::0": {
+    "decoy_engine/fileaccess/_reclaim.py::_push_dir::open::0": {
       "reason": "os.open on a local path, not a GCS Blob"
     },
     "decoy_engine/generation/_streamed.py::run_generation::open::0": {
@@ -439,13 +439,13 @@
     "decoy_engine/validation/post/_runner.py::_merge::update::5": {
       "reason": "dict.update on a plain dict"
     },
-    "decoy_engine/vault/_format.py::_fernet::open::0": {
-      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob",
-      "moved_from": "decoy_engine/vault.py::_fernet::open::0"
-    },
-    "decoy_engine/vault/_reader.py::load_vault::update::0": {
+    "decoy_engine/vault/_reader.py::_pull_all::update::0": {
       "reason": "dict.update on a plain dict",
-      "moved_from": "decoy_engine/vault.py::load_vault::update::0"
+      "moved_from": "decoy_engine/vault/_reader.py::load_vault::update::0"
+    },
+    "decoy_engine/vault/_reader.py::load_vault::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob",
+      "moved_from": "decoy_engine/vault/_format.py::_fernet::open::0"
     },
     "decoy_engine/vault/_writer.py::VaultWriter.add::update::0": {
       "reason": "set.update on the VaultWriter entry set",
@@ -454,10 +454,6 @@
     "decoy_engine/vault/_writer.py::assert_vault_writer_keyed::open::0": {
       "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob",
       "moved_from": "decoy_engine/vault.py::assert_vault_writer_keyed::open::0"
-    },
-    "decoy_engine/vault/_writer.py::vault_writer_for_config::open::0": {
-      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob",
-      "moved_from": "decoy_engine/vault.py::vault_writer_for_config::open::0"
     }
   }
 }

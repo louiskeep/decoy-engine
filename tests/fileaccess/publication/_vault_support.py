@@ -18,6 +18,7 @@ from decoy_engine.fileaccess import FileRequest, FileRole, Root, RootedFileAcces
 from decoy_engine.fileaccess._local import LocalFileAccess
 from decoy_engine.vault import VaultWriter
 from decoy_engine.vault import _writer as vault_module
+from tests.unit.vault._support import vault_writer
 
 KEY = b"12345678" * 4
 OTHER_KEY = b"abcdefgh" * 4
@@ -39,7 +40,7 @@ def vault_out(policy: str, base: Path, rel: str) -> tuple[Any, int]:
 
 
 def writer(rows: Any = ROWS, key: bytes = KEY) -> VaultWriter:
-    made = VaultWriter(key)
+    made = vault_writer(key)
     made.add(list(rows))
     return made
 

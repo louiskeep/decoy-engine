@@ -220,6 +220,9 @@ baseline = "tests/sentry/baselines/snapshot-parse-single-owner.json"
 [[sentry]]
 id = "parquet-intermediate-writers"
 baseline = "tests/sentry/baselines/parquet-intermediate-writers.json"
+approved_growth = [
+  { key = "decoy_engine/vault/_format.py::_encode_rows", decision = "owner 2026-11-21 F09 E1 vault v3 segment encoder replaces VaultWriter.serialize" },
+]
 
 [[sentry]]
 id = "metadata-carrier-allow"

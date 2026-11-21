@@ -15,7 +15,7 @@ def test_every_tag_literal_is_classified() -> None:
     found = _tags.source_tags()
     # Not vacuous: the walk sees the tags the contract names and the ones S7a classified.
     assert len(found) >= 60, len(found)
-    assert {"decoy-vault/v2", "tokenize-key/v1", "phase-event/v1", "decoy-telemetry/v1"} <= set(
+    assert {"decoy-vault/v3", "tokenize-key/v1", "phase-event/v1", "decoy-telemetry/v1"} <= set(
         found
     )
     frozen, labels, internal, declared = _tags.classes()

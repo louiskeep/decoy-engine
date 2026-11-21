@@ -9,7 +9,7 @@ a digest trailer is written, so a partial file is never a receipt. The clock is 
 Honest scope: this is application-level ciphertext under the run's mask key. It does not claim
 filesystem encryption, quotas or orphan recovery (a managed arena is a later seam), and the OS
 owner who also holds the key can read the data. Identity policies are a platform adapter's job.
-Pattern sources: Fernet / ``cryptography`` (as ``vault.py`` uses it) and RFC 5869 HKDF.
+Pattern sources: Fernet / ``cryptography`` (this module's own tokens) and RFC 5869 HKDF.
 """
 
 from __future__ import annotations

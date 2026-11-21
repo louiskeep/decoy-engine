@@ -27,6 +27,7 @@ from tests.unit.execution import _b6a_support as b6a
 from tests.unit.execution._r3_scenarios import traced_engine_sink
 from tests.unit.execution.test_auto_chunk_dispatcher import _row_error_job
 from tests.unit.execution.test_isolated_worker_streaming import _fk_config
+from tests.unit.vault._support import vault_writer
 
 ROUTES = [pytest.param("native", marks=support.NEEDS_COMPANION), "oracle"]
 
@@ -441,7 +442,7 @@ def test_a_vault_writer_keyed_differently_is_rejected_before_anything_is_staged(
     tmp_path: Path,
 ) -> None:
     from decoy_engine.keyprovider import SecretKeyProvider
-    from decoy_engine.vault import VaultError, VaultWriter
+    from decoy_engine.vault import VaultError
 
     # No sink: a sink with a vault writer is refused before keying (B-6 B0,
     # tests/unit/execution/test_vault_boundary.py), so this pins the keying refusal alone.
@@ -453,7 +454,7 @@ def test_a_vault_writer_keyed_differently_is_rejected_before_anything_is_staged(
             cfg,
             src,
             None,
-            vault_writer=VaultWriter(b"\x42" * 32),
+            vault_writer=vault_writer(b"\x42" * 32),
             key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
         )
     assert exc.value.code == "vault_key_mismatch"

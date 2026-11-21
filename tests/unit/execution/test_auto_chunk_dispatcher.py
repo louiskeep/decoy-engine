@@ -32,6 +32,7 @@ from tests.unit.execution.test_auto_chunk_routing import (
     _single_column_job,
 )
 from tests.unit.execution.test_auto_chunk_routing import _ENGINE_VERSION as ROUTING_VERSION
+from tests.unit.vault._support import vault_writer
 
 SIX_KEYS = ("mode", "chunk_size_rows", "threshold_rows", "source_rows", "chunk_count", "reason")
 
@@ -560,7 +561,7 @@ def test_a_vault_writer_keyed_differently_from_the_mask_key_is_rejected_before_a
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from decoy_engine.keyprovider import SecretKeyProvider
-    from decoy_engine.vault import VaultError, VaultWriter
+    from decoy_engine.vault import VaultError
 
     cfg, src = _vault_job(tmp_path)
     spies = support.spy_lanes(monkeypatch)
@@ -569,7 +570,7 @@ def test_a_vault_writer_keyed_differently_from_the_mask_key_is_rejected_before_a
         support.run_default(
             cfg,
             src,
-            vault_writer=VaultWriter(b"\x42" * 32),
+            vault_writer=vault_writer(b"\x42" * 32),
             key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
         )
     assert err.value.code == "vault_key_mismatch"

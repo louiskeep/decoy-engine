@@ -56,6 +56,7 @@ from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from decoy_engine.secret_providers import admit_mask_key
 from tests._declared_schema import declare_rest, declared_schema
+from tests.unit.vault._support import vault_writer
 
 _EV = "de02-accept"
 _JOB_SEED = (42).to_bytes(8, "big")
@@ -847,7 +848,7 @@ class TestPublicEntryPointsGated:
         # Codex BLOCKER 5: a vault writer keyed differently from the run's secret must
         # fail closed (a writer keyed on the public seed cannot be built at all).
         from decoy_engine.execution import ExecutionError
-        from decoy_engine.vault import VaultError, VaultWriter
+        from decoy_engine.vault import VaultError
 
         cfg = _config(
             tmp_path,
@@ -856,7 +857,7 @@ class TestPublicEntryPointsGated:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
-        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
+        bad_writer = vault_writer(_SECRET_B.mask_key())  # keyed with a different secret
         with pytest.raises((VaultError, ExecutionError)):
             run_pipeline(
                 cfg,
@@ -923,7 +924,7 @@ class TestVaultIsKeyedSurface:
 
     @needs_crypto
     def test_chunked_mismatched_vault_writer_under_secret_fails_closed(self, tmp_path):
-        from decoy_engine.vault import VaultError, VaultWriter
+        from decoy_engine.vault import VaultError
 
         cfg = _config(
             tmp_path,
@@ -932,7 +933,7 @@ class TestVaultIsKeyedSurface:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
-        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
+        bad_writer = vault_writer(_SECRET_B.mask_key())  # keyed with a different secret
         # The internal oracle entry: the public one refuses any vault writer first (B-6 B0).
         from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 

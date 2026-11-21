@@ -37,10 +37,11 @@
       "max": 1,
       "reason": "masked-key stage read back by the out-of-core runner; scratch inside the run, never a published output"
     },
-    "decoy_engine/vault/_writer.py::VaultWriter.serialize": {
+    "decoy_engine/vault/_format.py::_encode_rows": {
       "category": "intermediate",
       "max": 1,
-      "reason": "Parquet segment written to an in-memory buffer that is encrypted into the vault file; never a Parquet file on disk"
+      "reason": "Parquet segment written to an in-memory buffer that is encrypted into the vault file; never a Parquet file on disk",
+      "moved_from": "decoy_engine/vault/_writer.py::VaultWriter.serialize"
     }
   }
 }

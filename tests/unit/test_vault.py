@@ -30,7 +30,6 @@ from decoy_engine.keyprovider import KeyedStrategyRequiresSecret, SecretKeyProvi
 from decoy_engine.plan import PlanCompileError, compile_plan, run_config_only_checks
 from decoy_engine.vault import (
     VaultError,
-    VaultWriter,
     assert_vault_writer_keyed,
     collect_vault_entries,
     load_vault,
@@ -38,6 +37,7 @@ from decoy_engine.vault import (
 )
 from tests._declared_schema import declared_schema
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
+from tests.unit.vault._support import prepared, vault_writer
 
 _ENGINE_VERSION = "vault-test"
 
@@ -142,7 +142,7 @@ class TestRoundTrip:
         outputs, vault_path = _mask_with_vault(tmp_path, cfg, df)
         masked_contacts = outputs["accounts"].column("contact").to_pylist()
 
-        mask_key = vault_writer_for_config(cfg)._mask_key
+        mask_key = vault_writer_for_config(cfg)._prepared.mask_key()
         vault_map, _ = load_vault(vault_path, mask_key)
 
         result = unmask_pipeline(cfg, outputs, vault_path=str(vault_path))
@@ -216,7 +216,7 @@ class TestChunkedParity:
         chunked_path = tmp_path / "vault-chunked.bin"
         chunked_writer.write(chunked_path)
 
-        mask_key = vault_writer_for_config(cfg)._mask_key
+        mask_key = vault_writer_for_config(cfg)._prepared.mask_key()
         full_map, full_ambiguous = load_vault(full_path, mask_key)
         chunked_map, chunked_ambiguous = load_vault(chunked_path, mask_key)
         assert chunked_map == full_map
@@ -229,7 +229,7 @@ class TestChunkedParity:
 @needs_crypto
 class TestVaultFile:
     def test_wrong_seed_raises_key_mismatch(self, tmp_path):
-        writer = VaultWriter(b"\x01" * 32)
+        writer = vault_writer(b"\x01" * 32)
         writer.add([("ns", "masked", "source")])
         path = tmp_path / "v.bin"
         writer.write(path)
@@ -250,7 +250,7 @@ class TestVaultFile:
         assert exc.value.code == "vault_unreadable"
 
     def test_ambiguous_keys_dropped_and_counted(self, tmp_path):
-        writer = VaultWriter(b"\x01" * 32)
+        writer = vault_writer(b"\x01" * 32)
         writer.add(
             [
                 ("ns", "MASKED-A", "source-1"),
@@ -302,7 +302,7 @@ class TestProtocolVersionGuard:
     cross-version vault is also undecryptable -- the guard makes the error clear)."""
 
     def test_wrong_protocol_version_raises_protocol_mismatch(self, tmp_path):
-        writer = VaultWriter(b"\x01" * 32)
+        writer = vault_writer(b"\x01" * 32)
         writer.add([("ns", "masked", "source")])
         path = tmp_path / "v.bin"
         writer.write(path)
@@ -315,7 +315,7 @@ class TestProtocolVersionGuard:
     def test_protocol_mismatch_checked_before_decrypt(self, tmp_path):
         # A wrong-version header with the WRONG seed too must still report the
         # protocol mismatch (the header is validated before any decrypt).
-        writer = VaultWriter(b"\x01" * 32)
+        writer = vault_writer(b"\x01" * 32)
         writer.add([("ns", "masked", "source")])
         path = tmp_path / "v.bin"
         writer.write(path)
@@ -326,7 +326,7 @@ class TestProtocolVersionGuard:
 
     def test_matching_version_still_round_trips(self, tmp_path):
         # Sanity: an untouched vault (current version) loads cleanly.
-        writer = VaultWriter(b"\x01" * 32)
+        writer = vault_writer(b"\x01" * 32)
         writer.add([("ns", "masked", "source")])
         path = tmp_path / "v.bin"
         writer.write(path)
@@ -336,7 +336,7 @@ class TestProtocolVersionGuard:
 
     def test_wrong_version_distinct_from_wrong_seed(self, tmp_path):
         # Wrong seed, CORRECT version -> key_mismatch (not protocol mismatch).
-        writer = VaultWriter(b"\x01" * 32)
+        writer = vault_writer(b"\x01" * 32)
         writer.add([("ns", "masked", "source")])
         path = tmp_path / "v.bin"
         writer.write(path)
@@ -394,7 +394,7 @@ class TestCompileChecks:
         assert exc.value.code == "vault_strategy_unmasked"
 
     def test_vault_requires_cryptography_when_missing(self, tmp_path, monkeypatch):
-        # F14a: a vault: true job must fail at compile when `cryptography` is
+        # F14a: a vault: true job must fail at compile when PyNaCl (`nacl`) is
         # absent, not after a multi-hour run at vault-write time. Simulate the
         # package being uninstalled by stubbing find_spec for it only.
         import importlib.util as _ilu
@@ -402,7 +402,7 @@ class TestCompileChecks:
         real_find_spec = _ilu.find_spec
 
         def fake_find_spec(name, *args, **kwargs):
-            if name == "cryptography":
+            if name == "nacl":
                 return None
             return real_find_spec(name, *args, **kwargs)
 
@@ -562,7 +562,7 @@ def _rendered(exc: BaseException) -> str:
 
 
 def _written(tmp_path: Path, key: bytes = _STRONG) -> Path:
-    writer = VaultWriter(key)
+    writer = vault_writer(key)
     writer.add(_ENTRIES)
     path = tmp_path / "v.vault"
     writer.write(path)
@@ -582,14 +582,14 @@ class TestVaultKeyFloor:
     )
     def test_writer_refuses_short_key(self, length: int) -> None:
         with pytest.raises(VaultError) as exc:
-            VaultWriter(b"\x05" * length)
+            vault_writer(b"\x05" * length)
         assert exc.value.code == "weak_mask_secret"
 
     def test_writer_accepts_a_root_length_key(self) -> None:
         key = b"\x05" * 32
-        writer = VaultWriter(key)
-        assert type(writer._mask_key) is bytes
-        assert writer._mask_key == key
+        writer = vault_writer(key)
+        assert type(writer._prepared.mask_key()) is bytes
+        assert writer._prepared.mask_key() == key
 
     @pytest.mark.parametrize("length", [33, 64])
     def test_key_longer_than_the_root_is_refused_up_front(
@@ -598,7 +598,7 @@ class TestVaultKeyFloor:
         # The key derivation takes no other strong length, so a longer key once built a writer
         # that then failed at its first write; both ends now refuse it before any file work.
         with pytest.raises(VaultError) as built:
-            VaultWriter(b"\x05" * length)
+            vault_writer(b"\x05" * length)
         assert built.value.code == "weak_mask_secret"
         with pytest.raises(VaultError) as loaded:
             load_vault(tmp_path / "missing.vault", b"\x05" * length)
@@ -628,7 +628,7 @@ class TestVaultKeyFloor:
     ) -> None:
         cfg = _config(tmp_path, [{"name": "memo", "strategy": "redact"}])
         writer = vault_writer_for_config(cfg, key_provider=THROWAWAY_KEY_PROVIDER)
-        assert writer._mask_key == THROWAWAY_KEY_PROVIDER.mask_key()
+        assert writer._prepared.mask_key() == THROWAWAY_KEY_PROVIDER.mask_key()
 
     def test_seed_keyed_vault_no_longer_opens_seed_key_FAIL_BEFORE(self) -> None:
         meta = json.loads((_FIXTURES / "seed_keyed_pre_floor.json").read_text(encoding="utf-8"))
@@ -639,7 +639,8 @@ class TestVaultKeyFloor:
         assert exc.value.code == "weak_mask_secret"
 
     def test_seed_keyed_vault_no_longer_opens_any_32_byte_key_CHARACTERIZATION(self) -> None:
-        # No strong key opens a seed-keyed file: there is no recovery path.
+        # No 32-byte key opens a seed-keyed file: it is a v2 file keyed on the 8-byte seed, so the
+        # v2 reader runs and its key does not decrypt.
         with pytest.raises(VaultError) as exc:
             load_vault(_FIXTURES / "seed_keyed_pre_floor.vault", _STRONG)
         assert exc.value.code == "vault_key_mismatch"
@@ -649,7 +650,7 @@ class TestVaultKeyFloor:
     ) -> None:
         marker = b"MRK7zq!"
         path = _written(tmp_path)
-        for attempt in (lambda: VaultWriter(marker), lambda: load_vault(path, marker)):
+        for attempt in (lambda: vault_writer(marker), lambda: load_vault(path, marker)):
             with pytest.raises(VaultError) as exc:
                 attempt()
             assert exc.value.code == "weak_mask_secret"
@@ -685,16 +686,16 @@ class TestVaultKeyFloor:
 
     def test_exit_paths_construction_creates_nothing_FAIL_BEFORE(self, tmp_path: Path) -> None:
         with pytest.raises(VaultError) as exc:
-            VaultWriter(b"\x01" * 8).write(tmp_path / "v.vault")
+            vault_writer(b"\x01" * 8).write(tmp_path / "v.vault")
         assert exc.value.code == "weak_mask_secret"
         assert list(tmp_path.iterdir()) == []
 
     def test_exit_paths_write_after_key_drift_creates_no_file_FAIL_BEFORE(
         self, tmp_path: Path
     ) -> None:
-        writer = VaultWriter(_STRONG)
+        writer = vault_writer(_STRONG)
         writer.add(_ENTRIES)
-        writer._mask_key = b"\x01" * 8
+        writer._prepared = prepared(b"\x01" * 8)
         with pytest.raises(VaultError) as exc:
             writer.write(tmp_path / "v.vault")
         assert exc.value.code == "weak_mask_secret"
@@ -706,9 +707,9 @@ class TestVaultKeyFloor:
         path = tmp_path / "v.vault"
         path.write_bytes(b"previous vault bytes")
         before = hashlib.sha256(path.read_bytes()).hexdigest()
-        writer = VaultWriter(_STRONG)
+        writer = vault_writer(_STRONG)
         writer.add(_ENTRIES)
-        writer._mask_key = b"\x01" * 8
+        writer._prepared = prepared(b"\x01" * 8)
         with pytest.raises(VaultError) as exc:
             writer.write(path)
         assert exc.value.code == "weak_mask_secret"
@@ -732,9 +733,10 @@ class TestVaultKeyFloor:
     )
     def test_vault_key_field_walk_refuses(self, tmp_path: Path, key: object) -> None:
         path = _written(tmp_path)
-        with pytest.raises(VaultError) as built:
-            VaultWriter(key)  # type: ignore[arg-type]
-        assert built.value.code == "weak_mask_secret"
+        if isinstance(key, bytes):  # a writer takes a PreparedSecret; only bytes can be wrapped
+            with pytest.raises(VaultError) as built:
+                vault_writer(key)
+            assert built.value.code == "weak_mask_secret"
         with pytest.raises(VaultError) as loaded:
             load_vault(path, key)  # type: ignore[arg-type]
         assert loaded.value.code == "weak_mask_secret"
@@ -747,11 +749,11 @@ class TestVaultKeyFloor:
     def test_vault_key_mutation_after_admission_FAIL_BEFORE(self, tmp_path: Path) -> None:
         original = b"\x07" * 32
         buffer = bytearray(original)
-        writer = VaultWriter(buffer)  # type: ignore[arg-type]
+        writer = vault_writer(buffer)  # type: ignore[arg-type]
         writer.add(_ENTRIES)
         buffer[0] ^= 0xFF
-        assert type(writer._mask_key) is bytes
-        assert writer._mask_key == original
+        assert type(writer._prepared.mask_key()) is bytes
+        assert writer._prepared.mask_key() == original
         writer.assert_keyed_with(original)
         path = tmp_path / "v.vault"
         writer.write(path)
@@ -763,20 +765,24 @@ class TestVaultKeyFloor:
         # A non-keyed run resolves the 8-byte job seed; a strong writer checked against it is
         # refused for the weak key, not reported as a mismatch.
         with pytest.raises(VaultError) as exc:
-            assert_vault_writer_keyed(VaultWriter(_STRONG), b"\x07" * length)
+            assert_vault_writer_keyed(vault_writer(_STRONG), b"\x07" * length)
         assert exc.value.code == "weak_mask_secret"
 
     def test_vault_header_keys_are_frozen_CHARACTERIZATION(self, tmp_path: Path) -> None:
         blob = _written(tmp_path).read_bytes()
-        assert blob.startswith(b"DCYVAULT2\n")
-        offset = len(b"DCYVAULT2\n")
+        assert blob.startswith(b"DCYVAULT3\n")
+        offset = len(b"DCYVAULT3\n")
         length = int.from_bytes(blob[offset : offset + 4], "big")
         header = json.loads(blob[offset + 4 : offset + 4 + length])
         assert sorted(header) == [
             "ambiguous_dropped",
-            "chunk_count",
-            "chunk_rows",
+            "entry_count",
             "format",
+            "key_check",
+            "key_version",
             "seed_protocol_version",
+            "segment_rows",
+            "stream_header",
+            "vault_id",
         ]
-        assert header["format"] == "decoy-vault/v2"
+        assert header["format"] == "decoy-vault/v3"

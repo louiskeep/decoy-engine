@@ -43,6 +43,7 @@ from tests.unit.publication._vault_publish_support import (
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX durable vault")
 MISMATCH = "publication_vault_mismatch"
+V2_FIXTURE = Path(__file__).parents[1] / "vault" / "fixtures" / "decoy-vault-v2__retired.vault"
 CONFLICT = "publication_vault_conflict"
 COMMIT_FAILED = reasons.runtime.VAULT_COMMIT_FAILED
 
@@ -180,6 +181,29 @@ def test_vault_exists_with_other_rows_is_never_bound(
     close_all(fds)
     assert (receipt.outcome, receipt.reason_code) == ("refused", CONFLICT)
     assert (receipt.visible, receipt.durable, receipt.vault_digest) == (False, False, None)
+    assert not leaf.exists() and vault_fingerprint(vleaf) == before
+    assert stages_left(base / "a") == []
+
+
+@pytest.mark.parametrize("kind", ["retired_v2", "tampered_v3"])
+@pytest.mark.parametrize("policy", POLICIES)
+def test_vault_exists_as_v2_or_tampered_is_never_bound(
+    tmp_path: Path, policy: str, kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A leaf this engine cannot read as its own (a retired v2 file, or a v3 file with one
+    flipped byte) is a conflict: the unit is refused and the file is left as it was."""
+    base = _root(tmp_path, policy, monkeypatch)
+    leaf, vleaf = base / OUT_REL, base / VAULT_REL
+    if kind == "retired_v2":
+        vleaf.write_bytes(V2_FIXTURE.read_bytes())
+    else:
+        blob = bytearray(writer().serialize()[0])
+        blob[-1] ^= 0xFF
+        vleaf.write_bytes(bytes(blob))
+    before = vault_fingerprint(vleaf)
+    receipt, fds = publish(policy, base, "one", "op-1")
+    close_all(fds)
+    assert (receipt.outcome, receipt.reason_code) == ("refused", CONFLICT)
     assert not leaf.exists() and vault_fingerprint(vleaf) == before
     assert stages_left(base / "a") == []
 

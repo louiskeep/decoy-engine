@@ -1304,23 +1304,23 @@ owner = "cam"
 reason = "existence check of a shipped corpus"
 
 [[entry]]
-module = "decoy_engine/vault/_writer.py"
-function = "VaultWriter.serialize"
+module = "decoy_engine/vault/_format.py"
+function = "_encode_rows"
 sink = "pyarrow.parquet.write_table"
 ordinal = 0
 disposition = "read"
-rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted chunk"
+rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted segment"
 owner = "cam"
-reason = "serializes a chunk to bytes; the file itself goes through the OutputDir or FileHandle"
+reason = "serializes a segment to bytes; the file itself goes through the OutputDir or FileHandle"
 
 [[entry]]
-module = "decoy_engine/vault/_reader.py"
-function = "load_vault"
+module = "decoy_engine/vault/_format.py"
+function = "_decode_rows"
 sink = "pyarrow.parquet.read_table"
 ordinal = 0
-rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted chunk"
+rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted segment"
 owner = "cam"
-reason = "serializes a chunk to bytes; the file itself goes through the OutputDir or FileHandle"
+reason = "serializes a segment to bytes; the file itself goes through the OutputDir or FileHandle"
 
 [[entry]]
 module = "decoy_engine/connectors/postgres_snapshot.py"

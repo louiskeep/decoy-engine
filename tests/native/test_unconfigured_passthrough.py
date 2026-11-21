@@ -31,7 +31,6 @@ from decoy_engine.execution.native._real_type_admission import real_type_rejecti
 # A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.providers_v2 import get_default_registry
-from decoy_engine.vault import VaultWriter
 from tests._declared_schema import declared_schema
 from tests.native._b8_support import (
     FORCE,
@@ -63,6 +62,7 @@ from tests.native._chunked_entry_support import (
 )
 from tests.native._rev9_support import companion_missing
 from tests.native._rev9_type_catalogue import CATALOGUE
+from tests.unit.vault._support import vault_writer
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -144,7 +144,7 @@ def test_error_policy_keeps_the_oracle_route_and_raises_as_today() -> None:
         )
     sink: list[Any] = []
     ev: list[Any] = []
-    vault = VaultWriter(vault_key())
+    vault = vault_writer(vault_key())
     gen = _run_mask_chunked_below_gate(
         config,
         list(chunks),

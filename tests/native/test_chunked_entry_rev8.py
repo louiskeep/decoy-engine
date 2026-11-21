@@ -11,7 +11,6 @@ import pytest
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
-from decoy_engine.vault import VaultWriter
 from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -23,6 +22,7 @@ from tests.native._chunked_entry_support import (
     vault_key,
 )
 from tests.native.test_chunked_entry_rev7 import _DelegatingAdapter
+from tests.unit.vault._support import vault_writer
 
 
 def _call(fn: Any, config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> Any:
@@ -56,7 +56,7 @@ def test_first_chunk_ingest_guard_raises_at_first_next_not_at_call(route: str) -
     config = make_config([truncate("n", 2)])
     first = pa.table({"n": pa.array([1, None, 3], pa.int64())})
     sink: list[Any] = []
-    vault = VaultWriter(vault_key())
+    vault = vault_writer(vault_key())
     gen = _start(route, config, [first], chunk_result_sink=sink, vault_writer=vault)
     with pytest.raises(Exception) as info:
         next(gen)
